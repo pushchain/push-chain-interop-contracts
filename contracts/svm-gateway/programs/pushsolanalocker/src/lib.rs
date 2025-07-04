@@ -5,15 +5,18 @@ use pyth_solana_receiver_sdk::price_update::{get_feed_id_from_hex, PriceUpdateV2
 declare_id!("3zrWaMknHTRQpZSxY4BvQxw9TStSXiHcmcp3NMPTFkke");
 
 pub const FEED_ID: &str = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
-pub const MAXIMUM_AGE: u64 = 6000;
+
 
 // Private helper function for price calculation
 fn calculate_sol_price(price_update: &Account<PriceUpdateV2>) -> Result<PriceData> {
-    let price = price_update.get_price_no_older_than(
-        &Clock::get()?,
-        MAXIMUM_AGE,
-        &get_feed_id_from_hex(FEED_ID)?,
-    )?;
+    // First, let's get the price without age check to see how old it is
+    let price = price_update.get_price_unchecked(&get_feed_id_from_hex(FEED_ID)?)?;
+    
+    // Log the timestamps to see the age
+    let current_time = Clock::get()?.unix_timestamp;
+    let age_seconds = current_time - price.publish_time;
+    msg!("Current time: {}, Price time: {}, Age: {} seconds ({} minutes)", 
+         current_time, price.publish_time, age_seconds, age_seconds / 60);
 
     require!(price.price > 0, LockerError::InvalidPrice);
 
