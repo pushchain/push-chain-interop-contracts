@@ -1,0 +1,15 @@
+.anchor
+.DS_Store
+target
+**/*.rs.bk
+node_modules
+test-ledger
+.yarn
+
+# Keypair files
+*.json
+!package.json
+!tsconfig.json
+!anchor.toml
+!Cargo.toml
+!target/idl/*.json
