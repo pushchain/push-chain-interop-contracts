@@ -214,19 +214,11 @@ contract UniversalGatewayV1 is
     ) external payable nonReentrant whenNotPaused {
         if (revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
 
-        // USD caps check on the nominal input
-        _checkUsdCaps(tokenIn, amountIn); // @audit-info - NEEDS RECHECK
-
         uint256 ethForwarded;
         if (tokenIn == address(0)) {
             // native path
             if (msg.value != amountIn || amountIn == 0) revert Errors.InvalidAmount();
-            uint256 ethUsdPrice = _ethUsdPrice1e18();
-            uint256 usdValue = Math.mulDiv(amountIn, ethUsdPrice, 1e18);
-
-            if (usdValue < MIN_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
-            if (usdValue > MAX_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
-
+            _checkUSDCaps(amountIn);
             ethForwarded = _handleNativeDeposit(amountIn);
         } else {
             // ToDo: add USD cap check for ERC20 Token
@@ -337,7 +329,7 @@ contract UniversalGatewayV1 is
     //       INTERNAL HELPERS
     // =========================
 
-    function _checkUsdCaps(address token, uint256 amount) internal view { //@audit-info - NEEDS RECHECK
+    function _checkUSDCaps(uint256 amount) internal view { //@audit-info - NEEDS RECHECK
         uint256 usdValue = Math.mulDiv(amount, _ethUsdPrice1e18(), 1e18);
         if (usdValue < MIN_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
         if (usdValue > MAX_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
