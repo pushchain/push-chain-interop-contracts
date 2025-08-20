@@ -11,6 +11,7 @@ library Errors {
     error InvalidRecipient();
     error InvalidInput();   
     error InvalidAmount();
+    error StalePrice();
     error InvalidToken();
     error PairNotFound();
     error SlippageExceededOrExpired();

@@ -13,3 +13,6 @@
 [submodule "contracts/evm-gateway/lib/openzeppelin-foundry-upgrades"]
 	path = contracts/evm-gateway/lib/openzeppelin-foundry-upgrades
 	url = https://github.com/OpenZeppelin/openzeppelin-foundry-upgrades
+[submodule "contracts/evm-gateway/lib/chainlink-brownie-contracts"]
+	path = contracts/evm-gateway/lib/chainlink-brownie-contracts
+	url = https://github.com/smartcontractkit/chainlink-brownie-contracts

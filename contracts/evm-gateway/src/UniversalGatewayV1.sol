@@ -27,6 +27,10 @@ import {IUniswapV2Factory, ISwapRouter} from "./interfaces/IAMMInterface.sol";
 import {IUniversalGateway}          from "./interfaces/IUniversalGateway.sol";
 import {IRateProvider}              from "./interfaces/IUniversalGateway.sol";
 import {RevertSettings, UniversalPayload} from "./libraries/Types.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+
+import {AggregatorV3Interface} from "@chainlink/contracts/shared/interfaces/AggregatorV3Interface.sol";
+
 
 contract UniversalGatewayV1 is
     Initializable,
@@ -64,6 +68,11 @@ contract UniversalGatewayV1 is
     IUniswapV2Factory public uniV2Factory;
     ISwapRouter  public uniV2Router;
     address           public WETH; // cached from router
+
+    /// @notice Chainlink price feed for USD valuation checks
+    AggregatorV3Interface public ethUsdFeed;          // Chainlink ETH/USD proxy
+    uint256 public maxPriceAge;
+    // note: sequencerUptimeFeed will be added for gateways for L2s
 
     // storage gap for upgradeability
     uint256[43] private __gap;
@@ -112,6 +121,8 @@ contract UniversalGatewayV1 is
             WETH         = ISwapRouter(router).WETH();
         }
 
+        ethUsdFeed = AggregatorV3Interface(0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419);
+
         emit TSSAddressUpdated(address(0), tss);
         emit CapsUpdated(minCapUsd, maxCapUsd);
         emit RateProviderUpdated(rateProv);
@@ -157,6 +168,15 @@ contract UniversalGatewayV1 is
         emit CapsUpdated(minCapUsd, maxCapUsd);
     }
 
+    function setPriceGuards(uint256 _maxPriceAge) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        maxPriceAge = _maxPriceAge;      // e.g., 120
+    }
+
+    function setEthUsdFeed(address feed) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (feed == address(0)) revert Errors.ZeroAddress();
+        ethUsdFeed = AggregatorV3Interface(feed);
+    }
+
     function setRateProvider(address rateProv) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused { //@audit-info - NEEDS RECHECK
         if (rateProv == address(0)) revert Errors.RateProviderNotSet();
         rateProvider = IRateProvider(rateProv);
@@ -197,7 +217,7 @@ contract UniversalGatewayV1 is
      * @param amountOutMinETH min ETH expected when swapping ERC20->ETH (ignored for native)
      * @param deadline    swap deadline (ignored for native)
      */
-    function depositForUniversalTx(
+    function depositForUniversalTx( //@audit-info - double check event emission + ORACLE SET UP + GAS LIMIT
         address tokenIn,
         uint256 amountIn,
         UniversalPayload calldata payload,
@@ -215,8 +235,15 @@ contract UniversalGatewayV1 is
         if (tokenIn == address(0)) {
             // native path
             if (msg.value != amountIn || amountIn == 0) revert Errors.InvalidAmount();
+            uint256 ethUsdPrice = _ethUsdPrice1e18();
+            uint256 usdValue = Math.mulDiv(amountIn, ethUsdPrice, 1e18);
+
+            if (usdValue < MIN_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
+            if (usdValue > MAX_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
+
             ethForwarded = _handleNativeDeposit(amountIn);
         } else {
+            // ToDo: add USD cap check for ERC20 Token
             if (msg.value != 0 || amountIn == 0) revert Errors.InvalidAmount();
             ethForwarded = _handleERC20ForGasDeposit(tokenIn, amountIn, amountOutMinETH, deadline);
         }
@@ -259,7 +286,7 @@ contract UniversalGatewayV1 is
             _handleTokenDeposit(token, amount);
         }
 
-        emit DepositForBridge({
+        emit DepositForBridge({ //@audit-info - double check event emission
             sender:        _msgSender(),
             recipient:      recipient,
             amount:         amount,
@@ -403,6 +430,25 @@ contract UniversalGatewayV1 is
     function _handleTokenWithdraw(address token, address recipient, uint256 amount) internal {
         if (!isSupportedToken[token]) revert Errors.NotSupported();
         IERC20(token).safeTransfer(recipient, amount);
+    }
+
+
+    /// @notice Returns ETH/USD scaled to 1e18, with staleness & (optionally) sequencer checks only for L2s.
+    /// @dev Reverts on invalid, stale, or unsafe conditions.
+    function _ethUsdPrice1e18() internal view returns (uint256 px1e18) {
+
+        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) =
+            ethUsdFeed.latestRoundData();
+
+        if (answer <= 0) revert Errors.InvalidAmount();
+        if (answeredInRound < roundId) revert Errors.StalePrice();
+        if (block.timestamp - updatedAt > maxPriceAge) revert Errors.StalePrice();
+        
+        uint8 dec = ethUsdFeed.decimals();                 // typically 8
+        uint256 denom = 10 ** uint256(dec);                // scale divisor for feed decimals
+        // Scale price to 1e18 with full-precision math
+        return Math.mulDiv(uint256(answer), 1e18, denom);  // 1 ETH = ethUsdPrice1e18 USD
+        
     }
 
     // =========================
