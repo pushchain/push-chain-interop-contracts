@@ -16,5 +16,4 @@ library Errors {
     error PairNotFound();
     error SlippageExceededOrExpired();
     error ZeroAddress();
-    error RateProviderNotSet();
 }

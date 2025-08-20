@@ -5,12 +5,6 @@ import {RevertSettings, UniversalPayload} from "../libraries/Types.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IUniswapV2Factory, ISwapRouter} from "./IAMMInterface.sol";
 
-interface IRateProvider {
-    /// @notice Returns USD value (1e18 decimals) for a given token/amount.
-    ///         For native token, token == address(0).
-    function getUsdValue(address token, uint256 amount) external view returns (uint256);
-}
-
 interface IUniversalGateway {
 
     // =========================
@@ -40,7 +34,6 @@ interface IUniversalGateway {
     event TSSAddressUpdated(address oldTSS, address newTSS);
     event TokenSupportModified(address tokenAddress, bool whitelistStatus);
     event CapsUpdated(uint256 minCapUsd, uint256 maxCapUsd);
-    event RateProviderUpdated(address rateProvider);
     event RoutersUpdated(address uniswapFactory, address uniswapRouter);
     event PausedBy(address account);
     event UnpausedBy(address account);

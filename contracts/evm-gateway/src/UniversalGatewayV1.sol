@@ -25,7 +25,6 @@ import {SafeERC20}                  from "@openzeppelin/contracts/token/ERC20/ut
 import {Errors}                     from "./libraries/Errors.sol";
 import {IUniswapV2Factory, ISwapRouter} from "./interfaces/IAMMInterface.sol";
 import {IUniversalGateway}          from "./interfaces/IUniversalGateway.sol";
-import {IRateProvider}              from "./interfaces/IUniversalGateway.sol";
 import {RevertSettings, UniversalPayload} from "./libraries/Types.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
@@ -60,9 +59,6 @@ contract UniversalGatewayV1 is
 
     /// @notice Token whitelist for BRIDGING (assets locked in this contract)
     mapping(address => bool) public isSupportedToken;
-
-    /// @notice Rate provider for USD valuation checks
-    IRateProvider public rateProvider;
 
     /// @notice Uniswap V2 factory & router (chain-specific)
     IUniswapV2Factory public uniV2Factory;
@@ -112,9 +108,6 @@ contract UniversalGatewayV1 is
         MIN_CAP_UNIVERSAL_TX_USD = minCapUsd;
         MAX_CAP_UNIVERSAL_TX_USD = maxCapUsd;
 
-        if (rateProv == address(0)) revert Errors.RateProviderNotSet();
-        rateProvider = IRateProvider(rateProv);
-
         if (factory != address(0) && router != address(0)) {
             uniV2Factory = IUniswapV2Factory(factory);
             uniV2Router  = ISwapRouter(router);
@@ -125,7 +118,6 @@ contract UniversalGatewayV1 is
 
         emit TSSAddressUpdated(address(0), tss);
         emit CapsUpdated(minCapUsd, maxCapUsd);
-        emit RateProviderUpdated(rateProv);
         if (factory != address(0) && router != address(0)) {
             emit RoutersUpdated(factory, router);
         }
@@ -175,12 +167,6 @@ contract UniversalGatewayV1 is
     function setEthUsdFeed(address feed) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (feed == address(0)) revert Errors.ZeroAddress();
         ethUsdFeed = AggregatorV3Interface(feed);
-    }
-
-    function setRateProvider(address rateProv) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused { //@audit-info - NEEDS RECHECK
-        if (rateProv == address(0)) revert Errors.RateProviderNotSet();
-        rateProvider = IRateProvider(rateProv);
-        emit RateProviderUpdated(rateProv);
     }
 
     function setRouters(address factory, address router) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
@@ -352,10 +338,9 @@ contract UniversalGatewayV1 is
     // =========================
 
     function _checkUsdCaps(address token, uint256 amount) internal view { //@audit-info - NEEDS RECHECK
-        if (address(rateProvider) == address(0)) revert Errors.RateProviderNotSet();
-        uint256 usd = rateProvider.getUsdValue(token, amount); // 1e18 USD
-        if (usd < MIN_CAP_UNIVERSAL_TX_USD) revert Errors.DepositFailed();
-        if (usd > MAX_CAP_UNIVERSAL_TX_USD) revert Errors.DepositFailed();
+        uint256 usdValue = Math.mulDiv(amount, _ethUsdPrice1e18(), 1e18);
+        if (usdValue < MIN_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
+        if (usdValue > MAX_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
     }
 
     /// @dev Forward native ETH to TSS; returns amount forwarded (= msg.value or computed after swap).
