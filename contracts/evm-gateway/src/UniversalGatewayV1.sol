@@ -39,7 +39,6 @@ contract UniversalGatewayV1 is
     IUniversalGateway
 {
     using SafeERC20 for IERC20;
-    using TWAPOracle for TWAPOracle.PoolConfig;
     // =========================
     //           ROLES
     // =========================
@@ -90,9 +89,13 @@ contract UniversalGatewayV1 is
         uint256 minCapUsd,
         uint256 maxCapUsd,
         address factory,
-        address router
+        address router,
+        address _wethAddress
     ) external initializer {
-        if (admin == address(0) || pauser == address(0) || tss == address(0)) revert Errors.ZeroAddress();
+        if (admin == address(0) || 
+                pauser == address(0) || 
+                    tss == address(0) ||
+                        _wethAddress == address(0)) revert Errors.ZeroAddress();
 
         __Context_init();
         __Pausable_init();
@@ -106,11 +109,12 @@ contract UniversalGatewayV1 is
         tssAddress = tss;
         MIN_CAP_UNIVERSAL_TX_USD = minCapUsd;
         MAX_CAP_UNIVERSAL_TX_USD = maxCapUsd;
-
+        
+        WETH = _wethAddress;
         if (factory != address(0) && router != address(0)) {
             uniV2Factory = IUniswapV2Factory(factory);
             uniV2Router  = ISwapRouter(router);
-            WETH         = ISwapRouter(router).WETH();
+
         }
 
         emit TSSAddressUpdated(address(0), tss);
@@ -136,10 +140,6 @@ contract UniversalGatewayV1 is
     function unpause() external whenPaused onlyRole(PAUSER_ROLE) {
         _unpause();
         emit UnpausedBy(_msgSender());
-    }
-
-    function setWETH(address weth) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused { // @audit-info - double check if needed
-        WETH = weth;
     }
 
     function setTSSAddress(address newTSS) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
@@ -227,46 +227,33 @@ contract UniversalGatewayV1 is
         bytes   calldata _data,
         RevertSettings calldata revertCFG
     ) external payable nonReentrant whenNotPaused {
-        if (revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
-
         // Note: Important check to ensure the USD cap is not exceeded.
+        // Reason: The depositForUniversalTx() function is designed for UX improvement and instant cross-chain calls. 
+        // Therefore, the required block confirmations for this route is very minimal. This means moving large amounts of ETH via this route is not recommended.
         // Amount of ETH deposited must be less than or equal to the USD cap range allowed for this deposit route.
         // Trying to move out-of-range ETH will revert the whole trasnaction.
+
         _checkUSDCaps(msg.value);
         _handleNativeDeposit(msg.value);
-
-        emit DepositForUniversalTx({ // audit-info - double check event emission
-            sender:        _msgSender(),
-            payloadHash:   keccak256(abi.encode(payload)),
-            nativeTokenDeposited: msg.value,
-            _data:          _data,
-            revertCFG:     revertCFG
-        });
+        _depositForUniversalTx(_msgSender(), keccak256(abi.encode(payload)), msg.value, _data, revertCFG);
     }
 
-    // function depositForUniversalTxERC20( //@audit-info - double check event emission + ORACLE SET UP + GAS LIMIT
-    //     address tokenIn,
-    //     uint256 amountIn,
-    //     UniversalPayload calldata payload,
-    //     bytes   calldata _data,
-    //     RevertSettings calldata revertCFG,
-    //     uint256 amountOutMinETH,
-    //     uint256 deadline
-    // ) external nonReentrant whenNotPaused {
-    //     if (revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
+    function _depositForUniversalTx(
+        address _caller, 
+        bytes32 _payloadHash, 
+        uint256 _nativeTokenAmount, 
+        bytes calldata _data, 
+        RevertSettings calldata _revertCFG) internal {
+        if (_revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
 
-    //     // ToDo: add USD cap check for ERC20 Token
-    //     if (msg.value != 0 || amountIn == 0) revert Errors.InvalidAmount();
-    //     _handleERC20ForGasDeposit(tokenIn, amountIn, amountOutMinETH, deadline);
-
-    //     emit DepositForUniversalTx({ // audit-info - double check event emission
-    //         sender:        _msgSender(),
-    //         payloadHash:   keccak256(abi.encode(payload)),
-    //         nativeTokenDeposited: amountIn,
-    //         _data:          _data,
-    //         revertCFG:     revertCFG
-    //     });
-    // }
+        emit DepositForUniversalTx({
+            sender: _caller,
+            payloadHash: _payloadHash,
+            nativeTokenDeposited: _nativeTokenAmount,
+            _data: _data,
+            revertCFG: _revertCFG
+        });
+    }
 
     /**
      * @notice Deposit for Asset Bridging (lock on gateway).
@@ -358,7 +345,7 @@ contract UniversalGatewayV1 is
         emit Withdraw(revertCFG.fundRecipient, amount, token);
     }
 
-        // =========================
+    // =========================
     //       INTERNAL HELPERS
     // =========================
 
@@ -389,7 +376,10 @@ contract UniversalGatewayV1 is
 
     /// @dev ERC20 withdraw by TSS (token must be isSupported for bridging)
     function _handleTokenWithdraw(address token, address recipient, uint256 amount) internal {
-        if (!isSupportedToken[token]) revert Errors.NotSupported();
+        // Note: Removing isSupportedToken[token] for now to avoid a rare case scenario
+        //       If a token was supported before and user bridged > but was removed from support list later, funds get stuck.
+        // if (!isSupportedToken[token]) revert Errors.NotSupported();
+        if (IERC20(token).balanceOf(address(this)) < amount) revert Errors.InvalidAmount();
         IERC20(token).safeTransfer(recipient, amount);
     }
 
@@ -415,6 +405,8 @@ contract UniversalGatewayV1 is
 
     /// @notice Convert an ETH amount (wei) into USD (1e18) using the same TWAP.
     function quoteEthAmountInUsd1e18(uint256 amountWei) public view returns (uint256 usd1e18) {
+        if(WETH == address(0)) revert Errors.ZeroAddress();
+        if(poolUSDC.enabled == false) revert Errors.NoValidTWAP();
         // Convert PoolCfg to TWAPOracle.PoolConfig
         TWAPOracle.PoolConfig memory config = TWAPOracle.PoolConfig({
             pool: poolUSDC.pool,
