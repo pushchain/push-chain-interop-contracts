@@ -16,4 +16,15 @@ library Errors {
     error PairNotFound();
     error SlippageExceededOrExpired();
     error ZeroAddress();
+
+    // =========================
+    //           TWAP Specific Errors
+    // =========================
+    
+    error NoValidTWAP();
+    error InvalidPoolConfig();
+    error PoolTooIlliquid();
+    error LowCardinality();
+    error TwapWindowTooShort();
+    error PriceDeviationTooHigh();  // spread between USDC/USDT quotes too large (stability guard)
 }

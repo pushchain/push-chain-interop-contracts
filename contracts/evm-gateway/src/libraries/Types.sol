@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
+import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 
     // =========================
     //        STRUCTS / TYPES
@@ -34,5 +35,13 @@ struct UniversalPayload {
     uint256 nonce; // Chain ID where this should be executed
     uint256 deadline; // Timestamp after which this payload is invalid
     VerificationType vType; // Type of verification to use before execution (signedVerification or universalTxVerification)
+}
+
+/// @notice Canonical WETH/USDC pool (fee tier e.g., 500 or 3000) & config.
+struct PoolCfg {
+    IUniswapV3Pool pool;    // must be WETH <-> USDC
+    address stableToken;         // USDC
+    uint8   stableTokenDecimals; // 6 for USDC
+    bool    enabled;        // kill-switch
 }
 

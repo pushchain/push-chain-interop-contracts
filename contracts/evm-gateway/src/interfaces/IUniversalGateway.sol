@@ -44,13 +44,10 @@ interface IUniversalGateway {
 
     /// @notice Main user-facing deposit functions
     function depositForUniversalTx(
-        address tokenIn,
         uint256 amountIn,
         UniversalPayload calldata payload,
         bytes   calldata _data,
-        RevertSettings calldata revertCFG,
-        uint256 amountOutMinETH,
-        uint256 deadline
+        RevertSettings calldata revertCFG
     ) external payable;
 
     function depositForAssetBridge(

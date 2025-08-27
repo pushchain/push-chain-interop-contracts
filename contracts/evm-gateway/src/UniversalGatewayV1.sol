@@ -23,12 +23,13 @@ import {AccessControlUpgradeable}   from "@openzeppelin/contracts-upgradeable/ac
 import {IERC20}                     from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20}                  from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Errors}                     from "./libraries/Errors.sol";
-import {IUniswapV2Factory, ISwapRouter} from "./interfaces/IAMMInterface.sol";
 import {IUniversalGateway}          from "./interfaces/IUniversalGateway.sol";
-import {RevertSettings, UniversalPayload} from "./libraries/Types.sol";
+import {RevertSettings, UniversalPayload, PoolCfg} from "./libraries/Types.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
-import {AggregatorV3Interface} from "@chainlink/contracts/shared/interfaces/AggregatorV3Interface.sol";
+import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
+import {IUniswapV2Factory, ISwapRouter} from "./interfaces/IAMMInterface.sol";
+import {OracleLibrary}  from "@uniswap/v3-periphery/contracts/libraries/OracleLibrary.sol";
 
 
 contract UniversalGatewayV1 is
@@ -64,11 +65,12 @@ contract UniversalGatewayV1 is
     IUniswapV2Factory public uniV2Factory;
     ISwapRouter  public uniV2Router;
     address           public WETH; // cached from router
+    PoolCfg public poolUSDC;
 
-    /// @notice Chainlink price feed for USD valuation checks
-    AggregatorV3Interface public ethUsdFeed;          // Chainlink ETH/USD proxy
-    uint256 public maxPriceAge;
-    // note: sequencerUptimeFeed will be added for gateways for L2s
+    /// @notice TWAP parameters
+    uint32  public twapWindowSec;      // e.g., 1800 (30 min)
+    uint16  public minObsCardinality;  // e.g., 16 (set 0 to disable check)
+
 
     // storage gap for upgradeability
     uint256[43] private __gap;
@@ -79,7 +81,6 @@ contract UniversalGatewayV1 is
      * @param tss              initial TSS address
      * @param minCapUsd        min USD cap (1e18 decimals)
      * @param maxCapUsd        max USD cap (1e18 decimals)
-     * @param rateProv         external rate provider (required for USD checks)
      * @param factory          UniswapV2 factory (optional if ERC20-for-gas disabled)
      * @param router           UniswapV2 router  (optional if ERC20-for-gas disabled)
      */
@@ -89,7 +90,6 @@ contract UniversalGatewayV1 is
         address tss,
         uint256 minCapUsd,
         uint256 maxCapUsd,
-        address rateProv,
         address factory,
         address router
     ) external initializer {
@@ -114,13 +114,14 @@ contract UniversalGatewayV1 is
             WETH         = ISwapRouter(router).WETH();
         }
 
-        ethUsdFeed = AggregatorV3Interface(0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419);
-
         emit TSSAddressUpdated(address(0), tss);
         emit CapsUpdated(minCapUsd, maxCapUsd);
         if (factory != address(0) && router != address(0)) {
             emit RoutersUpdated(factory, router);
         }
+        // sensible defaults; override with setters
+        twapWindowSec      = 1800; // 30m
+        minObsCardinality  = 16;   // require some history for robust TWAP
     }
 
     modifier onlyTSS() {
@@ -160,15 +161,6 @@ contract UniversalGatewayV1 is
         emit CapsUpdated(minCapUsd, maxCapUsd);
     }
 
-    function setPriceGuards(uint256 _maxPriceAge) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        maxPriceAge = _maxPriceAge;      // e.g., 120
-    }
-
-    function setEthUsdFeed(address feed) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (feed == address(0)) revert Errors.ZeroAddress();
-        ethUsdFeed = AggregatorV3Interface(feed);
-    }
-
     function setRouters(address factory, address router) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (factory == address(0) || router == address(0)) revert Errors.ZeroAddress();
         uniV2Factory = IUniswapV2Factory(factory);
@@ -185,6 +177,29 @@ contract UniversalGatewayV1 is
         }
     }
 
+
+    /// @notice Set USDC pool (must be WETH<->USDC). Call once per chain.
+    function setUSDCPool(address pool, address usdc, uint8 usdcDecimals) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        if (pool == address(0) || usdc == address(0)) revert Errors.ZeroAddress();
+            poolUSDC = PoolCfg({    
+            pool: IUniswapV3Pool(pool),
+            stableToken: usdc,
+            stableTokenDecimals: usdcDecimals, // 6 for USDC
+            enabled: true
+        });
+    }
+
+    /// @notice Set TWAP window (seconds). Recommend >= 300s; 1800s is robust.
+    function setTwapWindow(uint32 secondsAgo) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        if (secondsAgo < 300) revert Errors.TwapWindowTooShort();
+        twapWindowSec = secondsAgo;
+    }
+
+    /// @notice Set minimum observation cardinality (0 disables the check).
+    function setMinObsCardinality(uint16 minCard) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        minObsCardinality = minCard;
+    }
+
     // =========================
     //           DEPOSITS
     // =========================
@@ -195,36 +210,22 @@ contract UniversalGatewayV1 is
      *         - If token != 0: swap ERC20->ETH via UniswapV2 then forward ETH to TSS.
      *         - Enforces USD caps against the *input* token and amount.
      *
-     * @param tokenIn     address(0) for native; ERC20 otherwise
      * @param amountIn    msg.value (for native) or ERC20 amount
      * @param payload     universal payload
      * @param _data       optional bytes - can be empty
      * @param revertCFG   revert instructions (fund recipient + message)
-     * @param amountOutMinETH min ETH expected when swapping ERC20->ETH (ignored for native)
-     * @param deadline    swap deadline (ignored for native)
+
      */
-    function depositForUniversalTx( //@audit-info - double check event emission + ORACLE SET UP + GAS LIMIT
-        address tokenIn,
+
+     function depositForUniversalTx( //@audit-info - double check event emission + ORACLE SET UP + GAS LIMIT
         uint256 amountIn,
         UniversalPayload calldata payload,
         bytes   calldata _data,
-        RevertSettings calldata revertCFG,
-        uint256 amountOutMinETH,
-        uint256 deadline
+        RevertSettings calldata revertCFG
     ) external payable nonReentrant whenNotPaused {
         if (revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
 
-        uint256 ethForwarded;
-        if (tokenIn == address(0)) {
-            // native path
-            if (msg.value != amountIn || amountIn == 0) revert Errors.InvalidAmount();
-            _checkUSDCaps(amountIn);
-            ethForwarded = _handleNativeDeposit(amountIn);
-        } else {
-            // ToDo: add USD cap check for ERC20 Token
-            if (msg.value != 0 || amountIn == 0) revert Errors.InvalidAmount();
-            ethForwarded = _handleERC20ForGasDeposit(tokenIn, amountIn, amountOutMinETH, deadline);
-        }
+        // ToDo: Take incoming ETH  > check USD equivalent > check USD cap > forward to TSS ( call _handleNativeDeposit)
 
         emit DepositForUniversalTx({ // audit-info - double check event emission
             sender:        _msgSender(),
@@ -234,6 +235,30 @@ contract UniversalGatewayV1 is
             revertCFG:     revertCFG
         });
     }
+
+    // function depositForUniversalTxERC20( //@audit-info - double check event emission + ORACLE SET UP + GAS LIMIT
+    //     address tokenIn,
+    //     uint256 amountIn,
+    //     UniversalPayload calldata payload,
+    //     bytes   calldata _data,
+    //     RevertSettings calldata revertCFG,
+    //     uint256 amountOutMinETH,
+    //     uint256 deadline
+    // ) external nonReentrant whenNotPaused {
+    //     if (revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
+
+    //     // ToDo: add USD cap check for ERC20 Token
+    //     if (msg.value != 0 || amountIn == 0) revert Errors.InvalidAmount();
+    //     _handleERC20ForGasDeposit(tokenIn, amountIn, amountOutMinETH, deadline);
+
+    //     emit DepositForUniversalTx({ // audit-info - double check event emission
+    //         sender:        _msgSender(),
+    //         payloadHash:   keccak256(abi.encode(payload)),
+    //         nativeTokenDeposited: amountIn,
+    //         _data:          _data,
+    //         revertCFG:     revertCFG
+    //     });
+    // }
 
     /**
      * @notice Deposit for Asset Bridging (lock on gateway).
@@ -330,7 +355,7 @@ contract UniversalGatewayV1 is
     // =========================
 
     function _checkUSDCaps(uint256 amount) internal view { //@audit-info - NEEDS RECHECK
-        uint256 usdValue = Math.mulDiv(amount, _ethUsdPrice1e18(), 1e18);
+        uint256 usdValue = Math.mulDiv(amount, ethUsdPrice1e18(), 1e18);
         if (usdValue < MIN_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
         if (usdValue > MAX_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
     }
@@ -348,54 +373,54 @@ contract UniversalGatewayV1 is
         IERC20(token).safeTransferFrom(_msgSender(), address(this), amount);
     }
 
-    /// @dev For universal tx gas: swap ERC20 -> ETH using Uniswap V2 and forward ETH to TSS.
-    ///      Reverts if no pair or if swap fails or deadline/slippage violation.
-    function _handleERC20ForGasDeposit(
-        address tokenIn,
-        uint256 amountIn,
-        uint256 amountOutMin,
-        uint256 deadline
-    ) internal returns (uint256 ethForwarded) {
-        if (address(uniV2Factory) == address(0) || address(uniV2Router) == address(0) || WETH == address(0)) {
-            revert Errors.NotSwapAllowed();
-        }
+    // /// @dev For universal tx gas: swap ERC20 -> ETH using Uniswap V2 and forward ETH to TSS.
+    // ///      Reverts if no pair or if swap fails or deadline/slippage violation.
+    // function _handleERC20ForGasDeposit( //@audit-info - double check event emission + ORACLE SET UP + GAS LIMIT
+    //     address tokenIn,
+    //     uint256 amountIn,
+    //     uint256 amountOutMin,
+    //     uint256 deadline
+    // ) internal returns (uint256 ethForwarded) {
+    //     if (address(uniV2Factory) == address(0) || address(uniV2Router) == address(0) || WETH == address(0)) {
+    //         revert Errors.NotSwapAllowed();
+    //     }
 
-        // Pair must exist
-        address pair = IUniswapV2Factory(uniV2Factory).getPair(tokenIn, WETH);
-        if (pair == address(0)) revert Errors.PairNotFound();
+    //     // Pair must exist
+    //     address pair = IUniswapV2Factory(uniV2Factory).getPair(tokenIn, WETH);
+    //     if (pair == address(0)) revert Errors.PairNotFound();
 
-        // Pull tokens then approve router
-        IERC20(tokenIn).safeTransferFrom(_msgSender(), address(this), amountIn);
-        IERC20(tokenIn).safeIncreaseAllowance(address(uniV2Router), amountIn);
+    //     // Pull tokens then approve router
+    //     IERC20(tokenIn).safeTransferFrom(_msgSender(), address(this), amountIn);
+    //     IERC20(tokenIn).safeIncreaseAllowance(address(uniV2Router), amountIn);
 
-        address[] memory path = new address[](2);
-        path[0] = tokenIn;
-        path[1] = WETH;
+    //     address[] memory path = new address[](2);
+    //     path[0] = tokenIn;
+    //     path[1] = WETH;
 
-        // Perform swap
-        uint256 balanceBefore = address(this).balance;
-        // Prefer standard variant; fee-on-transfer variant is also present in some deployments;
-        // choose one; here we use the standard that returns amounts.
-        uint256[] memory amounts = ISwapRouter(uniV2Router).swapExactTokensForETH(
-            amountIn,
-            amountOutMin,
-            path,
-            address(this),
-            deadline
-        );
-        // Clear approval (defense-in-depth)
-        IERC20(tokenIn).safeIncreaseAllowance(address(uniV2Router), 0);
+    //     // Perform swap
+    //     uint256 balanceBefore = address(this).balance;
+    //     // Prefer standard variant; fee-on-transfer variant is also present in some deployments;
+    //     // choose one; here we use the standard that returns amounts.
+    //     uint256[] memory amounts = ISwapRouter(uniV2Router).swapExactTokensForETH(
+    //         amountIn,
+    //         amountOutMin,
+    //         path,
+    //         address(this),
+    //         deadline
+    //     );
+    //     // Clear approval (defense-in-depth)
+    //     IERC20(tokenIn).safeIncreaseAllowance(address(uniV2Router), 0);
 
-        if (amounts.length < 2) revert Errors.SlippageExceededOrExpired();
-        uint256 ethGained = address(this).balance - balanceBefore;
-        if (ethGained < amountOutMin) revert Errors.SlippageExceededOrExpired();
+    //     if (amounts.length < 2) revert Errors.SlippageExceededOrExpired();
+    //     uint256 ethGained = address(this).balance - balanceBefore;
+    //     if (ethGained < amountOutMin) revert Errors.SlippageExceededOrExpired();
 
-        // Forward ETH to TSS
-        (bool ok, ) = payable(tssAddress).call{value: ethGained}("");
-        if (!ok) revert Errors.DepositFailed();
+    //     // Forward ETH to TSS
+    //     (bool ok, ) = payable(tssAddress).call{value: ethGained}("");
+    //     if (!ok) revert Errors.DepositFailed();
 
-        return ethGained;
-    }
+    //     return ethGained;
+    // }
 
     /// @dev Native withdraw by TSS
     function _handleNativeWithdraw(address recipient, uint256 amount) internal {
@@ -410,23 +435,67 @@ contract UniversalGatewayV1 is
     }
 
 
-    /// @notice Returns ETH/USD scaled to 1e18, with staleness & (optionally) sequencer checks only for L2s.
-    /// @dev Reverts on invalid, stale, or unsafe conditions.
-    function _ethUsdPrice1e18() internal view returns (uint256 px1e18) {
+    /// @notice ETH/USD (scaled to 1e18) using Uniswap V3 TWAP from the configured WETH/USDC pool.
+    /// @dev    Assumes USDC ≈ $1; scales 6 decimals -> 1e18. Enforces observation cardinality.
+    function _ethUsdPrice1e18FromUniV3_USDC() internal view returns (uint256 ethUsd1e18) {
+        PoolCfg memory cfg = poolUSDC;
+        if (!cfg.enabled) revert Errors.NoValidTWAP();
 
-        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) =
-            ethUsdFeed.latestRoundData();
+        IUniswapV3Pool pool = cfg.pool;
 
-        if (answer <= 0) revert Errors.InvalidAmount();
-        if (answeredInRound < roundId) revert Errors.StalePrice();
-        if (block.timestamp - updatedAt > maxPriceAge) revert Errors.StalePrice();
-        
-        uint8 dec = ethUsdFeed.decimals();                 // typically 8
-        uint256 denom = 10 ** uint256(dec);                // scale divisor for feed decimals
-        // Scale price to 1e18 with full-precision math
-        return Math.mulDiv(uint256(answer), 1e18, denom);  // 1 ETH = ethUsdPrice1e18 USD
-        
+        // slot0: (sqrtPriceX96, tick, observationIndex, observationCardinality, observationCardinalityNext, feeProtocol, unlocked)
+        (, /*tick*/ , , uint16 obsCard, uint16 obsCardNext, , ) = pool.slot0();
+
+        // Require sufficient observation history for TWAP (either current or next target)
+        if (minObsCardinality != 0 && obsCardNext < minObsCardinality && obsCard < minObsCardinality) {
+            revert Errors.LowCardinality();
+        }
+
+        // TWAP tick over window
+        (int24 meanTick, ) = OracleLibrary.consult(address(pool), twapWindowSec);
+
+        // Quote 1 ETH (1e18 wei) -> USDC at meanTick, regardless of token ordering in the pool
+        address t0 = pool.token0();
+        address t1 = pool.token1();
+
+        uint256 usdcOut;
+        if (t0 == WETH) {
+            // WETH (t0) -> USDC (t1)
+            usdcOut = OracleLibrary.getQuoteAtTick(meanTick, 1e18, t0, t1);
+            if (t1 != cfg.stableToken) revert Errors.InvalidPoolConfig();
+        } else if (t1 == WETH) {
+            // WETH (t1) -> USDC (t0)
+            usdcOut = OracleLibrary.getQuoteAtTick(meanTick, 1e18, t1, t0);
+            if (t0 != cfg.stableToken) revert Errors.InvalidPoolConfig();
+        } else {
+            revert Errors.InvalidPoolConfig();
+        }
+
+        // Scale USDC (6 decimals) -> 1e18 USD
+        if (cfg.stableTokenDecimals < 18) {
+            ethUsd1e18 = usdcOut * (10 ** (18 - cfg.stableTokenDecimals)); // typically *1e12
+        } else if (cfg.stableTokenDecimals > 18) {
+            ethUsd1e18 = usdcOut / (10 ** (cfg.stableTokenDecimals - 18));
+        } else {
+            ethUsd1e18 = usdcOut;
+        }
+
+        if (ethUsd1e18 == 0) revert Errors.NoValidTWAP();
     }
+
+    /// @notice Public view: ETH/USD at 1e18 (Uniswap V3 TWAP from USDC pool).
+    function ethUsdPrice1e18() public view returns (uint256) {
+        return _ethUsdPrice1e18FromUniV3_USDC();
+    }
+
+    /// @notice Convert an ETH amount (wei) into USD (1e18) using the same TWAP.
+    function quoteEthAmountInUsd1e18(uint256 amountWei) public view returns (uint256 usd1e18) {
+        uint256 px = _ethUsdPrice1e18FromUniV3_USDC();
+        // Use OZ mulDiv to avoid precision loss / overflow
+        usd1e18 = Math.mulDiv(amountWei, px, 1e18);
+    }
+
+
 
     // =========================
     //         RECEIVE/FALLBACK
