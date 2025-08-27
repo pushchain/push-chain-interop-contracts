@@ -33,10 +33,7 @@ contract UniversalGatewayTest is Test {
 
         address deployedAddress = Upgrades.deployUUPSProxy(
             "UniversalGateway.sol",
-            abi.encodeCall(
-                UniversalGateway.initialize,
-                (admin, WETH, USDT, ROUTER, ETHUSDFEED, USDTUSDFEED)
-            )
+            abi.encodeCall(UniversalGateway.initialize, (admin, WETH, USDT, ROUTER, ETHUSDFEED, USDTUSDFEED))
         );
         locker = UniversalGateway(deployedAddress);
         vm.deal(user, 100 ether);
@@ -57,8 +54,7 @@ contract UniversalGatewayTest is Test {
         (uint256 ethPrice, uint8 ethDecimals) = locker.getEthUsdPrice();
 
         // Get USDT/USD price
-        (, int256 usdtPrice, , , ) = AggregatorV3Interface(USDTUSDFEED)
-            .latestRoundData();
+        (, int256 usdtPrice,,,) = AggregatorV3Interface(USDTUSDFEED).latestRoundData();
         uint8 usdtDecimals = AggregatorV3Interface(USDTUSDFEED).decimals();
 
         // Calculate expected USDT amount (with slippage)
@@ -67,13 +63,10 @@ contract UniversalGatewayTest is Test {
         uint256 expectedUsdt = minOut / 1e2; // Convert to USDT decimals
 
         // Calculate final USD amount using USDT price
-        uint256 expectedUsdAmount = (uint256(usdtPrice) * expectedUsdt) /
-            10 ** usdtDecimals;
+        uint256 expectedUsdAmount = (uint256(usdtPrice) * expectedUsdt) / 10 ** usdtDecimals;
 
-        UniversalGateway.AmountInUSD memory expectedPrice = UniversalGateway.AmountInUSD({
-            amountInUSD: expectedUsdAmount,
-            decimals: usdtDecimals
-        });
+        UniversalGateway.AmountInUSD memory expectedPrice =
+            UniversalGateway.AmountInUSD({amountInUSD: expectedUsdAmount, decimals: usdtDecimals});
 
         // Expect the event to be emitted
         vm.expectEmit(true, true, true, true);
@@ -124,9 +117,7 @@ contract UniversalGatewayTest is Test {
     }
 
     event FundsAdded(
-        address indexed user,
-        bytes32 indexed transactionHash,
-        UniversalGateway.AmountInUSD indexed AmountInUSD
+        address indexed user, bytes32 indexed transactionHash, UniversalGateway.AmountInUSD indexed AmountInUSD
     );
     event TokenRecovered(address indexed admin, uint256 amount);
 }
