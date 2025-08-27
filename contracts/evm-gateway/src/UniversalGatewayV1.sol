@@ -25,10 +25,12 @@ import {SafeERC20}                  from "@openzeppelin/contracts/token/ERC20/ut
 import {Errors}                     from "./libraries/Errors.sol";
 import {IUniversalGateway}          from "./interfaces/IUniversalGateway.sol";
 import {RevertSettings, UniversalPayload, PoolCfg} from "./libraries/Types.sol";
+import {IWETH} from "./interfaces/IWETH.sol";
 import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
-import {IUniswapV2Factory, ISwapRouter} from "./interfaces/IAMMInterface.sol";
+import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
+import {ISwapRouter as ISwapRouterV3} from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 import {TWAPOracle} from "./libraries/TWAPOracle.sol";
-
+import {OracleLibrary} from "@uniswap/v3-periphery/contracts/libraries/OracleLibrary.sol";
 
 contract UniversalGatewayV1 is
     Initializable,
@@ -59,10 +61,11 @@ contract UniversalGatewayV1 is
     /// @notice Token whitelist for BRIDGING (assets locked in this contract)
     mapping(address => bool) public isSupportedToken;
 
-    /// @notice Uniswap V2 factory & router (chain-specific)
-    IUniswapV2Factory public uniV2Factory;
-    ISwapRouter  public uniV2Router;
+    /// @notice Uniswap V3 factory & router (chain-specific)
+    IUniswapV3Factory public uniV3Factory;
+    ISwapRouterV3     public uniV3Router;
     address           public WETH; // cached from router
+    uint24[3] public v3FeeOrder = [uint24(500), uint24(3000), uint24(10000)];
     PoolCfg public poolUSDC;
 
     /// @notice TWAP parameters
@@ -112,8 +115,8 @@ contract UniversalGatewayV1 is
         
         WETH = _wethAddress;
         if (factory != address(0) && router != address(0)) {
-            uniV2Factory = IUniswapV2Factory(factory);
-            uniV2Router  = ISwapRouter(router);
+            uniV3Factory = IUniswapV3Factory(factory);
+            uniV3Router  = ISwapRouterV3(router);
 
         }
 
@@ -155,7 +158,7 @@ contract UniversalGatewayV1 is
     }
 
     function setCapsUSD(uint256 minCapUsd, uint256 maxCapUsd) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
-        if (minCapUsd > maxCapUsd) revert Errors.InvalidAmount();
+        if (minCapUsd > maxCapUsd) revert Errors.InvalidCapRange();
 
         MIN_CAP_UNIVERSAL_TX_USD = minCapUsd;
         MAX_CAP_UNIVERSAL_TX_USD = maxCapUsd;
@@ -164,9 +167,8 @@ contract UniversalGatewayV1 is
 
     function setRouters(address factory, address router) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (factory == address(0) || router == address(0)) revert Errors.ZeroAddress();
-        uniV2Factory = IUniswapV2Factory(factory);
-        uniV2Router  = ISwapRouter(router);
-        WETH         = ISwapRouter(router).WETH();
+        uniV3Factory = IUniswapV3Factory(factory);
+        uniV3Router  = ISwapRouterV3(router);
         emit RoutersUpdated(factory, router);
     }
 
@@ -176,6 +178,19 @@ contract UniversalGatewayV1 is
             isSupportedToken[tokens[i]] = isSupported[i];
             emit TokenSupportModified(tokens[i], isSupported[i]);
         }
+    }
+
+
+    function setUniV3(address factory, address router) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        if (factory == address(0) || router == address(0)) revert Errors.ZeroAddress();
+        uniV3Factory  = IUniswapV3Factory(factory);
+        uniV3Router  = ISwapRouterV3(router);
+    }
+
+    function setV3FeeOrder(uint24 a, uint24 b, uint24 c) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused
+    {
+        uint24[3] memory old = v3FeeOrder;
+        v3FeeOrder = [a, b, c];
     }
 
 
@@ -206,6 +221,14 @@ contract UniversalGatewayV1 is
     ///         Best practice (per mainnet WETH/USDC pool): require >=16–32 for a 30m TWAP window.
     function setMinObsCardinality(uint16 minCard) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         minObsCardinality = minCard;
+    }
+    
+    /// @notice Enable or disable the price oracle pool
+    /// @dev Used to quickly disable price oracle during incidents without replacing the whole config
+    /// @param enabled True to enable the pool, false to disable
+    function setPoolEnabled(bool enabled) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        poolUSDC.enabled = enabled;
+        emit PoolStatusChanged(enabled);
     }
 
     // =========================
@@ -349,7 +372,7 @@ contract UniversalGatewayV1 is
     //       INTERNAL HELPERS
     // =========================
 
-    function _checkUSDCaps(uint256 amount) internal view { //@audit-info - NEEDS RECHECK
+    function _checkUSDCaps(uint256 amount) internal view { 
         uint256 usdValue = quoteEthAmountInUsd1e18(amount);
         if (usdValue < MIN_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
         if (usdValue > MAX_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
@@ -424,13 +447,71 @@ contract UniversalGatewayV1 is
         );
     }
 
+    /// @dev Returns (pool, fee) for the first existing ABC/WETH v3 pool following v3FeeOrder.
+    ///      Reverts if none exists.
+    function _findV3PoolABC_ETH(address token)
+        internal
+        view
+        returns (IUniswapV3Pool pool, uint24 fee)
+    {
+        if (address(uniV3Factory) == address(0)) revert Errors.NotSwapAllowed();
+        if (token == address(0) || WETH == address(0)) revert Errors.ZeroAddress();
+        if (token == WETH) {
+            // Special case: “pool” not needed for swap; we can just unwrap instead.
+            return (IUniswapV3Pool(address(0)), 0);
+        }
+
+        unchecked {
+            for (uint256 i = 0; i < 3; i++) {
+                uint24 f = v3FeeOrder[i];
+                address p = uniV3Factory.getPool(token, WETH, f);
+                if (p != address(0)) {
+                    return (IUniswapV3Pool(p), f);
+                }
+            }
+        }
+        revert Errors.PairNotFound(); // "no ABC/WETH v3 pool"
+    }
+
+    /// @dev Estimate ETH out for `amountIn` of a given token X using v3 TWAP (ABC/WETH pool).
+    ///      Enforces observation cardinality (same minObsCardinality used elsewhere in this contract).
+    ///      Returns the estimated ETH out in wei.
+    function _estimateEthOutForToken(
+        IUniswapV3Pool pool,
+        address token,
+        uint256 amountIn
+    ) internal view returns (uint256 ethOutEstWei) {
+        // WETH fast-path: no pool needed; “estimate” = amountIn (in WETH units) after unwrap.
+        if (token == WETH) return amountIn;
+        if (address(pool) == address(0)) revert Errors.InvalidPoolConfig();
+        // Require adequate observation history
+        (, , , uint16 obsCard, uint16 obsCardNext, , ) = pool.slot0();
+        if (minObsCardinality != 0 && obsCard < minObsCardinality && obsCardNext < minObsCardinality) {
+            revert Errors.LowCardinality();
+        }
+
+        // TWAP tick over your window
+        (int24 meanTick, ) = OracleLibrary.consult(address(pool), twapWindowSec);
+
+        // getQuoteAtTick expects baseAmount as uint128
+        if (amountIn > type(uint128).max) revert Errors.InvalidAmount();
+        ethOutEstWei = OracleLibrary.getQuoteAtTick(
+            meanTick,
+            uint128(amountIn),
+            token,
+            WETH
+        );
+    
+    }
+
+
 
 
     // =========================
     //         RECEIVE/FALLBACK
     // =========================
 
-    /// @dev Reject plain ETH; we only accept ETH via explicit deposit functions.
+    /// @dev Reject plain ETH; we only accept ETH via explicit deposit functions. // ToDo: CHECK IF REVERT NEEDED in FALLBACKS
     receive() external payable {
         revert Errors.DepositFailed();
     }

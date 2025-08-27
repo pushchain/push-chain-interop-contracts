@@ -3,7 +3,8 @@ pragma solidity 0.8.26;
 
 import {RevertSettings, UniversalPayload} from "../libraries/Types.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IUniswapV2Factory, ISwapRouter} from "./IAMMInterface.sol";
+import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
+import {ISwapRouter as ISwapRouterV3} from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 
 interface IUniversalGateway {
 
@@ -35,6 +36,7 @@ interface IUniversalGateway {
     event TokenSupportModified(address tokenAddress, bool whitelistStatus);
     event CapsUpdated(uint256 minCapUsd, uint256 maxCapUsd);
     event RoutersUpdated(address uniswapFactory, address uniswapRouter);
+    event PoolStatusChanged(bool enabled);
     event PausedBy(address account);
     event UnpausedBy(address account);
 

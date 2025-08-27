@@ -1,6 +1,14 @@
 pragma solidity ^0.8.20;
 
 library Errors {
+
+    // =========================
+    //           Common ERRORS
+    // =========================
+    error InvalidInput();   
+    error InvalidAmount();
+    error ZeroAddress();
+    error InvalidCapRange();
     // =========================
     //           ERRORS for UniversalGatewayV1
     // =========================
@@ -9,18 +17,15 @@ library Errors {
     error NotSupported();
     error NotSwapAllowed();
     error InvalidRecipient();
-    error InvalidInput();   
-    error InvalidAmount();
     error StalePrice();
     error InvalidToken();
-    error PairNotFound();
     error SlippageExceededOrExpired();
-    error ZeroAddress();
 
     // =========================
-    //           TWAP Specific Errors
+    //           TWAP and UniswapV3 Specific Errors
     // =========================
-    
+    error PairNotFound();
+    error NoValidV3Pool();
     error NoValidTWAP();
     error InvalidPoolConfig();
     error PoolTooIlliquid();
