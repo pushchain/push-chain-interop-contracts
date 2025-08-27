@@ -55,8 +55,8 @@ contract UniversalGatewayV1 is
     address public tssAddress;
 
     /// @notice USD caps for universal tx deposits (1e18 = $1)
-    uint256 public MIN_CAP_UNIVERSAL_TX_USD; // inclusive lower bound
-    uint256 public MAX_CAP_UNIVERSAL_TX_USD; // inclusive upper bound
+    uint256 public MIN_CAP_UNIVERSAL_TX_USD; // inclusive lower bound = 1USD = 1e18
+    uint256 public MAX_CAP_UNIVERSAL_TX_USD; // inclusive upper bound = 10USD = 10e18
 
     /// @notice Token whitelist for BRIDGING (assets locked in this contract)
     mapping(address => bool) public isSupportedToken;
@@ -68,8 +68,8 @@ contract UniversalGatewayV1 is
     PoolCfg public poolUSDC;
 
     /// @notice TWAP parameters
-    uint32  public twapWindowSec;      // e.g., 1800 (30 min)
-    uint16  public minObsCardinality;  // e.g., 16 (set 0 to disable check)
+    uint32  public twapWindowSec;     // 1800 (30 min)
+    uint16  public minObsCardinality; // 16 (set 0 to disable check)
 
 
     // storage gap for upgradeability
@@ -116,10 +116,7 @@ contract UniversalGatewayV1 is
 
         emit TSSAddressUpdated(address(0), tss);
         emit CapsUpdated(minCapUsd, maxCapUsd);
-        if (factory != address(0) && router != address(0)) {
-            emit RoutersUpdated(factory, router);
-        }
-        // sensible defaults; override with setters
+        // sensible defaults; can be overridden with setters by admin
         twapWindowSec      = 1800; // 30m
         minObsCardinality  = 16;   // require some history for robust TWAP
     }
@@ -142,6 +139,10 @@ contract UniversalGatewayV1 is
         emit UnpausedBy(_msgSender());
     }
 
+    function setWETH(address weth) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused { // @audit-info - double check if needed
+        WETH = weth;
+    }
+
     function setTSSAddress(address newTSS) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (newTSS == address(0)) revert Errors.ZeroAddress();
         address old = tssAddress;
@@ -154,8 +155,9 @@ contract UniversalGatewayV1 is
         emit TSSAddressUpdated(old, newTSS);
     }
 
-    function setCapsUSD(uint256 minCapUsd, uint256 maxCapUsd) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused { //@audit-info - NEEDS RECHECK
-        // optional: require(minCapUsd <= maxCapUsd)
+    function setCapsUSD(uint256 minCapUsd, uint256 maxCapUsd) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        if (minCapUsd > maxCapUsd) revert Errors.InvalidAmount();
+
         MIN_CAP_UNIVERSAL_TX_USD = minCapUsd;
         MAX_CAP_UNIVERSAL_TX_USD = maxCapUsd;
         emit CapsUpdated(minCapUsd, maxCapUsd);
@@ -179,7 +181,7 @@ contract UniversalGatewayV1 is
 
 
     /// @notice Set USDC pool (must be WETH<->USDC). Call once per chain.
-    function setUSDCPool(address pool, address usdc, uint8 usdcDecimals) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function setPoolConfig(address pool, address usdc, uint8 usdcDecimals) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (pool == address(0) || usdc == address(0)) revert Errors.ZeroAddress();
             poolUSDC = PoolCfg({    
             pool: IUniswapV3Pool(pool),
@@ -195,7 +197,14 @@ contract UniversalGatewayV1 is
         twapWindowSec = secondsAgo;
     }
 
+
     /// @notice Set minimum observation cardinality (0 disables the check).
+    /// @notice cardinality = Minimum number of observation/snapshots the pool must store. (Uniswap V3 oracle history depth).
+    /// @dev    Each Uniswap V3 pool maintains a ring buffer of "observations"
+    ///         (price+time snapshots). Cardinality = how many are stored.
+    ///         higher cardinality = can compute longer, safer TWAPs.
+    ///         lower cardinality = TWAPs collapse toward spot price (manipulable).
+    ///         Best practice (per mainnet WETH/USDC pool): require >=16–32 for a 30m TWAP window.
     function setMinObsCardinality(uint16 minCard) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         minObsCardinality = minCard;
     }
@@ -205,12 +214,9 @@ contract UniversalGatewayV1 is
     // =========================
 
     /**
-     * @notice Deposit for Universal Transaction (gas funding deposit).
+     * @notice Deposit for Universal Transaction (gas funding deposit). // Todo: Updated Natspec 
      *         - If token == address(0): accept native and forward to TSS.
-     *         - If token != 0: swap ERC20->ETH via UniswapV2 then forward ETH to TSS.
      *         - Enforces USD caps against the *input* token and amount.
-     *
-     * @param amountIn    msg.value (for native) or ERC20 amount
      * @param payload     universal payload
      * @param _data       optional bytes - can be empty
      * @param revertCFG   revert instructions (fund recipient + message)
@@ -218,19 +224,22 @@ contract UniversalGatewayV1 is
      */
 
      function depositForUniversalTx( //@audit-info - double check event emission + ORACLE SET UP + GAS LIMIT
-        uint256 amountIn,
         UniversalPayload calldata payload,
         bytes   calldata _data,
         RevertSettings calldata revertCFG
     ) external payable nonReentrant whenNotPaused {
         if (revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
 
-        // ToDo: Take incoming ETH  > check USD equivalent > check USD cap > forward to TSS ( call _handleNativeDeposit)
+        // Note: Important check to ensure the USD cap is not exceeded.
+        // Amount of ETH deposited must be less than or equal to the USD cap range allowed for this deposit route.
+        // Trying to move out-of-range ETH will revert the whole trasnaction.
+        _checkUSDCaps(msg.value);
+        _handleNativeDeposit(msg.value);
 
         emit DepositForUniversalTx({ // audit-info - double check event emission
             sender:        _msgSender(),
             payloadHash:   keccak256(abi.encode(payload)),
-            nativeTokenDeposited: amountIn,
+            nativeTokenDeposited: msg.value,
             _data:          _data,
             revertCFG:     revertCFG
         });
