@@ -22,3 +22,5 @@
 [submodule "contracts/evm-gateway/lib/v3-periphery"]
 	path = contracts/evm-gateway/lib/v3-periphery
 	url = https://github.com/Uniswap/v3-periphery
+[submodule "lib/v3-periphery"]
+	branch = 0.8
