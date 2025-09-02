@@ -51,6 +51,16 @@ interface IUniversalGateway {
         RevertSettings calldata revertCFG
     ) external payable;
 
+    function depositForUniversalTx_Token(
+        address tokenIn,
+        uint256 amountIn,
+        UniversalPayload calldata payload,
+        bytes   calldata _data,
+        RevertSettings calldata revertCFG,
+        uint256 amountOutMinETH,
+        uint256 deadline
+    ) external;
+
     function depositForAssetBridge(
         address recipient,
         address token,

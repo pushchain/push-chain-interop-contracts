@@ -262,12 +262,11 @@ contract UniversalGatewayV1 is
     }
 
     /**
-     * @notice Deposit for Universal Transaction (ERC20 path; Uniswap v3 only).
-     *         Flow: Cosnidering that user deposits Token X, the flow is as follows
-     *           1) Validate input and discover X/WETH v3 pool (or WETH fast-path).
-     *           2) Pre-swap USD cap check: X via v3 TWAP, then ETH→USD via your ETH/USD v3 TWAP.
-     *           3) Execute v3 swap X→WETH (exactInputSingle) or unwrap WETH directly.
-     *           4) Forward ETH to TSS and emit deposit event.
+     * @notice Deposit for Universal Transaction (Token path; Uniswap v3 only).
+     *         Flow: Considering that user deposits Token X, the flow is as follows
+     *           1) Validate input parameters
+     *           2) Swap Token X to ETH using swapToNative() helper function
+     *           3) Forward ETH to TSS and emit deposit event.
      *
      * @param tokenIn          ERC20 used to pay gas (WETH allowed)
      * @param amountIn         token amount pulled from msg.sender
@@ -277,7 +276,7 @@ contract UniversalGatewayV1 is
      * @param amountOutMinETH  min ETH expected (slippage bound)
      * @param deadline         swap deadline
      */
-    function depositForUniversalTxERC20(
+    function depositForUniversalTx_Token(
         address tokenIn,
         uint256 amountIn,
         UniversalPayload calldata payload,
@@ -291,52 +290,10 @@ contract UniversalGatewayV1 is
         if (amountOutMinETH == 0) revert Errors.InvalidAmount();
         if (deadline < block.timestamp) revert Errors.SlippageExceededOrExpired();
 
-        // 1) Find a viable X/WETH v3 pool (or WETH fast-path)
-        (IUniswapV3Pool pool, uint24 fee) = _findV3PoolABC_ETH(tokenIn);
+        // Swap token to native ETH
+        uint256 ethOut = swapToNative(tokenIn, amountIn, amountOutMinETH, deadline);
 
-        // 2) Pre-swap USD cap (TWAP X->ETH, then ETH->USD)
-        //    Also this assumes that the ETH/USD oracle is configured.
-        uint256 estEthWei = _estimateEthOutForToken(pool, tokenIn, amountIn);
-        _checkUSDCaps(estEthWei);
-
-        // 3) Execute swap (or unwrap)
-        uint256 ethOut;
-        if (tokenIn == WETH) {
-            // Pull WETH then unwrap to ETH
-            IERC20(WETH).safeTransferFrom(_msgSender(), address(this), amountIn);
-            uint256 balBefore = address(this).balance;
-            IWETH(WETH).withdraw(amountIn);
-            ethOut = address(this).balance - balBefore;
-            if (ethOut < amountOutMinETH) revert Errors.SlippageExceededOrExpired();
-        } else {
-            // Pull Token X into this contract
-            IERC20(tokenIn).safeTransferFrom(_msgSender(), address(this), amountIn);
-            IERC20(tokenIn).safeIncreaseAllowance(address(uniV3Router), amountIn);
-
-            ISwapRouterV3.ExactInputSingleParams memory params = ISwapRouterV3.ExactInputSingleParams({
-                tokenIn: tokenIn,
-                tokenOut: WETH,
-                fee: fee,
-                recipient: address(this),
-                deadline: deadline,
-                amountIn: amountIn,
-                amountOutMinimum: amountOutMinETH, // user-provided slippage bound in ETH
-                sqrtPriceLimitX96: 0
-            });
-
-            uint256 wethOut = uniV3Router.exactInputSingle(params);
-
-            IERC20(tokenIn).approve(address(uniV3Router), 0);
-            uint256 balBefore = address(this).balance;
-            IWETH(WETH).withdraw(wethOut);
-            ethOut = address(this).balance - balBefore;
-
-            // Invariant Check included: ethOut == wethOut, but keep the check anyway
-            if (ethOut < amountOutMinETH) revert Errors.SlippageExceededOrExpired();
-        }
-
-        _checkUSDCaps(ethOut);
-        // 4) Forward ETH to TSS and emit
+        // Forward ETH to TSS and emit deposit event
         _handleNativeDeposit(ethOut);
         _depositForUniversalTx(
             _msgSender(),
@@ -493,7 +450,65 @@ contract UniversalGatewayV1 is
         IERC20(token).safeTransfer(recipient, amount);
     }
 
-    /// @notice Public view: ETH/USD at 1e18 (Uniswap V3 TWAP from USDC pool).
+    /// @dev Internal helper function to swap any ERC20 token to native ETH
+    /// @param tokenIn Token address to swap from
+    /// @param amountIn Amount of token to swap
+    /// @param amountOutMinETH Minimum ETH expected (slippage protection)
+    /// @param deadline Swap deadline
+    /// @return ethOut Amount of ETH received after swap
+    function swapToNative(
+        address tokenIn,
+        uint256 amountIn,
+        uint256 amountOutMinETH,
+        uint256 deadline
+    ) internal returns (uint256 ethOut) {
+        // 1) Find a viable X/WETH v3 pool (or WETH fast-path)
+        (IUniswapV3Pool pool, uint24 fee) = TWAPOracle._findPoolWithNative(uniV3Factory, tokenIn, WETH, v3FeeOrder);
+
+        // 2) Pre-swap USD cap (TWAP X->ETH, then ETH->USD)
+        //    Also this assumes that the ETH/USD oracle is configured.
+        uint256 estEthWei = TWAPOracle._estimateNativeOutForToken(pool, tokenIn, WETH, amountIn, twapWindowSec, minObsCardinality);
+        _checkUSDCaps(estEthWei);
+
+        // 3) Execute swap (or unwrap)
+        if (tokenIn == WETH) {
+            // Pull WETH then unwrap to ETH
+            IERC20(WETH).safeTransferFrom(_msgSender(), address(this), amountIn);
+            uint256 balBefore = address(this).balance;
+            IWETH(WETH).withdraw(amountIn);
+            ethOut = address(this).balance - balBefore;
+            if (ethOut < amountOutMinETH) revert Errors.SlippageExceededOrExpired();
+        } else {
+            // Pull Token X into this contract
+            IERC20(tokenIn).safeTransferFrom(_msgSender(), address(this), amountIn);
+            IERC20(tokenIn).safeIncreaseAllowance(address(uniV3Router), amountIn);
+
+            ISwapRouterV3.ExactInputSingleParams memory params = ISwapRouterV3.ExactInputSingleParams({
+                tokenIn: tokenIn,
+                tokenOut: WETH,
+                fee: fee,
+                recipient: address(this),
+                deadline: deadline,
+                amountIn: amountIn,
+                amountOutMinimum: amountOutMinETH, // user-provided slippage bound in ETH
+                sqrtPriceLimitX96: 0
+            });
+
+            uint256 wethOut = uniV3Router.exactInputSingle(params);
+
+            IERC20(tokenIn).approve(address(uniV3Router), 0);
+            uint256 balBefore = address(this).balance;
+            IWETH(WETH).withdraw(wethOut);
+            ethOut = address(this).balance - balBefore;
+
+            // Invariant Check included: ethOut == wethOut, but keep the check anyway
+            if (ethOut < amountOutMinETH) revert Errors.SlippageExceededOrExpired();
+        }
+
+        _checkUSDCaps(ethOut);
+    }
+
+        /// @notice Public view: ETH/USD at 1e18 (Uniswap V3 TWAP from USDC pool).
     ///         ETH/USD (scaled to 1e18) using Uniswap V3 TWAP from the configured WETH/USDC pool.
     /// @dev    Assumes USDC ≈ $1; scales 6 decimals -> 1e18. Enforces observation cardinality.
     function ethUsdPrice1e18() public view returns (uint256) {
@@ -533,66 +548,6 @@ contract UniversalGatewayV1 is
             minObsCardinality
         );
     }
-
-    /// @dev Returns (pool, fee) for the first existing ABC/WETH v3 pool following v3FeeOrder.
-    ///      Reverts if none exists.
-    function _findV3PoolABC_ETH(address token)
-        internal
-        view
-        returns (IUniswapV3Pool pool, uint24 fee)
-    {
-        if (address(uniV3Factory) == address(0)) revert Errors.NotSwapAllowed();
-        if (token == address(0) || WETH == address(0)) revert Errors.ZeroAddress();
-        if (token == WETH) {
-            // Special case: “pool” not needed for swap; we can just unwrap instead.
-            return (IUniswapV3Pool(address(0)), 0);
-        }
-
-        unchecked {
-            for (uint256 i = 0; i < 3; i++) {
-                uint24 f = v3FeeOrder[i];
-                address p = uniV3Factory.getPool(token, WETH, f);
-                if (p != address(0)) {
-                    return (IUniswapV3Pool(p), f);
-                }
-            }
-        }
-        revert Errors.PairNotFound(); // "no ABC/WETH v3 pool"
-    }
-
-    /// @dev Estimate ETH out for `amountIn` of a given token X using v3 TWAP (ABC/WETH pool).
-    ///      Enforces observation cardinality (same minObsCardinality used elsewhere in this contract).
-    ///      Returns the estimated ETH out in wei.
-    function _estimateEthOutForToken(
-        IUniswapV3Pool pool,
-        address token,
-        uint256 amountIn
-    ) internal view returns (uint256 ethOutEstWei) {
-        // WETH fast-path: no pool needed; “estimate” = amountIn (in WETH units) after unwrap.
-        if (token == WETH) return amountIn;
-        if (address(pool) == address(0)) revert Errors.InvalidPoolConfig();
-        // Require adequate observation history
-        (, , , uint16 obsCard, uint16 obsCardNext, , ) = pool.slot0();
-        if (minObsCardinality != 0 && obsCard < minObsCardinality && obsCardNext < minObsCardinality) {
-            revert Errors.LowCardinality();
-        }
-
-        // TWAP tick over your window
-        (int24 meanTick, ) = OracleLibrary.consult(address(pool), twapWindowSec);
-
-        // getQuoteAtTick expects baseAmount as uint128
-        if (amountIn > type(uint128).max) revert Errors.InvalidAmount();
-        ethOutEstWei = OracleLibrary.getQuoteAtTick(
-            meanTick,
-            uint128(amountIn),
-            token,
-            WETH
-        );
-    
-    }
-
-
-
 
     // =========================
     //         RECEIVE/FALLBACK
