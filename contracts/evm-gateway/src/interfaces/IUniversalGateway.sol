@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {RevertSettings, UniversalPayload} from "../libraries/Types.sol";
+import {RevertSettings, UniversalPayload, TX_TYPE} from "../libraries/Types.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 import {ISwapRouter as ISwapRouterV3} from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
@@ -13,22 +13,24 @@ interface IUniversalGateway {
     // =========================
 
     /// @dev Universal tx deposit (gas funding). Revert settings flattened for indexers.
-    event DepositForUniversalTx(
+    event DepositForInstantTx(
         address indexed sender,
         bytes32 payloadHash,
         uint256 nativeTokenDeposited,
-        bytes   _data,
-        RevertSettings revertCFG
+        RevertSettings revertCFG,
+        TX_TYPE txType
     );
 
     /// @dev Asset bridge deposit (lock on gateway). Revert settings flattened for indexers.
-    event DepositForBridge(
+    event DepositForUniversalTx(
         address indexed sender,
-        address indexed recipient,
-        uint256 amount,
-        address tokenAddress,           // address(0) if native
+        address indexed recipient,      // address(0) for moving funds + payload for execution.
+        address bridgeToken,
+        uint256 bridgeAmount,
+        uint256 gasAmount,
         bytes   data,
-        RevertSettings revertCFG
+        RevertSettings revertCFG,
+        TX_TYPE txType
     );
 
     event Withdraw(address indexed recipient, uint256 amount, address tokenAddress);
@@ -37,37 +39,48 @@ interface IUniversalGateway {
     event CapsUpdated(uint256 minCapUsd, uint256 maxCapUsd);
     event RoutersUpdated(address uniswapFactory, address uniswapRouter);
     event PoolStatusChanged(bool enabled);
-    event PausedBy(address account);
-    event UnpausedBy(address account);
 
     // =========================
     //         FUNCTIONS
     // =========================
 
     /// @notice Main user-facing deposit functions
-    function depositForUniversalTx(
+    function depositForInstantTx(
         UniversalPayload calldata payload,
-        bytes   calldata _data,
         RevertSettings calldata revertCFG
     ) external payable;
 
-    function depositForUniversalTx_Token(
+    function depositForInstantTx_Token(
         address tokenIn,
         uint256 amountIn,
         UniversalPayload calldata payload,
-        bytes   calldata _data,
         RevertSettings calldata revertCFG,
         uint256 amountOutMinETH,
         uint256 deadline
     ) external;
 
-    function depositForAssetBridge(
+    function depositForUniversalTxFunds(
         address recipient,
         address token,
         uint256 amount,
-        bytes   calldata _data,
         RevertSettings calldata revertCFG
     ) external payable;
+
+    function depositForUniversalTxFundsAndPayload(
+        address bridgeToken,
+        uint256 bridgeAmount,
+        UniversalPayload calldata payload,
+        RevertSettings calldata revertCFG
+    ) external payable;
+
+    function depositForUniversalTxFundsAndPayload_Token(
+        address token,
+        uint256 amount,
+        address gasToken,
+        uint256 gasAmount,
+        UniversalPayload calldata payload,
+        RevertSettings calldata revertCFG
+    ) external;
 
     /// @notice Withdraw functions (TSS-only)
     function withdraw(

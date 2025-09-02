@@ -5,18 +5,28 @@ import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Po
     // =========================
     //        STRUCTS / TYPES
     // =========================
+
+enum TX_TYPE {
+    /// @dev only for funding the UEA on Push Chain
+    ///      doesn't support movement of high value funds or payload for execution.
+    GAS_FUND_TX,
+    /// @dev only for bridging the funds to a recipient on the target chain
+    ///      doesn't support arbitrary execution payload via UEAs.
+    FUNDS_BRIDGE_TX,
+    /// @dev for bridging both funds and payload to Push Chain for execution. 
+    ///      supports arbitrary execution payload via UEAs.
+    FUNDS_AND_PAYLOAD_TX,
+    /// @dev for bridging both funds and payload to Push Chain for instant execution through universal transaction route. 
+    /// @dev allows for lower fund size bridging and requires lower block confirmations to achieve instant execution on Push Chain.
+    FUNDS_AND_PAYLOAD_INSTANT_TX
+}
+
 struct RevertSettings {
-    address fundRecipient; // Where funds go in revert / refund cases
-    bytes   revertMsg;     // Arbitrary message for relayers/UEA
+    /// @dev where funds go in revert / refund cases
+    address fundRecipient; 
+    /// @dev arbitrary message for relayers/UEA
+    bytes   revertMsg;     
 }
-
-struct DepositUniversalTxParams {
-    address token;
-    uint256 amount;
-    bytes   data;
-}
-
-
 
 // Signature verification types
 enum VerificationType {

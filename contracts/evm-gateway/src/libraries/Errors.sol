@@ -9,6 +9,8 @@ library Errors {
     error InvalidAmount();
     error ZeroAddress();
     error InvalidCapRange();
+    error InvalidData();
+    error InvalidTxType();
     // =========================
     //           ERRORS for UniversalGatewayV1
     // =========================

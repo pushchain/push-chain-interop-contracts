@@ -24,7 +24,7 @@ import {IERC20}                     from "@openzeppelin/contracts/token/ERC20/IE
 import {SafeERC20}                  from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Errors}                     from "./libraries/Errors.sol";
 import {IUniversalGateway}          from "./interfaces/IUniversalGateway.sol";
-import {RevertSettings, UniversalPayload, PoolCfg} from "./libraries/Types.sol";
+import {RevertSettings, UniversalPayload, PoolCfg, TX_TYPE} from "./libraries/Types.sol";
 import {IWETH} from "./interfaces/IWETH.sol";
 import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
@@ -137,12 +137,10 @@ contract UniversalGatewayV1 is
     // =========================
     function pause() external whenNotPaused onlyRole(PAUSER_ROLE) {
         _pause();
-        emit PausedBy(_msgSender());
     }
 
     function unpause() external whenPaused onlyRole(PAUSER_ROLE) {
         _unpause();
-        emit UnpausedBy(_msgSender());
     }
 
     function setTSSAddress(address newTSS) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
@@ -235,52 +233,27 @@ contract UniversalGatewayV1 is
     //           DEPOSITS
     // =========================
 
-    /**
-     * @notice Deposit for Universal Transaction (gas funding deposit). // Todo: Updated Natspec 
-     *         - If token == address(0): accept native and forward to TSS.
-     *         - Enforces USD caps against the *input* token and amount.
-     * @param payload     universal payload
-     * @param _data       optional bytes - can be empty
-     * @param revertCFG   revert instructions (fund recipient + message)
-
-     */
-
-     function depositForUniversalTx( //@audit-info - double check event emission + ORACLE SET UP + GAS LIMIT
+    /// @notice Deposit for Instant Transaction (gas funding deposit or Low Value Fund and Payload Exec).
+     function depositForInstantTx( //@audit-info - double check event emission + ORACLE SET UP + GAS LIMIT
         UniversalPayload calldata payload,
-        bytes   calldata _data,
         RevertSettings calldata revertCFG
     ) external payable nonReentrant whenNotPaused {
         // Note: Important check to ensure the USD cap is not exceeded.
-        // Reason: The depositForUniversalTx() function is designed for UX improvement and instant cross-chain calls. 
+        // Reason: The depositForInstantTx() function is designed for UX improvement and instant cross-chain calls. 
         // Therefore, the required block confirmations for this route is very minimal. This means moving large amounts of ETH via this route is not recommended.
         // Amount of ETH deposited must be less than or equal to the USD cap range allowed for this deposit route.
         // Trying to move out-of-range ETH will revert the whole trasnaction.
 
         _checkUSDCaps(msg.value);
         _handleNativeDeposit(msg.value);
-        _depositForUniversalTx(_msgSender(), keccak256(abi.encode(payload)), msg.value, _data, revertCFG);
+        _depositForInstantTx(_msgSender(), keccak256(abi.encode(payload)), msg.value, revertCFG, TX_TYPE.FUNDS_AND_PAYLOAD_INSTANT_TX);  
     }
 
-    /**
-     * @notice Deposit for Universal Transaction (Token path; Uniswap v3 only).
-     *         Flow: Considering that user deposits Token X, the flow is as follows
-     *           1) Validate input parameters
-     *           2) Swap Token X to ETH using swapToNative() helper function
-     *           3) Forward ETH to TSS and emit deposit event.
-     *
-     * @param tokenIn          ERC20 used to pay gas (WETH allowed)
-     * @param amountIn         token amount pulled from msg.sender
-     * @param payload          universal payload (hashed in event)
-     * @param _data            opaque bytes
-     * @param revertCFG        revert settings (must have nonzero fundRecipient)
-     * @param amountOutMinETH  min ETH expected (slippage bound)
-     * @param deadline         swap deadline
-     */
-    function depositForUniversalTx_Token(
+    /// @notice Deposit for Instant Transaction with any supported Token (Token path; Uniswap v3 only).
+    function depositForInstantTx_Token(
         address tokenIn,
         uint256 amountIn,
         UniversalPayload calldata payload,
-        bytes   calldata _data,
         RevertSettings calldata revertCFG,
         uint256 amountOutMinETH,
         uint256 deadline
@@ -291,73 +264,180 @@ contract UniversalGatewayV1 is
         if (deadline < block.timestamp) revert Errors.SlippageExceededOrExpired();
 
         // Swap token to native ETH
-        uint256 ethOut = swapToNative(tokenIn, amountIn, amountOutMinETH, deadline);
+        uint256 ethOut = swapToNative(tokenIn, amountIn, amountOutMinETH, deadline); //@audit-info -> rename ethOut to nativeTokenAmount
 
         // Forward ETH to TSS and emit deposit event
         _handleNativeDeposit(ethOut);
-        _depositForUniversalTx(
+        _depositForInstantTx(
             _msgSender(),
             keccak256(abi.encode(payload)),
             ethOut,
-            _data,
-            revertCFG
+            revertCFG,
+            TX_TYPE.FUNDS_AND_PAYLOAD_INSTANT_TX
         );
     }
 
 
-    function _depositForUniversalTx(
+    function _depositForInstantTx(
         address _caller, 
         bytes32 _payloadHash, 
         uint256 _nativeTokenAmount, 
-        bytes calldata _data, 
-        RevertSettings calldata _revertCFG) internal {
+        RevertSettings calldata _revertCFG,
+        TX_TYPE _txType
+    ) internal {
         if (_revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
 
-        emit DepositForUniversalTx({
+        emit DepositForInstantTx({
             sender: _caller,
             payloadHash: _payloadHash,
             nativeTokenDeposited: _nativeTokenAmount,
-            _data: _data,
-            revertCFG: _revertCFG
+            revertCFG: _revertCFG,
+            txType: _txType
         });
     }
+    /// @notice Allows deposit and movement of funds from source chain to Push Chain.
+    /// @dev    Doesn't support arbitrary execution payload via UEAs. Only allows movement of funds.
 
-    /**
-     * @notice Deposit for Asset Bridging (lock on gateway).
-     *         - If token == address(0): accept native and hold in contract.
-     *         - If token != 0: require token is isSupported, transferFrom to this contract.
-     * @param recipient   bridged asset recipient on Push
-     * @param token       address(0) for native; ERC20 otherwise
-     * @param amount      amount to lock
-     * @param _data       optional bytes - can be empty
-     * @param revertCFG   revert config (fundRecipient + message)
-     */
-    function depositForAssetBridge(
+    function depositForUniversalTxFunds(
         address recipient,
-        address token,
-        uint256 amount,
-        bytes   calldata _data,
+        address bridgeToken,
+        uint256 bridgeAmount,
         RevertSettings calldata revertCFG
     ) external payable nonReentrant whenNotPaused {
         if (recipient == address(0)) revert Errors.InvalidRecipient();
-        if (amount == 0) revert Errors.InvalidAmount();
-        if (revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
 
-        if (token == address(0)) {
+        if (bridgeToken == address(0)) {
             // native: amount must match value; funds are held in this contract for TVL
-        if (msg.value != amount) revert Errors.InvalidAmount();
+            if (msg.value != bridgeAmount) revert Errors.InvalidAmount();
+            _handleNativeDeposit(bridgeAmount);
         } else {
             if (msg.value != 0) revert Errors.InvalidAmount();
-            _handleTokenDeposit(token, amount);
+            _handleTokenDeposit(bridgeToken, bridgeAmount);
         }
 
-        emit DepositForBridge({ //@audit-info - double check event emission
-            sender:        _msgSender(),
-            recipient:      recipient,
-            amount:         amount,
-            tokenAddress:   token,
-            data:           _data,
-            revertCFG:      revertCFG
+        _depositForUniversalTx(
+            _msgSender(),
+            recipient,
+            bridgeToken,
+            bridgeAmount,
+            0,
+            bytes32(0), // Empty payload hash for funds-only bridge
+            revertCFG,
+            TX_TYPE.FUNDS_BRIDGE_TX
+        );
+    }
+
+    /// @notice Allows deposit and movement of funds and payload from source chain to Push Chain.
+    /// @dev    Supports arbitrary execution payload via UEAs.
+
+    function depositForUniversalTxFundsAndPayload(
+        address bridgeToken,
+        uint256 bridgeAmount,
+        UniversalPayload calldata payload,
+        RevertSettings calldata revertCFG
+    ) external payable nonReentrant whenNotPaused {
+        if (bridgeAmount == 0) revert Errors.InvalidAmount();
+        uint256 gasAmount = msg.value;
+        if (gasAmount == 0) revert Errors.InvalidAmount();
+
+        // Check and initiate Instant TX 
+        _checkUSDCaps(gasAmount);
+        _handleNativeDeposit(gasAmount);
+        _depositForInstantTx(
+            _msgSender(),
+            hex"",
+            gasAmount,
+            revertCFG,
+            TX_TYPE.GAS_FUND_TX
+        );
+
+        // Check and initiate Universal TX 
+        _handleTokenDeposit(bridgeToken, bridgeAmount);
+        _depositForUniversalTx(
+            _msgSender(),
+            address(0),
+            bridgeToken,
+            bridgeAmount,
+            gasAmount,
+            keccak256(abi.encode(payload)),
+            revertCFG,
+            TX_TYPE.FUNDS_AND_PAYLOAD_TX
+        );
+    }
+
+    /// 
+    function depositForUniversalTxFundsAndPayload_Token(
+        address bridgeToken,
+        uint256 bridgeAmount,
+        address gasToken,
+        uint256 gasAmount,
+        UniversalPayload calldata payload,
+        RevertSettings calldata revertCFG
+    ) external nonReentrant whenNotPaused {
+        if (bridgeAmount == 0) revert Errors.InvalidAmount();
+        if (gasToken == address(0)) revert Errors.InvalidInput();
+        if (gasAmount == 0) revert Errors.InvalidAmount();
+
+        // Swap gasToken to native ETH
+        uint256 nativeGasAmount = swapToNative(gasToken, gasAmount, 0, block.timestamp);
+
+        _checkUSDCaps(nativeGasAmount);
+        _handleNativeDeposit(nativeGasAmount);
+
+        _depositForInstantTx(
+            _msgSender(),
+            hex"",
+            nativeGasAmount,
+            revertCFG,
+            TX_TYPE.GAS_FUND_TX
+        );
+
+        _handleTokenDeposit(bridgeToken, bridgeAmount);
+        _depositForUniversalTx(
+            _msgSender(),
+            address(0),
+            bridgeToken,
+            bridgeAmount,
+            nativeGasAmount,
+            keccak256(abi.encode(payload)),
+            revertCFG,
+            TX_TYPE.FUNDS_AND_PAYLOAD_TX
+        );
+
+    }
+
+    function _depositForUniversalTx(
+        address _caller,
+        address _recipient,
+        address _bridgeToken,
+        uint256 _bridgeAmount,
+        uint256 _gasAmount,
+        bytes32 _payloadHash,
+        RevertSettings calldata _revertCFG,
+        TX_TYPE _txType
+    ) internal {
+        if (_revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
+        /// for recipient == address(0), the funds are being moved to UEA of the msg.sender.
+        if (_recipient == address(0)){
+            if (_gasAmount == 0) revert Errors.InvalidAmount();
+            if (_payloadHash == bytes32(0)) revert Errors.InvalidData();
+            if (
+                _txType != TX_TYPE.FUNDS_AND_PAYLOAD_TX &&
+                _txType != TX_TYPE.FUNDS_AND_PAYLOAD_INSTANT_TX
+            ) {
+                revert Errors.InvalidTxType();
+            }
+        }
+
+        emit DepositForUniversalTx({
+            sender: _caller,
+            recipient: _recipient,
+            bridgeAmount: _bridgeAmount,
+            gasAmount: _gasAmount,
+            bridgeToken: _bridgeToken,
+            data: abi.encodePacked(_payloadHash),
+            revertCFG: _revertCFG,
+            txType: _txType
         });
     }
 
@@ -508,7 +588,7 @@ contract UniversalGatewayV1 is
         _checkUSDCaps(ethOut);
     }
 
-        /// @notice Public view: ETH/USD at 1e18 (Uniswap V3 TWAP from USDC pool).
+    /// @notice Public view: ETH/USD at 1e18 (Uniswap V3 TWAP from USDC pool).
     ///         ETH/USD (scaled to 1e18) using Uniswap V3 TWAP from the configured WETH/USDC pool.
     /// @dev    Assumes USDC ≈ $1; scales 6 decimals -> 1e18. Enforces observation cardinality.
     function ethUsdPrice1e18() public view returns (uint256) {
