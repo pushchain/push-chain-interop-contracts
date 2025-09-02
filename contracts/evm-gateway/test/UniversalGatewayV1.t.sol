@@ -37,16 +37,13 @@ contract UniversalGatewayV1_PriceFork_Test is Test {
             minCapUsd: 0,
             maxCapUsd: type(uint256).max,
             factory: address(0),
-            router: address(0)
+            router: address(0),
+            _wethAddress: WETH
         });
 
         vm.prank(admin);
         // In this pool, USDC is token0 and WETH is token1
         ug.setPoolConfig(POOL, USDC, 6);
-
-        // Set WETH address in the contract
-        vm.prank(admin);
-        ug.setWETH(WETH);
 
         // 4) Set TWAP parameters
         vm.prank(admin);
@@ -83,15 +80,14 @@ contract UniversalGatewayV1_PriceFork_Test is Test {
         ug.ethUsdPrice1e18();
     }
 
-    // Optional: disable pool and confirm NoValidTWAP revert
+    // Test disabling pool and confirm NoValidTWAP revert
     function test_Revert_WhenPoolDisabled() public {
-        // your contract has setUSDCPoolEnabled(bool) if you kept it; else re-set to a disabled state if exposed
-        // For simplicity, reconfigure with enabled=false by calling a helper—if you didn't expose, comment out.
-        // vm.prank(admin);
-        // ug.setUSDCPoolEnabled(false);
-
-        // If you don't have a toggle, skip this test. Otherwise:
-        // vm.expectRevert(); // Errors.NoValidTWAP()
-        // ug.ethUsdPrice1e18();
+        // Disable the pool
+        vm.prank(admin);
+        ug.setPoolEnabled(false);
+        
+        // Expect revert with NoValidTWAP error
+        vm.expectRevert(); // Errors.NoValidTWAP()
+        ug.ethUsdPrice1e18();
     }
 }

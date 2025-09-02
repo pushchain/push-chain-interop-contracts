@@ -261,6 +261,93 @@ contract UniversalGatewayV1 is
         _depositForUniversalTx(_msgSender(), keccak256(abi.encode(payload)), msg.value, _data, revertCFG);
     }
 
+    /**
+     * @notice Deposit for Universal Transaction (ERC20 path; Uniswap v3 only).
+     *         Flow: Cosnidering that user deposits Token X, the flow is as follows
+     *           1) Validate input and discover X/WETH v3 pool (or WETH fast-path).
+     *           2) Pre-swap USD cap check: X via v3 TWAP, then ETH→USD via your ETH/USD v3 TWAP.
+     *           3) Execute v3 swap X→WETH (exactInputSingle) or unwrap WETH directly.
+     *           4) Forward ETH to TSS and emit deposit event.
+     *
+     * @param tokenIn          ERC20 used to pay gas (WETH allowed)
+     * @param amountIn         token amount pulled from msg.sender
+     * @param payload          universal payload (hashed in event)
+     * @param _data            opaque bytes
+     * @param revertCFG        revert settings (must have nonzero fundRecipient)
+     * @param amountOutMinETH  min ETH expected (slippage bound)
+     * @param deadline         swap deadline
+     */
+    function depositForUniversalTxERC20(
+        address tokenIn,
+        uint256 amountIn,
+        UniversalPayload calldata payload,
+        bytes   calldata _data,
+        RevertSettings calldata revertCFG,
+        uint256 amountOutMinETH,
+        uint256 deadline
+    ) external nonReentrant whenNotPaused {
+        if (tokenIn == address(0)) revert Errors.InvalidInput();
+        if (amountIn == 0) revert Errors.InvalidAmount();
+        if (amountOutMinETH == 0) revert Errors.InvalidAmount();
+        if (deadline < block.timestamp) revert Errors.SlippageExceededOrExpired();
+
+        // 1) Find a viable X/WETH v3 pool (or WETH fast-path)
+        (IUniswapV3Pool pool, uint24 fee) = _findV3PoolABC_ETH(tokenIn);
+
+        // 2) Pre-swap USD cap (TWAP X->ETH, then ETH->USD)
+        //    Also this assumes that the ETH/USD oracle is configured.
+        uint256 estEthWei = _estimateEthOutForToken(pool, tokenIn, amountIn);
+        _checkUSDCaps(estEthWei);
+
+        // 3) Execute swap (or unwrap)
+        uint256 ethOut;
+        if (tokenIn == WETH) {
+            // Pull WETH then unwrap to ETH
+            IERC20(WETH).safeTransferFrom(_msgSender(), address(this), amountIn);
+            uint256 balBefore = address(this).balance;
+            IWETH(WETH).withdraw(amountIn);
+            ethOut = address(this).balance - balBefore;
+            if (ethOut < amountOutMinETH) revert Errors.SlippageExceededOrExpired();
+        } else {
+            // Pull Token X into this contract
+            IERC20(tokenIn).safeTransferFrom(_msgSender(), address(this), amountIn);
+            IERC20(tokenIn).safeIncreaseAllowance(address(uniV3Router), amountIn);
+
+            ISwapRouterV3.ExactInputSingleParams memory params = ISwapRouterV3.ExactInputSingleParams({
+                tokenIn: tokenIn,
+                tokenOut: WETH,
+                fee: fee,
+                recipient: address(this),
+                deadline: deadline,
+                amountIn: amountIn,
+                amountOutMinimum: amountOutMinETH, // user-provided slippage bound in ETH
+                sqrtPriceLimitX96: 0
+            });
+
+            uint256 wethOut = uniV3Router.exactInputSingle(params);
+
+            IERC20(tokenIn).approve(address(uniV3Router), 0);
+            uint256 balBefore = address(this).balance;
+            IWETH(WETH).withdraw(wethOut);
+            ethOut = address(this).balance - balBefore;
+
+            // Invariant Check included: ethOut == wethOut, but keep the check anyway
+            if (ethOut < amountOutMinETH) revert Errors.SlippageExceededOrExpired();
+        }
+
+        _checkUSDCaps(ethOut);
+        // 4) Forward ETH to TSS and emit
+        _handleNativeDeposit(ethOut);
+        _depositForUniversalTx(
+            _msgSender(),
+            keccak256(abi.encode(payload)),
+            ethOut,
+            _data,
+            revertCFG
+        );
+    }
+
+
     function _depositForUniversalTx(
         address _caller, 
         bytes32 _payloadHash, 
