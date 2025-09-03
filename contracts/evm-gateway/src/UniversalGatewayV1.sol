@@ -2,17 +2,26 @@
 pragma solidity 0.8.26;
 
 /**
- * @title UniversalGatewayV1 (Transparent Upgradeable)
- * @notice Push Chain Universal Gateway for EVM chains.
- *         - Transparent upgradeable (use OZ TransparentUpgradeableProxy + ProxyAdmin).
- *         - Pausable, role-based access control.
- *         - Handles two deposit types:
- *             (1) depositForUniversalTx  (gas funding deposit; supports native and ERC20->WETH swap to native)
- *             (2) depositForAssetBridge  (lock ERC20 or native on gateway for mint on Push Chain)
- *         - TSS-controlled withdraw (native or ERC20).
+ * @title UniversalGatewayV1
+ * @notice Universal Gateway for EVM chains.
+ * @dev    - Used by Push Chain to bridge funds and payloads between EVM chains.
+ *         - Supports two deposit(universal transactions) types:
+ *             (1) Instant TX: Allows movement of funds and payload for instant execution on Push Chain.
+ *                        - Requires lower block confirmations for execution, hence faster.
+ *                        - Allows users to fund their UEAs ( on Push Chain ) with gas deposits from source chains.
+ *                        - Allows users to execute payloads through their UEAs on Push Chain.
+ *                        - For EVM chains, users are also allowed to fund their UEAs with any token (ERC20) they want.
+ *             (2) Universal TX: Allows movement of large ticket-size funds and payload for universal transactions.
+ *                        - Since fund size is large, it requires higher block confirmations for execution, hence slower.
+ *                        - Allows users to move large ticket-size funds from to any recipient address on Push Chain.
+ *                        - Allows users to move arbitrary payload for execution from source chain to Push Chain.
+ * @dev    - TSS-controlled withdraw (native or ERC20).
  *         - Token whitelisting for bridges; separate allowlist for ERC20 used as gas inputs on universal tx path.
  *         - USD cap checks for universal tx deposits via pluggable rate provider.
- *
+ *         - Transparent upgradeable (use OZ TransparentUpgradeableProxy + ProxyAdmin).
+ *         - Pausable, role-based access control.
+ *         - Uses Uniswap TWAP oracle for price feed for USD cap checks.
+ *         - Find the TX_TYPES and UniversalPayload structs in ./libraries/Types.sol for more details.
  */
 
 import {Initializable}              from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -234,6 +243,13 @@ contract UniversalGatewayV1 is
     // =========================
 
     /// @notice Deposit for Instant Transaction (gas funding deposit or Low Value Fund and Payload Exec).
+    /// @dev    Supports only Instant TX type.
+    ///         Supports only FUNDS_AND_PAYLOAD_INSTANT_TX type.
+    ///         Supports only revertCFG.fundRecipient is address(0).
+    ///         Supports only payload.payloadType is UniversalPayload.PAYLOAD_TYPE.DATA.
+    ///         Supports only payload.payloadData is bytes.
+    /// @param payload Universal payload to execute on Push Chain
+    /// @param revertCFG Revert settings
      function depositForInstantTx( //@audit-info - double check event emission + ORACLE SET UP + GAS LIMIT
         UniversalPayload calldata payload,
         RevertSettings calldata revertCFG
@@ -250,6 +266,20 @@ contract UniversalGatewayV1 is
     }
 
     /// @notice Deposit for Instant Transaction with any supported Token (Token path; Uniswap v3 only).
+    /// @dev    Allows users to fund their UEAs ( on Push Chain ) with any token (ERC20) they want.
+    ///         Supports only Uniswap v3 for swapping.
+    ///         Supports only Instant TX type.
+    ///         Supports only FUNDS_AND_PAYLOAD_INSTANT_TX type.
+    ///         Supports only revertCFG.fundRecipient is address(0).
+    ///         Supports only payload.payloadType is UniversalPayload.PAYLOAD_TYPE.DATA.
+    ///         Supports only payload.payloadData is bytes.
+    /// @param tokenIn Token address to swap from
+    /// @param amountIn Amount of token to swap
+    /// @param payload Universal payload to execute on Push Chain
+    /// @param revertCFG Revert settings
+    /// @param amountOutMinETH Minimum ETH expected (slippage protection)
+    /// @param deadline Swap deadline
+
     function depositForInstantTx_Token(
         address tokenIn,
         uint256 amountIn,
@@ -277,7 +307,12 @@ contract UniversalGatewayV1 is
         );
     }
 
-
+    /// @dev    Internal helper function to deposit for Instant TX.
+    /// @param _caller Sender address
+    /// @param _payloadHash Payload hash
+    /// @param _nativeTokenAmount Amount of native token deposited
+    /// @param _revertCFG Revert settings
+    /// @param _txType Transaction type
     function _depositForInstantTx(
         address _caller, 
         bytes32 _payloadHash, 
@@ -297,7 +332,15 @@ contract UniversalGatewayV1 is
     }
     /// @notice Allows deposit and movement of funds from source chain to Push Chain.
     /// @dev    Doesn't support arbitrary execution payload via UEAs. Only allows movement of funds.
-
+    ///         Supports only Universal TX type.
+    ///         Supports only FUNDS_BRIDGE_TX type.
+    ///         Supports only revertCFG.fundRecipient is address(0).
+    ///         Supports only payload.payloadType is UniversalPayload.PAYLOAD_TYPE.DATA.
+    ///         Supports only payload.payloadData is bytes.
+    /// @param recipient Recipient address
+    /// @param bridgeToken Token address to bridge
+    /// @param bridgeAmount Amount of token to bridge
+    /// @param revertCFG Revert settings
     function depositForUniversalTxFunds(
         address recipient,
         address bridgeToken,
@@ -329,7 +372,15 @@ contract UniversalGatewayV1 is
 
     /// @notice Allows deposit and movement of funds and payload from source chain to Push Chain.
     /// @dev    Supports arbitrary execution payload via UEAs.
-
+    ///         Supports only Universal TX type.
+    ///         Supports only FUNDS_AND_PAYLOAD_TX type.
+    ///         Supports only revertCFG.fundRecipient is address(0).
+    ///         Supports only payload.payloadType is UniversalPayload.PAYLOAD_TYPE.DATA.
+    ///         Supports only payload.payloadData is bytes.
+    /// @param bridgeToken Token address to bridge
+    /// @param bridgeAmount Amount of token to bridge
+    /// @param payload Universal payload to execute on Push Chain
+    /// @param revertCFG Revert settings
     function depositForUniversalTxFundsAndPayload(
         address bridgeToken,
         uint256 bridgeAmount,
@@ -365,7 +416,19 @@ contract UniversalGatewayV1 is
         );
     }
 
-    /// 
+    /// @notice Allows users to fund their UEAs ( on Push Chain ) with any token (ERC20) they want.
+    /// @dev    Supports only Uniswap v3 for swapping.
+    ///         Supports only Universal TX type.
+    ///         Supports only FUNDS_AND_PAYLOAD_TX type.
+    ///         Supports only revertCFG.fundRecipient is address(0).
+    ///         Supports only payload.payloadType is UniversalPayload.PAYLOAD_TYPE.DATA.
+    ///         Supports only payload.payloadData is bytes.
+    /// @param bridgeToken Token address to bridge
+    /// @param bridgeAmount Amount of token to bridge
+    /// @param gasToken Token address to swap from
+    /// @param gasAmount Amount of token to swap
+    /// @param payload Universal payload to execute on Push Chain
+    /// @param revertCFG Revert settings
     function depositForUniversalTxFundsAndPayload_Token(
         address bridgeToken,
         uint256 bridgeAmount,
@@ -406,6 +469,15 @@ contract UniversalGatewayV1 is
 
     }
 
+    /// @notice Internal helper function to deposit for Universal TX.
+    /// @param _caller Sender address
+    /// @param _recipient Recipient address
+    /// @param _bridgeToken Token address to bridge
+    /// @param _bridgeAmount Amount of token to bridge
+    /// @param _gasAmount Amount of gas to deposit
+    /// @param _payloadHash Payload hash
+    /// @param _revertCFG Revert settings
+    /// @param _txType Transaction type
     function _depositForUniversalTx(
         address _caller,
         address _recipient,
