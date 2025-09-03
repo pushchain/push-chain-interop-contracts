@@ -20,7 +20,7 @@ pragma solidity 0.8.26;
  *         - USD cap checks for universal tx deposits via pluggable rate provider.
  *         - Transparent upgradeable (use OZ TransparentUpgradeableProxy + ProxyAdmin).
  *         - Pausable, role-based access control.
- *         - Uses Uniswap TWAP oracle for price feed for USD cap checks.
+ *         - Uses Uniswap TWAP oracle for price feed for USD cap checks. See ./libraries/TWAPOracle.sol for more details.
  *         - Find the TX_TYPES and UniversalPayload structs in ./libraries/Types.sol for more details.
  */
 
@@ -74,7 +74,7 @@ contract UniversalGatewayV1 is
     IUniswapV3Factory public uniV3Factory;
     ISwapRouterV3     public uniV3Router;
     address           public WETH; // cached from router
-    uint24[3] public v3FeeOrder = [uint24(500), uint24(3000), uint24(10000)];
+    uint24[3] public v3FeeOrder = [uint24(500), uint24(3000), uint24(10000)]; 
     PoolCfg public poolUSDC;
 
     /// @notice TWAP parameters
@@ -86,6 +86,7 @@ contract UniversalGatewayV1 is
     uint256[43] private __gap;
 
     /**
+     * @notice Initialize the UniversalGatewayV1 contract
      * @param admin            DEFAULT_ADMIN_ROLE holder
      * @param pauser           PAUSER_ROLE
      * @param tss              initial TSS address
@@ -151,7 +152,9 @@ contract UniversalGatewayV1 is
     function unpause() external whenPaused onlyRole(PAUSER_ROLE) {
         _unpause();
     }
-
+     
+    /// @notice Allows the admin to set the TSS address
+    /// @param newTSS The new TSS address
     function setTSSAddress(address newTSS) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (newTSS == address(0)) revert Errors.ZeroAddress();
         address old = tssAddress;
@@ -164,6 +167,9 @@ contract UniversalGatewayV1 is
         emit TSSAddressUpdated(old, newTSS);
     }
 
+    /// @notice Allows the admin to set the USD cap ranges
+    /// @param minCapUsd The minimum USD cap
+    /// @param maxCapUsd The maximum USD cap
     function setCapsUSD(uint256 minCapUsd, uint256 maxCapUsd) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (minCapUsd > maxCapUsd) revert Errors.InvalidCapRange();
 
@@ -172,13 +178,19 @@ contract UniversalGatewayV1 is
         emit CapsUpdated(minCapUsd, maxCapUsd);
     }
 
+    /// @notice Allows the admin to set the Uniswap V3 factory and router
+    /// @param factory The new Uniswap V3 factory address
+    /// @param router The new Uniswap V3 router address
     function setRouters(address factory, address router) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (factory == address(0) || router == address(0)) revert Errors.ZeroAddress();
         uniV3Factory = IUniswapV3Factory(factory);
         uniV3Router  = ISwapRouterV3(router);
-        emit RoutersUpdated(factory, router);
     }
 
+    /// @notice Allows the admin to add support for a given token or remove support for a given token
+    /// @dev    Adding support for given token, indicates the wrapped version of the token is live on Push Chain.
+    /// @param tokens The tokens to modify the support for
+    /// @param isSupported The new support status
     function modifySupportForToken(address[] calldata tokens, bool[] calldata isSupported) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (tokens.length != isSupported.length) revert Errors.InvalidInput();
         for (uint256 i = 0; i < tokens.length; i++) {
@@ -187,21 +199,23 @@ contract UniversalGatewayV1 is
         }
     }
 
-
-    function setUniV3(address factory, address router) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
-        if (factory == address(0) || router == address(0)) revert Errors.ZeroAddress();
-        uniV3Factory  = IUniswapV3Factory(factory);
-        uniV3Router  = ISwapRouterV3(router);
-    }
-
+    /// @notice Allows the admin to set the fee order for the Uniswap V3 router
+    /// @param a The new fee order
+    /// @param b The new fee order
+    /// @param c The new fee order
     function setV3FeeOrder(uint24 a, uint24 b, uint24 c) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused
     {
         uint24[3] memory old = v3FeeOrder;
         v3FeeOrder = [a, b, c];
     }
 
-
-    /// @notice Set USDC pool (must be WETH<->USDC). Call once per chain.
+    /// @notice Allows the admin to set the pool configuration for a given token. 
+    /// @dev    This is used by the TWAP Oracle for the price feed.
+    ///         For now, the support for USDC is provided. 
+    ///         Future support for other tokens can be added.
+    /// @param pool The new USDC pool address
+    /// @param usdc The new USDC address
+    /// @param usdcDecimals The new USDC decimals
     function setPoolConfig(address pool, address usdc, uint8 usdcDecimals) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (pool == address(0) || usdc == address(0)) revert Errors.ZeroAddress();
             poolUSDC = PoolCfg({    
@@ -212,20 +226,22 @@ contract UniversalGatewayV1 is
         });
     }
 
-    /// @notice Set TWAP window (seconds). Recommend >= 300s; 1800s is robust.
+    /// @notice Set TWAP window (seconds). 
+    /// @dev    Recommend >= 300s; 1800s is robust.
+    /// @param secondsAgo The new TWAP window in seconds
     function setTwapWindow(uint32 secondsAgo) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (secondsAgo < 300) revert Errors.TwapWindowTooShort();
         twapWindowSec = secondsAgo;
     }
 
-
     /// @notice Set minimum observation cardinality (0 disables the check).
-    /// @notice cardinality = Minimum number of observation/snapshots the pool must store. (Uniswap V3 oracle history depth).
-    /// @dev    Each Uniswap V3 pool maintains a ring buffer of "observations"
+    /// @dev    Cardinality = Minimum number of observation/snapshots the pool must store. (Uniswap V3 oracle history depth).
+    ///    Each Uniswap V3 pool maintains a ring buffer of "observations"
     ///         (price+time snapshots). Cardinality = how many are stored.
     ///         higher cardinality = can compute longer, safer TWAPs.
     ///         lower cardinality = TWAPs collapse toward spot price (manipulable).
     ///         Best practice (per mainnet WETH/USDC pool): require >=16–32 for a 30m TWAP window.
+    /// @param minCard The new minimum observation cardinality
     function setMinObsCardinality(uint16 minCard) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         minObsCardinality = minCard;
     }
@@ -233,24 +249,25 @@ contract UniversalGatewayV1 is
     /// @notice Enable or disable the price oracle pool
     /// @dev Used to quickly disable price oracle during incidents without replacing the whole config
     /// @param enabled True to enable the pool, false to disable
-    function setPoolEnabled(bool enabled) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    // ToDo- Needs to be made flexible instead of hardcoded just for USDC pool 
+    function setPoolEnabled(bool enabled) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused { 
         poolUSDC.enabled = enabled;
         emit PoolStatusChanged(enabled);
     }
 
     // =========================
-    //           DEPOSITS
+    //           DEPOSITS - Instant TX Route
     // =========================
 
-    /// @notice Deposit for Instant Transaction (gas funding deposit or Low Value Fund and Payload Exec).
-    /// @dev    Supports only Instant TX type.
-    ///         Supports only FUNDS_AND_PAYLOAD_INSTANT_TX type.
-    ///         Supports only revertCFG.fundRecipient is address(0).
-    ///         Supports only payload.payloadType is UniversalPayload.PAYLOAD_TYPE.DATA.
-    ///         Supports only payload.payloadData is bytes.
+    /// @notice Deposit for Instant Transaction (gas funding deposit or Low Value Fund & Payload Exec).
+    /// @dev    Supports only Instant TX type, i.e., low block confirmations are required.
+    ///         TX_TYPE supported for this route are:
+    ///          a. GAS_FUND_TX.
+    ///          b. FUNDS_AND_PAYLOAD_INSTANT_TX.
+    ///         Imposes a strict check for USD cap for the deposit amount. High Value movement of funds is not allowed through this route.
     /// @param payload Universal payload to execute on Push Chain
     /// @param revertCFG Revert settings
-     function depositForInstantTx( //@audit-info - double check event emission + ORACLE SET UP + GAS LIMIT
+     function depositForInstantTx(
         UniversalPayload calldata payload,
         RevertSettings calldata revertCFG
     ) external payable nonReentrant whenNotPaused {
@@ -265,14 +282,13 @@ contract UniversalGatewayV1 is
         _depositForInstantTx(_msgSender(), keccak256(abi.encode(payload)), msg.value, revertCFG, TX_TYPE.FUNDS_AND_PAYLOAD_INSTANT_TX);  
     }
 
-    /// @notice Deposit for Instant Transaction with any supported Token (Token path; Uniswap v3 only).
-    /// @dev    Allows users to fund their UEAs ( on Push Chain ) with any token (ERC20) they want.
-    ///         Supports only Uniswap v3 for swapping.
-    ///         Supports only Instant TX type.
-    ///         Supports only FUNDS_AND_PAYLOAD_INSTANT_TX type.
-    ///         Supports only revertCFG.fundRecipient is address(0).
-    ///         Supports only payload.payloadType is UniversalPayload.PAYLOAD_TYPE.DATA.
-    ///         Supports only payload.payloadData is bytes.
+    /// @notice Deposit for Instant Transaction with any supported Token.
+    /// @dev    Allows users to use any token to fund or execute a payload on Push Chain.
+    ///         The deopited token is swapped to native ETH using Uniswap v3.
+    ///         TX_TYPE supported for this route are:
+    ///          a. GAS_FUND_TX.
+    ///          b. FUNDS_AND_PAYLOAD_INSTANT_TX.
+    ///         Imposes a strict check for USD cap for the deposit amount. High Value movement of funds is not allowed through this route.
     /// @param tokenIn Token address to swap from
     /// @param amountIn Amount of token to swap
     /// @param payload Universal payload to execute on Push Chain
@@ -308,6 +324,7 @@ contract UniversalGatewayV1 is
     }
 
     /// @dev    Internal helper function to deposit for Instant TX.
+    ///         Emits the core DepositForInstantTx event - important for Instant TX Route.
     /// @param _caller Sender address
     /// @param _payloadHash Payload hash
     /// @param _nativeTokenAmount Amount of native token deposited
@@ -330,13 +347,19 @@ contract UniversalGatewayV1 is
             txType: _txType
         });
     }
-    /// @notice Allows deposit and movement of funds from source chain to Push Chain.
+
+
+
+    // =========================
+    //           DEPOSITS - Universal TX Route
+    // =========================
+
+    /// @notice Allows deposit and movement of high value funds from source chain to Push Chain.
     /// @dev    Doesn't support arbitrary execution payload via UEAs. Only allows movement of funds.
-    ///         Supports only Universal TX type.
-    ///         Supports only FUNDS_BRIDGE_TX type.
-    ///         Supports only revertCFG.fundRecipient is address(0).
-    ///         Supports only payload.payloadType is UniversalPayload.PAYLOAD_TYPE.DATA.
-    ///         Supports only payload.payloadData is bytes.
+    ///         The tokens moved must be supported by the gateway. 
+    ///         Supports only Universal TX type with high value funds, i.e., high block confirmations are required.
+    ///         TX_TYPE supported for this route are:
+    ///          a. FUNDS_BRIDGE_TX.
     /// @param recipient Recipient address
     /// @param bridgeToken Token address to bridge
     /// @param bridgeAmount Amount of token to bridge
@@ -372,11 +395,15 @@ contract UniversalGatewayV1 is
 
     /// @notice Allows deposit and movement of funds and payload from source chain to Push Chain.
     /// @dev    Supports arbitrary execution payload via UEAs.
-    ///         Supports only Universal TX type.
-    ///         Supports only FUNDS_AND_PAYLOAD_TX type.
-    ///         Supports only revertCFG.fundRecipient is address(0).
-    ///         Supports only payload.payloadType is UniversalPayload.PAYLOAD_TYPE.DATA.
-    ///         Supports only payload.payloadData is bytes.
+    ///         The tokens moved must be supported by the gateway. 
+    ///         TX_TYPE supported for this route are:
+    ///          a. FUNDS_AND_PAYLOAD_TX.
+    ///         Recipient for such TXs are always the user's UEA. Hence, no recipient address is needed.
+    /// @dev    The route emits two different events:
+    ///          a. DepositForInstantTx - for gas funding - no payload is moved. 
+    ///                                   - allows user to fund their UEA, which will be used for execution of payload.
+    ///          b. DepositForUniversalTx - for funds and payload movement from source chain to Push Chain.
+    ///                                   
     /// @param bridgeToken Token address to bridge
     /// @param bridgeAmount Amount of token to bridge
     /// @param payload Universal payload to execute on Push Chain
@@ -416,13 +443,19 @@ contract UniversalGatewayV1 is
         );
     }
 
-    /// @notice Allows users to fund their UEAs ( on Push Chain ) with any token (ERC20) they want.
-    /// @dev    Supports only Uniswap v3 for swapping.
-    ///         Supports only Universal TX type.
-    ///         Supports only FUNDS_AND_PAYLOAD_TX type.
-    ///         Supports only revertCFG.fundRecipient is address(0).
-    ///         Supports only payload.payloadType is UniversalPayload.PAYLOAD_TYPE.DATA.
-    ///         Supports only payload.payloadData is bytes.
+    /// @notice Allows deposit and movement of funds and payload from source chain to Push Chain.
+    ///        Similar to depositForUniversalTxFundsAndPayload(), but with a token as gas input.
+    /// @dev    The gas token is swapped to native ETH using Uniswap v3.
+    ///         The tokens moved must be supported by the gateway. 
+    ///         TX_TYPE supported for this route are:
+    ///          a. FUNDS_AND_PAYLOAD_TX.
+    ///         Imposes a strict check for USD cap for the deposit amount. High Value movement of funds is not allowed through this route.
+    /// @dev    The route emits two different events:
+    ///          a. DepositForInstantTx - for gas funding - no payload is moved. 
+    ///                                   allows user to fund their UEA, which will be used for execution of payload.
+    ///          b. DepositForUniversalTx - for funds and payload movement from source chain to Push Chain.
+    ///                                   
+    ///         Recipient for such TXs are always the user's UEA. Hence, no recipient address is needed.                     
     /// @param bridgeToken Token address to bridge
     /// @param bridgeAmount Amount of token to bridge
     /// @param gasToken Token address to swap from
@@ -469,7 +502,8 @@ contract UniversalGatewayV1 is
 
     }
 
-    /// @notice Internal helper function to deposit for Universal TX.
+    /// @notice Internal helper function to deposit for Universal TX.   
+    /// @dev    Emits the core DepositForUniversalTx event - important for Universal TX Route.
     /// @param _caller Sender address
     /// @param _recipient Recipient address
     /// @param _bridgeToken Token address to bridge
@@ -568,6 +602,9 @@ contract UniversalGatewayV1 is
     //       INTERNAL HELPERS
     // =========================
 
+    /// @dev Check if the amount is within the USD cap range
+    ///      Cap Ranges are defined in the constructor or can be updated by the admin.
+    /// @param amount Amount to check
     function _checkUSDCaps(uint256 amount) internal view { 
         uint256 usdValue = quoteEthAmountInUsd1e18(amount);
         if (usdValue < MIN_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
@@ -582,6 +619,9 @@ contract UniversalGatewayV1 is
     }
 
     /// @dev Lock ERC20 in this contract for bridging (must be isSupported).
+    ///      Tokens are stored in gateway contract.
+    /// @param token Token address to deposit
+    /// @param amount Amount of token to deposit
     function _handleTokenDeposit(address token, uint256 amount) internal {
         if (!isSupportedToken[token]) revert Errors.NotSupported();
         IERC20(token).safeTransferFrom(_msgSender(), address(this), amount);
@@ -594,6 +634,10 @@ contract UniversalGatewayV1 is
     }
 
     /// @dev ERC20 withdraw by TSS (token must be isSupported for bridging)
+    ///      Tokens are moved out of gateway contract.
+    /// @param token Token address to withdraw
+    /// @param recipient Recipient address
+    /// @param amount Amount of token to withdraw
     function _handleTokenWithdraw(address token, address recipient, uint256 amount) internal {
         // Note: Removing isSupportedToken[token] for now to avoid a rare case scenario
         //       If a token was supported before and user bridged > but was removed from support list later, funds get stuck.
@@ -602,7 +646,7 @@ contract UniversalGatewayV1 is
         IERC20(token).safeTransfer(recipient, amount);
     }
 
-    /// @dev Internal helper function to swap any ERC20 token to native ETH
+    /// @dev Internal helper function to swap any ERC20 token to native token of the source chain
     /// @param tokenIn Token address to swap from
     /// @param amountIn Amount of token to swap
     /// @param amountOutMinETH Minimum ETH expected (slippage protection)
@@ -663,6 +707,8 @@ contract UniversalGatewayV1 is
     /// @notice Public view: ETH/USD at 1e18 (Uniswap V3 TWAP from USDC pool).
     ///         ETH/USD (scaled to 1e18) using Uniswap V3 TWAP from the configured WETH/USDC pool.
     /// @dev    Assumes USDC ≈ $1; scales 6 decimals -> 1e18. Enforces observation cardinality.
+    /// @return ethUsdPrice1e18 ETH/USD at 1e18
+    /// Todo:  Currently is hardcoded for USDC/ETH - but native token can change based on the source chain.
     function ethUsdPrice1e18() public view returns (uint256) {
         // Convert PoolCfg to TWAPOracle.PoolConfig
         TWAPOracle.PoolConfig memory config = TWAPOracle.PoolConfig({

@@ -37,7 +37,6 @@ interface IUniversalGateway {
     event TSSAddressUpdated(address oldTSS, address newTSS);
     event TokenSupportModified(address tokenAddress, bool whitelistStatus);
     event CapsUpdated(uint256 minCapUsd, uint256 maxCapUsd);
-    event RoutersUpdated(address uniswapFactory, address uniswapRouter);
     event PoolStatusChanged(bool enabled);
 
     // =========================
