@@ -1,14 +1,176 @@
 [profile.default]
+
 src = "src"
 out = "out"
 libs = ["lib"]
-via-ir = true
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+test = "test"
+script = "script"
 
+# compiler settings
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+evm_version = "shanghai"
+solc_version = "0.8.26"
+
+# gas & performance
+gas_reports = ["*"]
+gas_reports_ignore = ["forge-std/**", "lib/**"]
+
+# verbosity & debugging
+verbosity = 2
+debug = ["*"]
+
+# =========================
+# cache & build
+cache = true
+cache_path = "cache"
+
+# security & permissions
+ffi = false
+allow_paths = ["lib", "src", "test", "script"]
+fs_permissions = [
+    { access = "read", path = "./out" },
+    { access = "read", path = "./lib" },
+    { access = "read", path = "./src" },
+    { access = "read", path = "./test" }
+]
+
+# remappings
 remappings = [
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
     "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
     "openzeppelin-foundry-upgrades/=lib/openzeppelin-foundry-upgrades/src/",
     "@uniswap/v3-core/=lib/v3-core/",
     "@uniswap/v3-periphery/=lib/v3-periphery/",
+    "forge-std/=lib/forge-std/src/",
+    "chainlink-brownie-contracts/=lib/chainlink-brownie-contracts/",
 ]
+
+# etherscan configuration
+[etherscan]
+arbitrum_one = { key = "${process.env.ARBISCAN_API}" }
+bnb_smart_chain = { key = "${process.env.BNBSCAN_API}" }
+goerli = { key = "${process.env.ETHERSCAN_API}" }
+mainnet = { key = "${process.env.ETHERSCAN_API}" }
+optimism = { key = "${process.env.OPTIMISM_API}" }
+polygon = { key = "${process.env.POLYGONSCAN_API}" }
+sepolia = { key = "${process.env.ETHERSCAN_API}" }
+
+# FUZZ TESTING CONFIGURATION     fuzz testing configuration
+
+[fuzz]
+# Number of fuzz runs per test
+runs = 1000
+# Maximum number of test rejections before giving up
+max_test_rejects = 65536
+# Seed for reproducible fuzzing
+seed = "0x3e8"
+# Dictionary weight (0-100) - higher means more likely to use dictionary values
+dictionary_weight = 40
+# Include storage slots in fuzzing
+include_storage = true
+# Include push bytes in fuzzing
+include_push_bytes = true
+# Timeout for individual fuzz runs (in seconds)
+timeout = 60
+
+
+[invariant]
+# Number of invariant runs
+runs = 256
+# Depth of function call sequences
+depth = 15
+# Whether to fail on revert during invariant testing
+fail_on_revert = false
+# Whether to use call overrides
+call_override = false
+# Dictionary weight for invariant testing
+dictionary_weight = 80
+# Include storage in invariant testing
+include_storage = true
+# Include push bytes in invariant testing
+include_push_bytes = true
+# Whether to shrink sequences
+shrink_sequence = true
+# Timeout for invariant testing (in seconds)
+timeout = 300
+
+# formatting configuration
+[fmt]
+# Maximum line length
+line_length = 120
+# Tab width for indentation
+tab_width = 4
+# Whether to add spaces around brackets
+bracket_spacing = true
+
+# ci/cd profile
+[profile.ci]
+# Inherit from default profile
+inherits = "default"
+# Higher verbosity for CI
+verbosity = 3
+
+[profile.ci.fuzz]
+# More fuzz runs for CI
+runs = 2000
+
+[profile.ci.invariant]
+# More invariant runs for CI
+runs = 512
+
+# coverage profile
+
+[profile.coverage]
+# Inherit from default profile
+inherits = "default"
+# Enable coverage
+coverage = true
+# Coverage output directory
+coverage_output_dir = "coverage"
+# Coverage format
+coverage_format = "lcov"
+# Coverage report
+coverage_report = "html"
+
+
+# debug profile
+
+[profile.debug]
+# Inherit from default profile
+inherits = "default"
+# Maximum verbosity for debugging
+verbosity = 4
+# Enable all debug features
+debug = ["*"]
+# Disable optimizer for easier debugging
+optimizer = false
+# Enable FFI for debugging
+ffi = true
+
+
+# gas optimization profile
+
+[profile.gas]
+# Inherit from default profile
+inherits = "default"
+# Maximum optimizer runs for gas optimization
+optimizer_runs = 10000
+# Enable gas reports
+gas_reports = ["*"]
+# Gas reports ignore patterns
+gas_reports_ignore = ["forge-std/**", "lib/**", "test/**"]
+
+# fork testing profile
+[profile.fork]
+# Inherit from default profile
+inherits = "default"
+# Enable fork testing
+fork = true
+# Fork block number (set to specific block for deterministic testing)
+# fork_block_number = 18500000
+# Fork URL (set your RPC endpoint)
+# fork_url = "https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY"
+# Etherscan API key for verification
+# etherscan_api_key = "YOUR_ETHERSCAN_API_KEY"
