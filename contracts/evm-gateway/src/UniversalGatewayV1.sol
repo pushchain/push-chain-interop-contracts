@@ -106,9 +106,9 @@ contract UniversalGatewayV1 is
         address _wethAddress
     ) external initializer {
         if (admin == address(0) || 
-                pauser == address(0) || 
-                    tss == address(0) ||
-                        _wethAddress == address(0)) revert Errors.ZeroAddress();
+            pauser == address(0) || 
+            tss == address(0) ||
+            _wethAddress == address(0)) revert Errors.ZeroAddress();
 
         __Context_init();
         __Pausable_init();
@@ -137,6 +137,7 @@ contract UniversalGatewayV1 is
         minObsCardinality  = 16;   // require some history for robust TWAP
     }
 
+    /// Todo: TSS Implementation could be changed based on ESDCA vs BLS sign schemes.
     modifier onlyTSS() {
         if (!hasRole(TSS_ROLE, _msgSender())) revert Errors.WithdrawFailed();
         _;
@@ -155,6 +156,7 @@ contract UniversalGatewayV1 is
      
     /// @notice Allows the admin to set the TSS address
     /// @param newTSS The new TSS address
+    /// Todo: TSS Implementation could be changed based on ESDCA vs BLS sign schemes.
     function setTSSAddress(address newTSS) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (newTSS == address(0)) revert Errors.ZeroAddress();
         address old = tssAddress;
