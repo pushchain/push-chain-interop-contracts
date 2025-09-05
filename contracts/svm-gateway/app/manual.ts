@@ -11,7 +11,6 @@ import fs from "fs";
 import { Program } from "@coral-xyz/anchor";
 import type { Pushsolanalocker } from "../target/types/pushsolanalocker";
 
-const PROGRAM_ID = new PublicKey("3zrWaMknHTRQpZSxY4BvQxw9TStSXiHcmcp3NMPTFkke");
 const VAULT_SEED = "vault";
 const LOCKER_SEED = "locker";
 const PRICE_ACCOUNT = new PublicKey("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE");
@@ -49,13 +48,14 @@ const programWithoutSigner = new Program(idl as Pushsolanalocker);
 const userProgram = new Program(idl as Pushsolanalocker, userProvider);  // Create program instance for user
 
 async function run() {
+  const programId = program.programId; // Ensure PDAs are derived with the invoked program ID
   const [lockerPda] = PublicKey.findProgramAddressSync(
     [Buffer.from(LOCKER_SEED)],
-    PROGRAM_ID
+    programId
   );
   const [vaultPda] = PublicKey.findProgramAddressSync(
     [Buffer.from(VAULT_SEED)],
-    PROGRAM_ID
+    programId
   );
 
   const admin = adminKeypair.publicKey;
