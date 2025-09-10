@@ -13,9 +13,6 @@
 [submodule "contracts/evm-gateway/lib/openzeppelin-foundry-upgrades"]
 	path = contracts/evm-gateway/lib/openzeppelin-foundry-upgrades
 	url = https://github.com/OpenZeppelin/openzeppelin-foundry-upgrades
-[submodule "contracts/evm-gateway/lib/chainlink-brownie-contracts"]
-	path = contracts/evm-gateway/lib/chainlink-brownie-contracts
-	url = https://github.com/smartcontractkit/chainlink-brownie-contracts
 [submodule "contracts/evm-gateway/lib/v3-core"]
 	path = contracts/evm-gateway/lib/v3-core
 	url = https://github.com/Uniswap/v3-core
@@ -24,12 +21,3 @@
 	url = https://github.com/Uniswap/v3-periphery
 [submodule "lib/v3-periphery"]
 	branch = 0.8
-[submodule "contracts/evm-gateway/lib/chainlink"]
-	path = contracts/evm-gateway/lib/chainlink
-	url = https://github.com/smartcontractkit/chainlink
-[submodule "contracts/evm-gateway/lib/v2-core"]
-	path = contracts/evm-gateway/lib/v2-core
-	url = https://github.com/uniswap/v2-core
-[submodule "contracts/evm-gateway/lib/v2-periphery"]
-	path = contracts/evm-gateway/lib/v2-periphery
-	url = https://github.com/uniswap/v2-periphery
