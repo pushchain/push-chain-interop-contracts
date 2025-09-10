@@ -49,14 +49,14 @@ interface IUniversalGateway {
         RevertSettings calldata revertCFG
     ) external payable;
 
-    function depositForInstantTx_Token(
-        address tokenIn,
-        uint256 amountIn,
-        UniversalPayload calldata payload,
-        RevertSettings calldata revertCFG,
-        uint256 amountOutMinETH,
-        uint256 deadline
-    ) external;
+    // function depositForInstantTx_Token(
+    //     address tokenIn,
+    //     uint256 amountIn,
+    //     UniversalPayload calldata payload,
+    //     RevertSettings calldata revertCFG,
+    //     uint256 amountOutMinETH,
+    //     uint256 deadline
+    // ) external;
 
     function depositForUniversalTxFunds(
         address recipient,
@@ -72,14 +72,14 @@ interface IUniversalGateway {
         RevertSettings calldata revertCFG
     ) external payable;
 
-    function depositForUniversalTxFundsAndPayload_Token(
-        address token,
-        uint256 amount,
-        address gasToken,
-        uint256 gasAmount,
-        UniversalPayload calldata payload,
-        RevertSettings calldata revertCFG
-    ) external;
+    // function depositForUniversalTxFundsAndPayload_Token(
+    //     address token,
+    //     uint256 amount,
+    //     address gasToken,
+    //     uint256 gasAmount,
+    //     UniversalPayload calldata payload,
+    //     RevertSettings calldata revertCFG
+    // ) external;
 
     /// @notice Withdraw functions (TSS-only)
     function withdraw(
