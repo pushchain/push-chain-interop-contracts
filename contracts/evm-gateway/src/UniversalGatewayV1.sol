@@ -307,7 +307,7 @@ contract UniversalGatewayV1 is
     ) internal {
         if (_revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
 
-        emit DepositForInstantTx({
+        emit TxWithGas({
             sender: _caller,
             payloadHash: _payloadHash,
             nativeTokenDeposited: _nativeTokenAmount,
@@ -504,7 +504,7 @@ contract UniversalGatewayV1 is
             }
         }
 
-        emit DepositForUniversalTx({
+        emit TxWithFunds({
             sender: _caller,
             recipient: _recipient,
             bridgeAmount: _bridgeAmount,
@@ -540,7 +540,7 @@ contract UniversalGatewayV1 is
             _handleTokenWithdraw(token, recipient, amount);
         }
 
-        emit Withdraw(recipient, amount, token);
+        emit WithdrawFunds(recipient, amount, token);
     }
 
     /**
@@ -564,7 +564,7 @@ contract UniversalGatewayV1 is
             _handleTokenWithdraw(token, revertCFG.fundRecipient, amount);
         }
 
-        emit Withdraw(revertCFG.fundRecipient, amount, token);
+        emit WithdrawFunds(revertCFG.fundRecipient, amount, token);
     }
 
     // =========================

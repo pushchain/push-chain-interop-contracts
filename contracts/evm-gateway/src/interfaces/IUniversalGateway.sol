@@ -13,7 +13,7 @@ interface IUniversalGateway {
     // =========================
 
     /// @dev Universal tx deposit (gas funding). Revert settings flattened for indexers.
-    event DepositForInstantTx(
+    event TxWithGas(
         address indexed sender,
         bytes32 payloadHash,
         uint256 nativeTokenDeposited,
@@ -22,7 +22,7 @@ interface IUniversalGateway {
     );
 
     /// @dev Asset bridge deposit (lock on gateway). Revert settings flattened for indexers.
-    event DepositForUniversalTx(
+    event TxWithFunds(
         address indexed sender,
         address indexed recipient,      // address(0) for moving funds + payload for execution.
         address bridgeToken,
@@ -33,11 +33,10 @@ interface IUniversalGateway {
         TX_TYPE txType
     );
 
-    event Withdraw(address indexed recipient, uint256 amount, address tokenAddress);
+    event WithdrawFunds(address indexed recipient, uint256 amount, address tokenAddress);
     event TSSAddressUpdated(address oldTSS, address newTSS);
     event TokenSupportModified(address tokenAddress, bool whitelistStatus);
     event CapsUpdated(uint256 minCapUsd, uint256 maxCapUsd);
-    event PoolStatusChanged(bool enabled);
 
     // =========================
     //         FUNCTIONS
