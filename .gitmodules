@@ -21,3 +21,9 @@
 	url = https://github.com/Uniswap/v3-periphery
 [submodule "lib/v3-periphery"]
 	branch = 0.8
+[submodule "contracts/evm-gateway/lib/foundry-chainlink-toolkit"]
+	path = contracts/evm-gateway/lib/foundry-chainlink-toolkit
+	url = https://github.com/smartcontractkit/foundry-chainlink-toolkit
+[submodule "contracts/evm-gateway/lib/chainlink-brownie-contracts"]
+	path = contracts/evm-gateway/lib/chainlink-brownie-contracts
+	url = https://github.com/smartcontractkit/chainlink-brownie-contracts
