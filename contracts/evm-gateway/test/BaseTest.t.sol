@@ -297,23 +297,6 @@ abstract contract BaseTest is Test {
     // =========================
     //      ORACLE/TWAP CONFIG SETTERS
     // =========================
-    function setUSDCWETHPool(address pool, address usdcToken, uint8 usdcDecimals, bool enabled) internal {
-        vm.prank(admin);
-        gateway.setPoolConfig(pool, usdcToken, usdcDecimals);
-        
-        vm.prank(admin);
-        gateway.setPoolEnabled(enabled);
-    }
-
-    function setTWAPWindow(uint32 secondsAgo) internal {
-        vm.prank(admin);
-        gateway.setTwapWindow(secondsAgo);
-    }
-
-    function setMinObsCard(uint16 minCard) internal {
-        vm.prank(admin);
-        gateway.setMinObsCardinality(minCard);
-    }
 
     function setV3FeeOrder(uint24 a, uint24 b, uint24 c) internal {
         vm.prank(admin);

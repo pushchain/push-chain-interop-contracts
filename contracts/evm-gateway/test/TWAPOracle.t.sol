@@ -40,16 +40,6 @@ contract UniversalGatewayV1_PriceFork_Test is Test {
             router: address(0),
             _wethAddress: WETH
         });
-
-        vm.prank(admin);
-        // In this pool, USDC is token0 and WETH is token1
-        ug.setPoolConfig(POOL, USDC, 6);
-
-        // 4) Set TWAP parameters
-        vm.prank(admin);
-        ug.setTwapWindow(1800); // 30 minutes (robust default)
-        vm.prank(admin);
-        ug.setMinObsCardinality(16); // require observation history (adjustable)
     }
 
     function test_PrintEthUsdPrice1e18() public {
@@ -65,29 +55,5 @@ contract UniversalGatewayV1_PriceFork_Test is Test {
     function test_Quote_PointOneEth_InUsd1e18() public {
         uint256 usd = ug.quoteEthAmountInUsd1e18(0.1 ether);
         console2.log("USD value of 0.1 ETH (1e18):", usd);
-    }
-
-    // Optional: exercise a revert by asking for an absurd cardinality
-    function test_Revert_LowCardinality_WhenTooStrict() public {
-        // Read current observation cardinality to choose an overly strict threshold (force revert)
-        (,, uint16 index, uint16 card, uint16 cardNext,,) = IUniswapV3Pool(POOL).slot0();
-        uint16 tooHigh = cardNext > card ? cardNext + 100 : card + 100;
-
-        vm.prank(admin);
-        ug.setMinObsCardinality(tooHigh);
-
-        vm.expectRevert(); // Errors.LowCardinality()
-        ug.ethUsdPrice1e18();
-    }
-
-    // Test disabling pool and confirm NoValidTWAP revert
-    function test_Revert_WhenPoolDisabled() public {
-        // Disable the pool
-        vm.prank(admin);
-        ug.setPoolEnabled(false);
-        
-        // Expect revert with NoValidTWAP error
-        vm.expectRevert(); // Errors.NoValidTWAP()
-        ug.ethUsdPrice1e18();
     }
 }
