@@ -37,6 +37,17 @@ interface IUniversalGateway {
     event TSSAddressUpdated(address oldTSS, address newTSS);
     event TokenSupportModified(address tokenAddress, bool whitelistStatus);
     event CapsUpdated(uint256 minCapUsd, uint256 maxCapUsd);
+    
+    // Chainlink Oracle Events
+    event ChainlinkEthUsdFeedUpdated(address indexed feed, uint8 decimals);
+    event ChainlinkStalePeriodUpdated(uint256 stalePeriodSec);
+    
+    // L2 Sequencer Events
+    event L2SequencerFeedUpdated(address indexed feed);
+    event L2SequencerGracePeriodUpdated(uint256 gracePeriodSec);
+    
+    // Swap Configuration Events
+    event DefaultSwapDeadlineUpdated(uint256 deadlineSec);
 
     // =========================
     //         FUNCTIONS

@@ -83,15 +83,14 @@ contract UniversalGateway is
     uint8  public chainlinkEthUsdDecimals;            
     uint256 public chainlinkStalePeriod;              
 
+    /// @notice (Optional) Chainlink L2 Sequencer uptime feed & grace period for rollups
+    AggregatorV3Interface public l2SequencerFeed;        // if set, enforce sequencer up + grace
+    uint256 public l2SequencerGracePeriodSec;            // e.g., 300 seconds
+
+
     /// @notice Default additional time window used when callers pass deadline = 0 (Uniswap v3 swaps)
     uint256 public defaultSwapDeadlineSec; 
 
-    /// @notice Emitted when Chainlink feed is updated
-    event ChainlinkEthUsdFeedUpdated(address indexed feed, uint8 decimals);
-    /// @notice Emitted when Chainlink staleness config is changed
-    event ChainlinkStalePeriodUpdated(uint256 stalePeriodSec);
-    /// @notice Emitted when default swap deadline is updated
-    event DefaultSwapDeadlineUpdated(uint256 deadlineSec);
 
 
     uint256[43] private __gap;
@@ -142,6 +141,10 @@ contract UniversalGateway is
         }
         // Default swap deadline window (industry common ~10 minutes)
         defaultSwapDeadlineSec = 10 minutes;
+
+        // Set a sane default for Chainlink staleness (can be tuned by admin)
+        chainlinkStalePeriod = 1 hours;
+        emit ChainlinkStalePeriodUpdated(chainlinkStalePeriod);
     }
 
     /// Todo: TSS Implementation could be changed based on ESDCA vs BLS sign schemes.
@@ -242,6 +245,20 @@ contract UniversalGateway is
     function setChainlinkStalePeriod(uint256 stalePeriodSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         chainlinkStalePeriod = stalePeriodSec;
         emit ChainlinkStalePeriodUpdated(stalePeriodSec);
+    }
+
+    /// @notice Set (or clear) the Chainlink L2 sequencer uptime feed for rollups
+    /// @dev    Set to address(0) on L1s / chains without a sequencer feed.
+    function setL2SequencerFeed(address feed) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        l2SequencerFeed = AggregatorV3Interface(feed);
+        emit L2SequencerFeedUpdated(feed);
+    }
+
+    /// @notice Configure the grace window after sequencer comes back up
+    /// @param gracePeriodSec If > 0, require `block.timestamp - sequencer.updatedAt > gracePeriodSec`
+    function setL2SequencerGracePeriod(uint256 gracePeriodSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        l2SequencerGracePeriodSec = gracePeriodSec;
+        emit L2SequencerGracePeriodUpdated(gracePeriodSec);
     }
 
     // =========================
@@ -600,10 +617,30 @@ contract UniversalGateway is
         maxValue = (MAX_CAP_UNIVERSAL_TX_USD * 1e18) / ethUsdPrice;
     }
 
-        /// @notice ETH/USD price scaled to 1e18, sourced from Chainlink AggregatorV3.
+    /// @notice ETH/USD price scaled to 1e18, sourced from Chainlink AggregatorV3.
     /// @dev Requires `ethUsdFeed` to be set. If `chainlinkStalePeriod` is non-zero, enforces freshness.
     function ethUsdPrice1e18() public view returns (uint256) {
         if (address(ethUsdFeed) == address(0)) revert Errors.InvalidInput(); // feed not set
+
+        // Optional L2 sequencer-uptime enforcement for rollups
+        if (address(l2SequencerFeed) != address(0)) {
+            (
+                ,            // roundId (unused)
+                int256 status, // 0 = UP, 1 = DOWN
+                ,
+                uint256 sequencerUpdatedAt,
+                /* uint80 answeredInRound */
+            ) = l2SequencerFeed.latestRoundData();
+
+            // Revert if sequencer is DOWN
+            if (status == 1) revert Errors.InvalidData();
+
+            // Revert if still within grace period after sequencer came back UP
+            if (l2SequencerGracePeriodSec != 0 && block.timestamp - sequencerUpdatedAt <= l2SequencerGracePeriodSec) {
+                revert Errors.InvalidData();
+            }
+        }
+
         (
             uint80 roundId,
             int256 answer,
@@ -615,6 +652,7 @@ contract UniversalGateway is
         // Basic oracle safety checks
         if (answer <= 0) revert Errors.InvalidData();
         if (answeredInRound < roundId) revert Errors.InvalidData();
+        if (updatedAt == 0) revert Errors.InvalidData();
         if (chainlinkStalePeriod != 0 && block.timestamp - updatedAt > chainlinkStalePeriod) {
             revert Errors.InvalidData();
         }
@@ -792,12 +830,9 @@ contract UniversalGateway is
     //         RECEIVE/FALLBACK
     // =========================
 
-    /// @dev Reject plain ETH; we only accept ETH via explicit deposit functions. // ToDo: CHECK IF REVERT NEEDED in FALLBACKS
-    receive() external payable {
-        revert Errors.DepositFailed();
-    }
-
-    fallback() external payable {
-        revert Errors.DepositFailed();
-    }
+    /// @dev Reject plain ETH; we only accept ETH via explicit deposit functions or WETH unwrapping.
+   receive() external payable {
+    // Allow WETH unwrapping; block unexpected sends.
+    if (msg.sender != WETH) revert Errors.DepositFailed();
+}
 }
