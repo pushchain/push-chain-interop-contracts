@@ -8,16 +8,16 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
-import {UniversalGatewayV1} from "../src/UniversalGatewayV1.sol";
+import {UniversalGateway} from "../src/UniversalGateway.sol";
 import {IUniversalGateway} from "../src/interfaces/IUniversalGateway.sol";
-import {TX_TYPE, RevertSettings, UniversalPayload, VerificationType, PoolCfg} from "../src/libraries/Types.sol";
+import {TX_TYPE, RevertSettings, UniversalPayload, VerificationType } from "../src/libraries/Types.sol";
 import {Errors} from "../src/libraries/Errors.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
 
 /**
  * @title BaseTest
- * @notice Abstract base test contract for UniversalGatewayV1
+ * @notice Abstract base test contract for UniversalGateway
  * @dev Provides complete setup, mocks, and helper functions for all gateway tests
  *      Inherit from this contract to avoid redundant setup code 
  */
@@ -40,7 +40,7 @@ abstract contract BaseTest is Test {
     // =========================
     //        CONTRACTS
     // =========================
-    UniversalGatewayV1 public gateway;
+    UniversalGateway public gateway;
     TransparentUpgradeableProxy public gatewayProxy;
     ProxyAdmin public proxyAdmin;
 
@@ -152,14 +152,14 @@ abstract contract BaseTest is Test {
     // =========================
     function _deployGateway() internal {
         // Deploy implementation
-        UniversalGatewayV1 implementation = new UniversalGatewayV1();
+        UniversalGateway implementation = new UniversalGateway();
         
         // Deploy proxy admin
         proxyAdmin = new ProxyAdmin(admin);
         
         // Deploy transparent upgradeable proxy
         bytes memory initData = abi.encodeWithSelector(
-            UniversalGatewayV1.initialize.selector,
+            UniversalGateway.initialize.selector,
             admin,
             pauser,
             tss,
@@ -177,7 +177,7 @@ abstract contract BaseTest is Test {
         );
 
         // Cast proxy to gateway interface
-        gateway = UniversalGatewayV1(payable(address(gatewayProxy)));
+        gateway = UniversalGateway(payable(address(gatewayProxy)));
 
         vm.label(address(gateway), "UniversalGateway");
         vm.label(address(gatewayProxy), "GatewayProxy");

@@ -12,7 +12,7 @@ library Errors {
     error InvalidData();
     error InvalidTxType();
     // =========================
-    //           ERRORS for UniversalGatewayV1
+    //           ERRORS for UniversalGateway
     // =========================
     error DepositFailed();
     error WithdrawFailed();

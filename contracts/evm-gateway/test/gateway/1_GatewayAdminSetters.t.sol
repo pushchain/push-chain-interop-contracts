@@ -10,7 +10,7 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 
 /**
  * @title GatewayAdminSettersTest
- * @notice Comprehensive test suite for all admin and operational functions in UniversalGatewayV1
+ * @notice Comprehensive test suite for all admin and operational functions in UniversalGateway
  * @dev Tests all admin setters, role-based access control, pause functionality, and operational functions
  */
 contract GatewayAdminSettersTest is BaseTest {

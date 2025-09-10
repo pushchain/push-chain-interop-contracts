@@ -2,8 +2,27 @@
 pragma solidity 0.8.26;
 
 /**
- * @title UniversalGatewayV1
+ * @title UniversalGateway
  * @notice Universal Gateway for EVM chains.
+ *         - Acts as a gateway for all supported external chains to bridge funds and payloads to Push Chain.
+ *         - Users of external chains can deposit funds and payloads to Push Chain using the gateway.
+ * 
+ * @dev    - Transaction Types: 4 main types of transactions supported by gateway:
+ *         -    1. GAS_TX: Allows users to fund their UEAs ( on Push Chain ) with gas deposits from source chains.
+ *         -    2. GAS_AND_PAYLOAD_TX: Allows users to fund their UEAs with gas deposits from source chains and execute payloads through their UEAs on Push Chain.
+ *         -    3. FUNDS_TX: Allows users to move large ticket-size funds from to any recipient address on Push Chain.
+ *         -    4. FUNDS_AND_PAYLOAD_TX: Allows users to move large ticket-size funds from to any recipient address on Push Chain and execute payloads through their UEAs on Push Chain.
+ *         - Note: Check the ./libraries/Types.sol file for more details on transaction types.
+ *        
+ * @dev    - TSS-controlled functionalities:
+ *         -    1. TSS-controlled withdraw (native or ERC20).
+ *         -    2. Token Support List: allowlist for ERC20 used as gas inputs on gas tx path.
+ *         - Note: Fund management and access control is managed by TSS_ROLE.
+ * 
+ * @dev    - USD Cap Checks:
+ *         -    TX Types like GAS_TX and GAS_AND_PAYLOAD_TX have require lower block confirmation for execution. 
+ *         -    Therefore, these transactions have a USD cap checks for gas tx deposits via oracle. 
+ *         - Note: Chainlink Oracle is used for ETH/USD price feed.
  */
 
 import {Initializable}              from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -16,7 +35,7 @@ import {SafeERC20}                  from "@openzeppelin/contracts/token/ERC20/ut
 import {Errors}                     from "./libraries/Errors.sol";
 import {IUniversalGateway}          from "./interfaces/IUniversalGateway.sol";
 
-import {RevertSettings, UniversalPayload, PoolCfg, TX_TYPE} from "./libraries/Types.sol";
+import {RevertSettings, UniversalPayload, TX_TYPE} from "./libraries/Types.sol";
 import {IWETH} from "./interfaces/IWETH.sol";
 import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
@@ -24,7 +43,7 @@ import {ISwapRouter as ISwapRouterV3} from "@uniswap/v3-periphery/contracts/inte
 import { AggregatorV3Interface } from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 
 
-contract UniversalGatewayV1 is
+contract UniversalGateway is
     Initializable,
     ContextUpgradeable,
     PausableUpgradeable,
@@ -56,21 +75,16 @@ contract UniversalGatewayV1 is
     /// @notice Uniswap V3 factory & router (chain-specific)
     IUniswapV3Factory public uniV3Factory;
     ISwapRouterV3     public uniV3Router;
-    address           public WETH; // cached from router
+    address           public WETH;
     uint24[3] public v3FeeOrder = [uint24(500), uint24(3000), uint24(10000)]; 
-    PoolCfg public poolUSDC; // DEPRECATED: used by TWAP; retained for storage layout
-
-    /// @notice TWAP parameters
-    uint32  public twapWindowSec;     // DEPRECATED: TWAP parameter (unused after Chainlink migration)
-    uint16  public minObsCardinality; // DEPRECATED: TWAP parameter (unused after Chainlink migration)
 
     /// @notice Chainlink ETH/USD oracle config
-    AggregatorV3Interface public ethUsdFeed;          // ETH/USD feed (decimals typically 8)
-    uint8  public chainlinkEthUsdDecimals;            // Cached feed decimals
-    uint256 public chainlinkStalePeriod;              // Max allowed staleness in seconds (0 = no check)
+    AggregatorV3Interface public ethUsdFeed;          
+    uint8  public chainlinkEthUsdDecimals;            
+    uint256 public chainlinkStalePeriod;              
 
     /// @notice Default additional time window used when callers pass deadline = 0 (Uniswap v3 swaps)
-    uint256 public defaultSwapDeadlineSec; // e.g., 10 minutes
+    uint256 public defaultSwapDeadlineSec; 
 
     /// @notice Emitted when Chainlink feed is updated
     event ChainlinkEthUsdFeedUpdated(address indexed feed, uint8 decimals);
@@ -80,18 +94,17 @@ contract UniversalGatewayV1 is
     event DefaultSwapDeadlineUpdated(uint256 deadlineSec);
 
 
-    // storage gap for upgradeability
     uint256[43] private __gap;
 
     /**
-     * @notice Initialize the UniversalGatewayV1 contract
+     * @notice Initialize the UniversalGateway contract
      * @param admin            DEFAULT_ADMIN_ROLE holder
      * @param pauser           PAUSER_ROLE
      * @param tss              initial TSS address
      * @param minCapUsd        min USD cap (1e18 decimals)
      * @param maxCapUsd        max USD cap (1e18 decimals)
-     * @param factory          UniswapV2 factory (optional if ERC20-for-gas disabled)
-     * @param router           UniswapV2 router  (optional if ERC20-for-gas disabled)
+     * @param factory          UniswapV2 factory 
+     * @param router           UniswapV2 router
      */
     function initialize(
         address admin,
@@ -127,15 +140,8 @@ contract UniversalGatewayV1 is
             uniV3Router  = ISwapRouterV3(router);
 
         }
-
-        emit TSSAddressUpdated(address(0), tss);
-        emit CapsUpdated(minCapUsd, maxCapUsd);
-        // sensible defaults; can be overridden with setters by admin
-        twapWindowSec      = 1800; // 30m
-        minObsCardinality  = 16;   // require some history for robust TWAP
         // Default swap deadline window (industry common ~10 minutes)
         defaultSwapDeadlineSec = 10 minutes;
-        emit DefaultSwapDeadlineUpdated(defaultSwapDeadlineSec);
     }
 
     /// Todo: TSS Implementation could be changed based on ESDCA vs BLS sign schemes.
@@ -147,13 +153,6 @@ contract UniversalGatewayV1 is
     // =========================
     //           ADMIN ACTIONS
     // =========================
-    /// @notice Set the default swap deadline window (used when a caller passes deadline = 0)
-    /// @param deadlineSec Number of seconds to add to block.timestamp when defaulting the deadline
-    function setDefaultSwapDeadline(uint256 deadlineSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
-        if (deadlineSec == 0) revert Errors.InvalidAmount();
-        defaultSwapDeadlineSec = deadlineSec;
-        emit DefaultSwapDeadlineUpdated(deadlineSec);
-    }
     function pause() external whenNotPaused onlyRole(PAUSER_ROLE) {
         _pause();
     }
@@ -186,6 +185,14 @@ contract UniversalGatewayV1 is
         MIN_CAP_UNIVERSAL_TX_USD = minCapUsd;
         MAX_CAP_UNIVERSAL_TX_USD = maxCapUsd;
         emit CapsUpdated(minCapUsd, maxCapUsd);
+    }
+
+    /// @notice Set the default swap deadline window (used when a caller passes deadline = 0)
+    /// @param deadlineSec Number of seconds to add to block.timestamp when defaulting the deadline
+    function setDefaultSwapDeadline(uint256 deadlineSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        if (deadlineSec == 0) revert Errors.InvalidAmount();
+        defaultSwapDeadlineSec = deadlineSec;
+        emit DefaultSwapDeadlineUpdated(deadlineSec);
     }
 
     /// @notice Allows the admin to set the Uniswap V3 factory and router
@@ -241,36 +248,35 @@ contract UniversalGatewayV1 is
     //           DEPOSITS - Fee Abstraction Route
     // =========================
 
-    /// @notice Deposit for Instant Transaction (gas funding deposit or Low Value Fund & Payload Exec).
-    /// @dev    Supports only Instant TX type, i.e., low block confirmations are required.
-    ///         TX_TYPE supported for this route are:
+    /// @notice Allows initiating a TX for funding UEAs or quick executions of payloads on Push Chain.
+    /// @dev    Supports 2 TX types:
     ///          a. GAS.
     ///          b. GAS_AND_PAYLOAD.
-    ///         Imposes a strict check for USD cap for the deposit amount. High Value movement of funds is not allowed through this route.
+    ///         Note: Any TX initiated via fee abstraction route requires lower block confirmations for execution on Push Chain.abi
+    ///         Hence, the deposit amount is subject to USD cap checks that is strictly enforced with MIN_CAP_UNIVERSAL_TX_USD and MAX_CAP_UNIVERSAL_TX_USD.
+    ///         Gas for this transaction must be paid in the NATIVE token of the soruce chain.
     /// @param payload Universal payload to execute on Push Chain
     /// @param revertCFG Revert settings
      function sendTxWithGas(
         UniversalPayload calldata payload,
         RevertSettings calldata revertCFG
     ) external payable nonReentrant whenNotPaused {
-        // Note: Important check to ensure the USD cap is not exceeded.
-        // Reason: The depositForInstantTx() function is designed for UX improvement and instant cross-chain calls. 
-        // Therefore, the required block confirmations for this route is very minimal. This means moving large amounts of ETH via this route is not recommended.
-        // Amount of ETH deposited must be less than or equal to the USD cap range allowed for this deposit route.
-        // Trying to move out-of-range ETH will revert the whole trasnaction.
+
 
         _checkUSDCaps(msg.value);
         _handleNativeDeposit(msg.value);
         _sendTxWithGas(_msgSender(), keccak256(abi.encode(payload)), msg.value, revertCFG, TX_TYPE.GAS_AND_PAYLOAD);  
     }
 
-    /// @notice Deposit for Instant Transaction with any supported Token.
+    /// @notice Allows initiating a TX for funding UEAs or quick executions of payloads on Push Chain with any supported Token.
     /// @dev    Allows users to use any token to fund or execute a payload on Push Chain.
     ///         The deopited token is swapped to native ETH using Uniswap v3.
-    ///         TX_TYPE supported for this route are:
+    ///         Supports 2 TX types:
     ///          a. GAS.
     ///          b. GAS_AND_PAYLOAD.
-    ///         Imposes a strict check for USD cap for the deposit amount. High Value movement of funds is not allowed through this route.
+    ///         Note: Any TX initiated via fee abstraction route requires lower block confirmations for execution on Push Chain.
+    ///         Hence, the deposit amount is subject to USD cap checks that is strictly enforced with MIN_CAP_UNIVERSAL_TX_USD and MAX_CAP_UNIVERSAL_TX_USD.
+    ///         Gas for this transaction can be paid in any token with a valid pool with the native token on AMM. 
     /// @param tokenIn Token address to swap from
     /// @param amountIn Amount of token to swap
     /// @param payload Universal payload to execute on Push Chain
@@ -307,7 +313,7 @@ contract UniversalGatewayV1 is
     }
 
     /// @dev    Internal helper function to deposit for Instant TX.
-    ///         Emits the core DepositForInstantTx event - important for Instant TX Route.
+    ///         Emits the core TxWithGas event - important for Instant TX Route.
     /// @param _caller Sender address
     /// @param _payloadHash Payload hash
     /// @param _nativeTokenAmount Amount of native token deposited
@@ -337,12 +343,11 @@ contract UniversalGatewayV1 is
     //           DEPOSITS - Universal TX Route
     // =========================
 
-    /// @notice Allows deposit and movement of high value funds from source chain to Push Chain.
+    /// @notice Allows initiating a TX for movement of high value funds from source chain to Push Chain.
     /// @dev    Doesn't support arbitrary execution payload via UEAs. Only allows movement of funds.
     ///         The tokens moved must be supported by the gateway. 
     ///         Supports only Universal TX type with high value funds, i.e., high block confirmations are required.
-    ///         TX_TYPE supported for this route are:
-    ///          a. FUNDS.
+    ///         Supports the TX type - FUNDS.
     /// @param recipient Recipient address
     /// @param bridgeToken Token address to bridge
     /// @param bridgeAmount Amount of token to bridge
@@ -376,17 +381,12 @@ contract UniversalGatewayV1 is
         );
     }
 
-    /// @notice Allows deposit and movement of funds and payload from source chain to Push Chain.
+    /// @notice Allows initiating a TX for movement of funds and payload from source chain to Push Chain.
     /// @dev    Supports arbitrary execution payload via UEAs.
     ///         The tokens moved must be supported by the gateway. 
-    ///         TX_TYPE supported for this route are:
-    ///          a. FUNDS_AND_PAYLOAD.
-    ///         Recipient for such TXs are always the user's UEA. Hence, no recipient address is needed.
-    /// @dev    The route emits two different events:
-    ///          a. DepositForInstantTx - for gas funding - no payload is moved. 
-    ///                                   - allows user to fund their UEA, which will be used for execution of payload.
-    ///          b. DepositForUniversalTx - for funds and payload movement from source chain to Push Chain.
-    ///                                   
+    ///         Supports the TX type - FUNDS_AND_PAYLOAD.
+    ///         Gas for this transaction must be paid in the NATIVE token of the soruce chain.
+    ///         Note: Recipient for such TXs are always the user's UEA on Push Chain. Hence, no recipient address is needed.
     /// @param bridgeToken Token address to bridge
     /// @param bridgeAmount Amount of token to bridge
     /// @param payload Universal payload to execute on Push Chain
@@ -426,19 +426,19 @@ contract UniversalGatewayV1 is
         );
     }
 
-    /// @notice Allows deposit and movement of funds and payload from source chain to Push Chain.
-    ///        Similar to depositForUniversalTxFundsAndPayload(), but with a token as gas input.
+    /// @notice Allows initiating a TX for movement of funds and payload from source chain to Push Chain.   
+    ///        Similar to sendTxWithFunds(), but with a token as gas input.
     /// @dev    The gas token is swapped to native ETH using Uniswap v3.
     ///         The tokens moved must be supported by the gateway. 
-    ///         TX_TYPE supported for this route are:
-    ///          a. FUNDS_AND_PAYLOAD.
+    ///         Supports the TX type - FUNDS_AND_PAYLOAD.
+    ///         Gas for this transaction can be paid in any token with a valid pool with the native token on AMM. 
     ///         Imposes a strict check for USD cap for the deposit amount. High Value movement of funds is not allowed through this route.
     /// @dev    The route emits two different events:
-    ///          a. DepositForInstantTx - for gas funding - no payload is moved. 
+    ///          a. TxWithGas - for gas funding - no payload is moved. 
     ///                                   allows user to fund their UEA, which will be used for execution of payload.
-    ///          b. DepositForUniversalTx - for funds and payload movement from source chain to Push Chain.
+    ///          b. TxWithFunds - for funds and payload movement from source chain to Push Chain.
     ///                                   
-    ///         Recipient for such TXs are always the user's UEA. Hence, no recipient address is needed.                     
+    ///         Note: Recipient for such TXs are always the user's UEA. Hence, no recipient address is needed.                     
     /// @param bridgeToken Token address to bridge
     /// @param bridgeAmount Amount of token to bridge
     /// @param gasToken Token address to swap from
@@ -488,7 +488,7 @@ contract UniversalGatewayV1 is
     }
 
     /// @notice Internal helper function to deposit for Universal TX.   
-    /// @dev    Emits the core DepositForUniversalTx event - important for Universal TX Route.
+    /// @dev    Emits the core TxWithFunds event - important for Universal TX Route.
     /// @param _caller Sender address
     /// @param _recipient Recipient address
     /// @param _bridgeToken Token address to bridge
@@ -508,7 +508,7 @@ contract UniversalGatewayV1 is
         TX_TYPE _txType
     ) internal {
         if (_revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
-        /// for recipient == address(0), the funds are being moved to UEA of the msg.sender.
+        /// for recipient == address(0), the funds are being moved to UEA of the msg.sender on Push Chain.
         if (_recipient == address(0)){
             if (_gasAmount == 0) revert Errors.InvalidAmount();
             if (_payloadHash == bytes32(0)) revert Errors.InvalidData();
@@ -537,7 +537,7 @@ contract UniversalGatewayV1 is
     // =========================
 
     /**
-     * @notice TSS-only withdraw (unlock) to an external recipient.
+     * @notice TSS-only withdraw (unlock) to an external recipient on Push Chain.
      * @param recipient   destination address
      * @param token       address(0) for native; ERC20 otherwise
      * @param amount      amount to withdraw

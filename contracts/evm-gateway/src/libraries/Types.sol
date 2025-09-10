@@ -47,12 +47,3 @@ struct UniversalPayload {
     uint256 deadline; // Timestamp after which this payload is invalid
     VerificationType vType; // Type of verification to use before execution (signedVerification or universalTxVerification)
 }
-
-/// @notice Canonical WETH/USDC pool (fee tier e.g., 500 or 3000) & config.
-struct PoolCfg {
-    IUniswapV3Pool pool;    // must be WETH <-> USDC
-    address stableToken;         // USDC
-    uint8   stableTokenDecimals; // 6 for USDC
-    bool    enabled;        // kill-switch
-}
-
