@@ -4,23 +4,6 @@ pragma solidity 0.8.26;
 /**
  * @title UniversalGatewayV1
  * @notice Universal Gateway for EVM chains.
- * @dev    - Used by Push Chain to bridge funds and payloads between EVM chains.
- *         - Supports two deposit(universal transactions) types:
- *             (1) Instant TX: Allows movement of funds and payload for instant execution on Push Chain.
- *                        - Requires lower block confirmations for execution, hence faster.
- *                        - Allows users to fund their UEAs ( on Push Chain ) with gas deposits from source chains.
- *                        - Allows users to execute payloads through their UEAs on Push Chain.
- *                        - For EVM chains, users are also allowed to fund their UEAs with any token (ERC20) they want.
- *             (2) Universal TX: Allows movement of large ticket-size funds and payload for universal transactions.
- *                        - Since fund size is large, it requires higher block confirmations for execution, hence slower.
- *                        - Allows users to move large ticket-size funds from to any recipient address on Push Chain.
- *                        - Allows users to move arbitrary payload for execution from source chain to Push Chain.
- * @dev    - TSS-controlled withdraw (native or ERC20).
- *         - Token whitelisting for bridges; separate allowlist for ERC20 used as gas inputs on universal tx path.
- *         - USD cap checks for universal tx deposits via pluggable rate provider.
- *         - Transparent upgradeable (use OZ TransparentUpgradeableProxy + ProxyAdmin).
- *         - Pausable, role-based access control.
- *         - Find the TX_TYPES and UniversalPayload structs in ./libraries/Types.sol for more details.
  */
 
 import {Initializable}              from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -240,7 +223,7 @@ contract UniversalGatewayV1 is
     }
 
     // =========================
-    //           DEPOSITS - Instant TX Route
+    //           DEPOSITS - Fee Abstraction Route
     // =========================
 
     /// @notice Deposit for Instant Transaction (gas funding deposit or Low Value Fund & Payload Exec).
@@ -251,7 +234,7 @@ contract UniversalGatewayV1 is
     ///         Imposes a strict check for USD cap for the deposit amount. High Value movement of funds is not allowed through this route.
     /// @param payload Universal payload to execute on Push Chain
     /// @param revertCFG Revert settings
-     function depositForInstantTx(
+     function sendTxWithGas(
         UniversalPayload calldata payload,
         RevertSettings calldata revertCFG
     ) external payable nonReentrant whenNotPaused {
@@ -263,7 +246,7 @@ contract UniversalGatewayV1 is
 
         _checkUSDCaps(msg.value);
         _handleNativeDeposit(msg.value);
-        _depositForInstantTx(_msgSender(), keccak256(abi.encode(payload)), msg.value, revertCFG, TX_TYPE.GAS_AND_PAYLOAD);  
+        _sendTxWithGas(_msgSender(), keccak256(abi.encode(payload)), msg.value, revertCFG, TX_TYPE.GAS_AND_PAYLOAD);  
     }
 
     /// @notice Deposit for Instant Transaction with any supported Token.
@@ -281,7 +264,7 @@ contract UniversalGatewayV1 is
     /// @param deadline Swap deadline
 
     // ToDo: swapToNative function usage - hence commented out , to be implemented later.
-    // function depositForInstantTx_Token(
+    // function sendTxWithGas(
     //     address tokenIn,
     //     uint256 amountIn,
     //     UniversalPayload calldata payload,
@@ -299,7 +282,7 @@ contract UniversalGatewayV1 is
 
     //     // Forward ETH to TSS and emit deposit event
     //     _handleNativeDeposit(ethOut);
-    //     _depositForInstantTx(
+    //     _sendTxWithGas(
     //         _msgSender(),
     //         keccak256(abi.encode(payload)),
     //         ethOut,
@@ -315,7 +298,7 @@ contract UniversalGatewayV1 is
     /// @param _nativeTokenAmount Amount of native token deposited
     /// @param _revertCFG Revert settings
     /// @param _txType Transaction type
-    function _depositForInstantTx(
+    function _sendTxWithGas(
         address _caller, 
         bytes32 _payloadHash, 
         uint256 _nativeTokenAmount, 
@@ -349,7 +332,7 @@ contract UniversalGatewayV1 is
     /// @param bridgeToken Token address to bridge
     /// @param bridgeAmount Amount of token to bridge
     /// @param revertCFG Revert settings
-    function depositForUniversalTxFunds(
+    function sendFunds(
         address recipient,
         address bridgeToken,
         uint256 bridgeAmount,
@@ -366,7 +349,7 @@ contract UniversalGatewayV1 is
             _handleTokenDeposit(bridgeToken, bridgeAmount);
         }
 
-        _depositForUniversalTx(
+        _sendTxWithFunds(
             _msgSender(),
             recipient,
             bridgeToken,
@@ -393,7 +376,7 @@ contract UniversalGatewayV1 is
     /// @param bridgeAmount Amount of token to bridge
     /// @param payload Universal payload to execute on Push Chain
     /// @param revertCFG Revert settings
-    function depositForUniversalTxFundsAndPayload(
+    function sendTxWithFunds(
         address bridgeToken,
         uint256 bridgeAmount,
         UniversalPayload calldata payload,
@@ -406,7 +389,7 @@ contract UniversalGatewayV1 is
         // Check and initiate Instant TX 
         _checkUSDCaps(gasAmount);
         _handleNativeDeposit(gasAmount);
-        _depositForInstantTx(
+        _sendTxWithGas(
             _msgSender(),
             hex"",
             gasAmount,
@@ -416,7 +399,7 @@ contract UniversalGatewayV1 is
 
         // Check and initiate Universal TX 
         _handleTokenDeposit(bridgeToken, bridgeAmount);
-        _depositForUniversalTx(
+        _sendTxWithFunds(
             _msgSender(),
             address(0),
             bridgeToken,
@@ -448,7 +431,7 @@ contract UniversalGatewayV1 is
     /// @param payload Universal payload to e
     
     // ToDo: swapToNative function usage - hence commented out , to be implemented later.
-    // function depositForUniversalTxFundsAndPayload_Token(
+    // function sendTxWithFunds(
     //     address bridgeToken,
     //     uint256 bridgeAmount,
     //     address gasToken,
@@ -466,7 +449,7 @@ contract UniversalGatewayV1 is
     //     _checkUSDCaps(nativeGasAmount);
     //     _handleNativeDeposit(nativeGasAmount);
 
-    //     _depositForInstantTx(
+    //     _sendTxWithGas(
     //         _msgSender(),
     //         hex"",
     //         nativeGasAmount,
@@ -498,7 +481,7 @@ contract UniversalGatewayV1 is
     /// @param _payloadHash Payload hash
     /// @param _revertCFG Revert settings
     /// @param _txType Transaction type
-    function _depositForUniversalTx(
+    function _sendTxWithFunds(
         address _caller,
         address _recipient,
         address _bridgeToken,
@@ -543,7 +526,7 @@ contract UniversalGatewayV1 is
      * @param token       address(0) for native; ERC20 otherwise
      * @param amount      amount to withdraw
      */
-    function withdraw(
+    function withdrawFunds(
         address recipient,
         address token,
         uint256 amount
@@ -567,7 +550,7 @@ contract UniversalGatewayV1 is
      * @param amount      amount to refund
      * @param revertCFG   (fundRecipient, revertMsg)
      */
-    function revertWithdraw(
+    function revertWithdrawFunds(
         address token,
         uint256 amount,
         RevertSettings calldata revertCFG
@@ -729,6 +712,19 @@ contract UniversalGatewayV1 is
         // USD(1e18) = (amountWei * px1e18) / 1e18
         // Note: amountWei is 1e18-based (wei), price is scaled to 1e18 above.
         usd1e18 = (amountWei * px1e18) / 1e18;
+    }
+
+    /// @notice Get the minimum and maximum ETH amounts that can be deposited based on USD caps.
+    /// @dev    Converts USD cap limits to ETH amounts using current Chainlink price.
+    /// @return minValue Minimum ETH amount (in wei) that can be deposited
+    /// @return maxValue Maximum ETH amount (in wei) that can be deposited
+    function getMinMaxValueForNative() public view returns (uint256 minValue, uint256 maxValue) {
+        uint256 ethUsdPrice = ethUsdPrice1e18(); // ETH price in USD (1e18 scaled)
+        
+        // Convert USD caps to ETH amounts
+        // Formula: ETH_amount = (USD_cap * 1e18) / ETH_price_in_USD
+        minValue = (MIN_CAP_UNIVERSAL_TX_USD * 1e18) / ethUsdPrice;
+        maxValue = (MAX_CAP_UNIVERSAL_TX_USD * 1e18) / ethUsdPrice;
     }
 
     // =========================
