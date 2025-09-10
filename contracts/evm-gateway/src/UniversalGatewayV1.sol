@@ -264,8 +264,8 @@ contract UniversalGatewayV1 is
     /// @notice Deposit for Instant Transaction (gas funding deposit or Low Value Fund & Payload Exec).
     /// @dev    Supports only Instant TX type, i.e., low block confirmations are required.
     ///         TX_TYPE supported for this route are:
-    ///          a. GAS_FUND_TX.
-    ///          b. FUNDS_AND_PAYLOAD_INSTANT_TX.
+    ///          a. GAS.
+    ///          b. GAS_AND_PAYLOAD.
     ///         Imposes a strict check for USD cap for the deposit amount. High Value movement of funds is not allowed through this route.
     /// @param payload Universal payload to execute on Push Chain
     /// @param revertCFG Revert settings
@@ -281,15 +281,15 @@ contract UniversalGatewayV1 is
 
         _checkUSDCaps(msg.value);
         _handleNativeDeposit(msg.value);
-        _depositForInstantTx(_msgSender(), keccak256(abi.encode(payload)), msg.value, revertCFG, TX_TYPE.FUNDS_AND_PAYLOAD_INSTANT_TX);  
+        _depositForInstantTx(_msgSender(), keccak256(abi.encode(payload)), msg.value, revertCFG, TX_TYPE.GAS_AND_PAYLOAD);  
     }
 
     /// @notice Deposit for Instant Transaction with any supported Token.
     /// @dev    Allows users to use any token to fund or execute a payload on Push Chain.
     ///         The deopited token is swapped to native ETH using Uniswap v3.
     ///         TX_TYPE supported for this route are:
-    ///          a. GAS_FUND_TX.
-    ///          b. FUNDS_AND_PAYLOAD_INSTANT_TX.
+    ///          a. GAS.
+    ///          b. GAS_AND_PAYLOAD.
     ///         Imposes a strict check for USD cap for the deposit amount. High Value movement of funds is not allowed through this route.
     /// @param tokenIn Token address to swap from
     /// @param amountIn Amount of token to swap
@@ -321,7 +321,7 @@ contract UniversalGatewayV1 is
             keccak256(abi.encode(payload)),
             ethOut,
             revertCFG,
-            TX_TYPE.FUNDS_AND_PAYLOAD_INSTANT_TX
+            TX_TYPE.GAS_AND_PAYLOAD
         );
     }
 
@@ -361,7 +361,7 @@ contract UniversalGatewayV1 is
     ///         The tokens moved must be supported by the gateway. 
     ///         Supports only Universal TX type with high value funds, i.e., high block confirmations are required.
     ///         TX_TYPE supported for this route are:
-    ///          a. FUNDS_BRIDGE_TX.
+    ///          a. FUNDS.
     /// @param recipient Recipient address
     /// @param bridgeToken Token address to bridge
     /// @param bridgeAmount Amount of token to bridge
@@ -391,7 +391,7 @@ contract UniversalGatewayV1 is
             0,
             bytes32(0), // Empty payload hash for funds-only bridge
             revertCFG,
-            TX_TYPE.FUNDS_BRIDGE_TX
+            TX_TYPE.FUNDS
         );
     }
 
@@ -399,7 +399,7 @@ contract UniversalGatewayV1 is
     /// @dev    Supports arbitrary execution payload via UEAs.
     ///         The tokens moved must be supported by the gateway. 
     ///         TX_TYPE supported for this route are:
-    ///          a. FUNDS_AND_PAYLOAD_TX.
+    ///          a. FUNDS_AND_PAYLOAD.
     ///         Recipient for such TXs are always the user's UEA. Hence, no recipient address is needed.
     /// @dev    The route emits two different events:
     ///          a. DepositForInstantTx - for gas funding - no payload is moved. 
@@ -428,7 +428,7 @@ contract UniversalGatewayV1 is
             hex"",
             gasAmount,
             revertCFG,
-            TX_TYPE.GAS_FUND_TX
+            TX_TYPE.GAS
         );
 
         // Check and initiate Universal TX 
@@ -441,7 +441,7 @@ contract UniversalGatewayV1 is
             gasAmount,
             keccak256(abi.encode(payload)),
             revertCFG,
-            TX_TYPE.FUNDS_AND_PAYLOAD_TX
+            TX_TYPE.FUNDS_AND_PAYLOAD
         );
     }
 
@@ -450,7 +450,7 @@ contract UniversalGatewayV1 is
     /// @dev    The gas token is swapped to native ETH using Uniswap v3.
     ///         The tokens moved must be supported by the gateway. 
     ///         TX_TYPE supported for this route are:
-    ///          a. FUNDS_AND_PAYLOAD_TX.
+    ///          a. FUNDS_AND_PAYLOAD.
     ///         Imposes a strict check for USD cap for the deposit amount. High Value movement of funds is not allowed through this route.
     /// @dev    The route emits two different events:
     ///          a. DepositForInstantTx - for gas funding - no payload is moved. 
@@ -487,7 +487,7 @@ contract UniversalGatewayV1 is
             hex"",
             nativeGasAmount,
             revertCFG,
-            TX_TYPE.GAS_FUND_TX
+            TX_TYPE.GAS
         );
 
         _handleTokenDeposit(bridgeToken, bridgeAmount);
@@ -499,7 +499,7 @@ contract UniversalGatewayV1 is
             nativeGasAmount,
             keccak256(abi.encode(payload)),
             revertCFG,
-            TX_TYPE.FUNDS_AND_PAYLOAD_TX
+            TX_TYPE.FUNDS_AND_PAYLOAD
         );
 
     }
@@ -530,8 +530,8 @@ contract UniversalGatewayV1 is
             if (_gasAmount == 0) revert Errors.InvalidAmount();
             if (_payloadHash == bytes32(0)) revert Errors.InvalidData();
             if (
-                _txType != TX_TYPE.FUNDS_AND_PAYLOAD_TX &&
-                _txType != TX_TYPE.FUNDS_AND_PAYLOAD_INSTANT_TX
+                _txType != TX_TYPE.FUNDS_AND_PAYLOAD &&
+                _txType != TX_TYPE.GAS_AND_PAYLOAD
             ) {
                 revert Errors.InvalidTxType();
             }

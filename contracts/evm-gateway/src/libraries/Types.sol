@@ -6,19 +6,20 @@ import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Po
     //        STRUCTS / TYPES
     // =========================
 
+// Transaction Types in Universal Gateway
 enum TX_TYPE {
-    /// @dev only for funding the UEA on Push Chain
+    /// @dev only for funding the UEA on Push Chain with GAS 
     ///      doesn't support movement of high value funds or payload for execution.
-    GAS_FUND_TX,
-    /// @dev only for bridging the funds to a recipient on the target chain
-    ///      doesn't support arbitrary execution payload via UEAs.
-    FUNDS_BRIDGE_TX,
+    GAS,
+    /// @dev for funding UEA and execute a payload instantly via UEA on Push Chain. versal transaction route. 
+    ///      allows movement of funds between CAP_RANGES ( low fund size ) & requires lower block confirmations.
+    GAS_AND_PAYLOAD,
+    /// @dev for bridging of large funds only from external chain to Push Chain.
+    ///      doesn't support arbitrary payload movement and requires longer block confirmations.
+    FUNDS,
     /// @dev for bridging both funds and payload to Push Chain for execution. 
-    ///      supports arbitrary execution payload via UEAs.
-    FUNDS_AND_PAYLOAD_TX,
-    /// @dev for bridging both funds and payload to Push Chain for instant execution through universal transaction route. 
-    /// @dev allows for lower fund size bridging and requires lower block confirmations to achieve instant execution on Push Chain.
-    FUNDS_AND_PAYLOAD_INSTANT_TX
+    /// @dev no strict cap ranges for fund amount and requires longer block confirmations.
+    FUNDS_AND_PAYLOAD
 }
 
 struct RevertSettings {
