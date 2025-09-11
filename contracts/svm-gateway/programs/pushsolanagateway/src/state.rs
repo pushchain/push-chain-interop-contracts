@@ -4,6 +4,7 @@ use anchor_lang::prelude::*;
 pub const CONFIG_SEED: &[u8] = b"config";
 pub const VAULT_SEED: &[u8] = b"vault";
 pub const WHITELIST_SEED: &[u8] = b"whitelist";
+pub const TSS_SEED: &[u8] = b"tss";
 
 // Price feed ID (Pyth SOL/USD), same as locker for now
 pub const FEED_ID: &str = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
@@ -83,6 +84,21 @@ pub struct TokenWhitelist {
 
 impl TokenWhitelist {
     pub const LEN: usize = 8 + 4 + (32 * 50) + 1 + 100; // discriminator + vec length + 50 tokens max + bump + padding
+}
+
+/// TSS state PDA for ECDSA verification (Ethereum-style secp256k1).
+/// Stores 20-byte ETH address, chain id, and replay-protection nonce.
+#[account]
+pub struct TssPda {
+    pub tss_eth_address: [u8; 20],
+    pub chain_id: u64,
+    pub nonce: u64,
+    pub authority: Pubkey,
+    pub bump: u8,
+}
+
+impl TssPda {
+    pub const LEN: usize = 8 + 20 + 8 + 8 + 32 + 1;
 }
 
 /// GAS deposit event (parity with EVM `TxWithGas`). Emitted for gas funding on both GAS and GAS+PAYLOAD routes.

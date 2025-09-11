@@ -1,4 +1,5 @@
 import * as anchor from "@coral-xyz/anchor";
+import * as dotenv from "dotenv";
 import {
     PublicKey,
     LAMPORTS_PER_SOL,
@@ -9,6 +10,8 @@ import fs from "fs";
 import { Program } from "@coral-xyz/anchor";
 import type { Pushsolanagateway } from "../target/types/pushsolanagateway";
 import * as spl from "@solana/spl-token";
+import { keccak_256 } from "js-sha3";
+import * as secp from "@noble/secp256k1";
 
 const PROGRAM_ID = new PublicKey("9nokRuXvtKyT32vvEQ1gkM3o8HzNooStpCuKuYD8BoX5");
 const CONFIG_SEED = "config";
@@ -131,6 +134,10 @@ async function createSPLToken(
 async function run() {
     console.log("=== GATEWAY PROGRAM COMPREHENSIVE TEST ===\n");
 
+    // Load env from parent and local (so either location works)
+    dotenv.config({ path: "../.env" });
+    dotenv.config();
+
     // Derive PDAs
     const [configPda] = PublicKey.findProgramAddressSync(
         [Buffer.from(CONFIG_SEED)],
@@ -138,6 +145,10 @@ async function run() {
     );
     const [vaultPda] = PublicKey.findProgramAddressSync(
         [Buffer.from(VAULT_SEED)],
+        PROGRAM_ID
+    );
+    const [tssPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("tss")],
         PROGRAM_ID
     );
 
@@ -501,21 +512,8 @@ async function run() {
     console.log(`📊 User SPL balance AFTER: ${userTokenBalanceAfterTx.toString()} tokens`);
     console.log(`📊 Vault SPL balance AFTER: ${vaultTokenBalanceAfterTx.toString()} tokens\n`);
 
-    // Step 9: Test withdrawal (admin only)
-    console.log("9. Testing withdrawal...");
-    const withdrawAmount = new anchor.BN(0.002 * LAMPORTS_PER_SOL); // 0.002 SOL
-
-    const withdrawTx = await program.methods
-        .withdrawFunds(admin, withdrawAmount)
-        .accounts({
-            config: configPda,
-            vault: vaultPda,
-            recipient: admin,
-            tss: admin, // Using admin as TSS for simplicity
-        })
-        .rpc();
-
-    console.log(`✅ Withdrawal completed: ${withdrawTx}\n`);
+    // Step 9: Skipped legacy signer-based withdrawal; use TSS-tested flow below
+    console.log("9. Skipping legacy withdrawal; TSS withdrawal verified in step 12\n");
 
     // Step 10: Test pause/unpause
     console.log("10. Testing pause/unpause...");
@@ -593,6 +591,111 @@ async function run() {
     }
 
     console.log("🎉 All tests completed successfully!");
+
+    // =========================
+    //   12. TSS INIT & WITHDRAW
+    // =========================
+    console.log("12. TSS init and TSS-verified withdraw test...");
+
+    // 12.1 init_tss (chain_id = 1, ETH address from user)
+    const ethAddrHex = "0xEbf0Cfc34E07ED03c05615394E2292b387B63F12".toLowerCase().replace(/^0x/, "");
+    const ethAddrBytes = Buffer.from(ethAddrHex, "hex");
+    if (ethAddrBytes.length !== 20) throw new Error("Invalid ETH address length for TSS");
+
+    try {
+        const tssInfo = await connection.getAccountInfo(tssPda);
+        if (!tssInfo) {
+            const initTssTx = await program.methods
+                .initTss(Array.from(ethAddrBytes) as any, new anchor.BN(1))
+                .accounts({
+                    tssPda: tssPda,
+                    authority: admin,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([adminKeypair])
+                .rpc();
+            console.log(`✅ TSS initialized: ${initTssTx}`);
+        } else {
+            console.log("TSS PDA already initialized");
+        }
+    } catch (e) {
+        console.log("TSS init check failed, attempting init anyway");
+        const initTssTx = await program.methods
+            .initTss(Array.from(ethAddrBytes) as any, new anchor.BN(1))
+            .accounts({
+                tssPda: tssPda,
+                authority: admin,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([adminKeypair])
+            .rpc();
+        console.log(`✅ TSS initialized: ${initTssTx}`);
+    }
+
+    // 12.2 Build message for SOL withdraw to admin using instruction_id=1
+    const withdrawAmountTss = new anchor.BN(0.0005 * LAMPORTS_PER_SOL).toNumber();
+    const chainId = 1; // Ethereum mainnet id for domain separation
+    // Fetch current nonce by reading TssPda account (optional). We'll pass a rolling nonce = 0 on first run.
+    // For simplicity here, use a small local nonce and retry if mismatch.
+    let nonce = 0; // default
+    try {
+        // Attempt to read current nonce from on-chain TSS PDA
+        const tssAcc: any = await (program.account as any).tssPda.fetch(tssPda);
+        if (tssAcc && typeof tssAcc.nonce !== "undefined") {
+            nonce = Number(tssAcc.nonce);
+        }
+    } catch (e) {
+        // If not initialized or IDL not exposed yet, keep default 0
+    }
+
+    const PREFIX = Buffer.from("PUSH_CHAIN_SVM");
+    const instructionId = Buffer.from([1]); // 1 = SOL withdraw
+    const chainIdBE = Buffer.alloc(8);
+    chainIdBE.writeBigUInt64BE(BigInt(chainId));
+    const nonceBE = Buffer.alloc(8);
+    nonceBE.writeBigUInt64BE(BigInt(nonce));
+    const amountBE = Buffer.alloc(8);
+    amountBE.writeBigUInt64BE(BigInt(withdrawAmountTss));
+    const recipientBytes = admin.toBuffer();
+
+    const concat = Buffer.concat([
+        PREFIX,
+        instructionId,
+        chainIdBE,
+        nonceBE,
+        amountBE,
+        recipientBytes,
+    ]);
+    const messageHashHex = keccak_256(concat);
+    const messageHash = Buffer.from(messageHashHex, "hex");
+
+    // 12.3 Sign with ETH private key from .env
+    const priv = (process.env.TSS_PRIVKEY || process.env.ETH_PRIVATE_KEY || process.env.PRIVATE_KEY || "").replace(/^0x/, "");
+    if (!priv) throw new Error("Missing TSS_PRIVKEY/PRIVATE_KEY in .env");
+    const sig = await secp.sign(messageHash, priv, { recovered: true, der: false });
+    const signature: Uint8Array = sig[0];
+    let recoveryId: number = sig[1]; // 0 or 1
+
+    // 12.4 Call withdraw_tss
+    const tssWithdrawTx = await program.methods
+        .withdrawTss(
+            new anchor.BN(withdrawAmountTss),
+            Array.from(signature) as any,
+            recoveryId,
+            Array.from(messageHash) as any,
+            new anchor.BN(nonce),
+        )
+        .accounts({
+            config: configPda,
+            vault: vaultPda,
+            tssPda: tssPda,
+            recipient: admin,
+            systemProgram: SystemProgram.programId,
+        })
+        .signers([adminKeypair])
+        .rpc();
+    console.log(`✅ TSS withdraw SOL completed: ${tssWithdrawTx}`);
+    await parseAndPrintEvents(tssWithdrawTx, "withdraw_tss events");
 }
 
 run().catch((e) => {

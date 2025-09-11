@@ -16,12 +16,13 @@ Production-ready Solana program for cross-chain asset bridging to Push Chain. Mi
 3. **`send_funds_native`** - Native SOL bridging (high value, no caps)
 4. **`send_tx_with_funds`** - Combined SPL tokens + gas with payload execution
 
-### Admin Functions
-- **`initialize`** - Deploy gateway with admin, TSS, caps configuration
+### Admin & TSS Functions
+- **`initialize`** - Deploy gateway with admin/pauser/caps and set Pyth feed
 - **`pause/unpause`** - Emergency controls
 - **`set_caps_usd`** - Update USD caps (8 decimal precision)
 - **`whitelist_token/remove_token`** - Manage supported SPL tokens
-- **`withdraw_funds/withdraw_spl_token`** - TSS-only fund extraction
+- **`init_tss` / `update_tss` / `reset_nonce`** - Configure Ethereum TSS address, chain id, and nonce
+- **`withdraw_tss` / `withdraw_spl_token_tss`** - TSS-verified withdrawals (ECDSA secp256k1)
 
 ## Account Structure
 
@@ -30,11 +31,12 @@ Production-ready Solana program for cross-chain asset bridging to Push Chain. Mi
 - **Vault:** `[b"vault"]` - Native SOL storage
 - **Whitelist:** `[b"whitelist"]` - SPL token registry
 - **Token Vaults:** Program ATAs for each whitelisted SPL token
+ - **TSS:** `[b"tss"]` - TSS ETH address (20 bytes), chain id, nonce, authority
 
 ### Required Accounts
 - Functions with USD caps require `priceUpdate` (Pyth price feed)
 - SPL functions require user/gateway token accounts and token program
-- Admin functions require `admin` or `tss` authority
+- Admin functions require `admin` or `pauser` authority; TSS functions require TSS ECDSA verification
 
 ## Events
 - **`TxWithGas`** - Gas deposits (maps to Ethereum event)
@@ -83,12 +85,30 @@ await program.methods
   .rpc();
 ```
 
+### 5. TSS Configuration & Verified Withdrawals
+```typescript
+// init TSS
+await program.methods
+  .initTss(Array.from(Buffer.from("ebf0cfc34e07ed03c05615394e2292b387b63f12", "hex")), new anchor.BN(1))
+  .accounts({ tssPda, authority: admin, systemProgram: SystemProgram.programId })
+  .rpc();
+
+// build message hash = keccak256(prefix|instruction_id|chain_id|nonce|amount|recipient)
+// sign with ECDSA (secp256k1) using ETH private key; normalize recovery id to 0/1
+
+await program.methods
+  .withdrawTss(new anchor.BN(amount), signature, recoveryId, messageHash, new anchor.BN(nonce))
+  .accounts({ config, vault, tssPda, recipient, systemProgram: SystemProgram.programId })
+  .rpc();
+```
+
 ## Security Features
 
 - **Pause functionality** - Emergency stop for all user functions
 - **USD caps** - Real-time Pyth oracle price validation (gas functions only)
 - **Whitelist enforcement** - Only approved SPL tokens accepted
 - **Authority separation** - Admin, pauser, TSS roles with distinct permissions
+- **TSS verification** - Nonce check, canonical message hash, ECDSA secp256k1 recovery to ETH address
 - **Balance validation** - Comprehensive user fund checks before operations
 - **PDA-based vaults** - Secure custody using program-derived addresses
 

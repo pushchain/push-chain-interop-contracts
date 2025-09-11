@@ -74,22 +74,8 @@ pub mod pushsolanagateway {
     }
 
     // =========================
-    //           WITHDRAWALS
+    //        WITHDRAWALS
     // =========================
-
-    /// @notice TSS-controlled withdraw of native SOL
-    pub fn withdraw_funds(ctx: Context<Withdraw>, recipient: Pubkey, amount: u64) -> Result<()> {
-        instructions::withdraw::withdraw(ctx, recipient, amount)
-    }
-
-    /// @notice TSS-controlled revert withdraw of native SOL
-    pub fn revert_withdraw_funds(
-        ctx: Context<RevertWithdraw>,
-        amount: u64,
-        revert_cfg: RevertSettings,
-    ) -> Result<()> {
-        instructions::withdraw::revert_withdraw(ctx, amount, revert_cfg)
-    }
 
     // =========================
     //           ADMIN
@@ -157,6 +143,63 @@ pub mod pushsolanagateway {
     }
 
     // =========================
+    //             TSS
+    // =========================
+    pub fn init_tss(ctx: Context<InitTss>, tss_eth_address: [u8; 20], chain_id: u64) -> Result<()> {
+        instructions::tss::init_tss(ctx, tss_eth_address, chain_id)
+    }
+
+    pub fn update_tss(
+        ctx: Context<UpdateTss>,
+        tss_eth_address: [u8; 20],
+        chain_id: u64,
+    ) -> Result<()> {
+        instructions::tss::update_tss(ctx, tss_eth_address, chain_id)
+    }
+
+    pub fn reset_nonce(ctx: Context<ResetNonce>, new_nonce: u64) -> Result<()> {
+        instructions::tss::reset_nonce(ctx, new_nonce)
+    }
+
+    /// @notice TSS-verified withdraw of native SOL
+    pub fn withdraw_tss(
+        ctx: Context<WithdrawTss>,
+        amount: u64,
+        signature: [u8; 64],
+        recovery_id: u8,
+        message_hash: [u8; 32],
+        nonce: u64,
+    ) -> Result<()> {
+        instructions::withdraw::withdraw_tss(
+            ctx,
+            amount,
+            signature,
+            recovery_id,
+            message_hash,
+            nonce,
+        )
+    }
+
+    /// @notice TSS-verified withdraw of SPL tokens
+    pub fn withdraw_spl_token_tss(
+        ctx: Context<WithdrawSplTokenTss>,
+        amount: u64,
+        signature: [u8; 64],
+        recovery_id: u8,
+        message_hash: [u8; 32],
+        nonce: u64,
+    ) -> Result<()> {
+        instructions::withdraw::withdraw_spl_token_tss(
+            ctx,
+            amount,
+            signature,
+            recovery_id,
+            message_hash,
+            nonce,
+        )
+    }
+
+    // =========================
     //         LEGACY (V0)
     // =========================
     /// @notice Legacy-compatible add funds event for offchain relayers (pushsolanalocker)
@@ -174,7 +217,7 @@ pub use instructions::admin::{AdminAction, PauseAction, WhitelistAction};
 pub use instructions::deposit::{SendFunds, SendFundsNative, SendTxWithFunds, SendTxWithGas};
 pub use instructions::initialize::Initialize;
 pub use instructions::legacy::{AddFunds, FundsAddedEvent};
-pub use instructions::withdraw::{RevertWithdraw, Withdraw};
+pub use instructions::withdraw::RevertWithdraw;
 
 pub use state::{
     // Events

@@ -1,15 +1,21 @@
+use crate::instructions::tss::validate_message;
 use crate::{errors::*, state::*};
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{program::invoke_signed, system_instruction};
 use anchor_spl::token::{self, Mint, Token, Transfer};
 
+// Legacy signer-based withdraw removed; use TSS-verified variants below
+
+// =========================
+//        TSS WITHDRAW
+// =========================
+
 #[derive(Accounts)]
-pub struct Withdraw<'info> {
+pub struct WithdrawTss<'info> {
     #[account(
         seeds = [CONFIG_SEED],
         bump = config.bump,
         constraint = !config.paused @ GatewayError::PausedError,
-        constraint = config.tss_address == tss.key() @ GatewayError::Unauthorized
     )]
     pub config: Account<'info, Config>,
 
@@ -17,7 +23,12 @@ pub struct Withdraw<'info> {
     #[account(mut, seeds = [VAULT_SEED], bump = config.vault_bump)]
     pub vault: UncheckedAccount<'info>,
 
-    pub tss: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [TSS_SEED],
+        bump = tss_pda.bump,
+    )]
+    pub tss_pda: Account<'info, TssPda>,
 
     /// CHECK: Recipient address
     #[account(mut)]
@@ -26,15 +37,32 @@ pub struct Withdraw<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn withdraw(ctx: Context<Withdraw>, recipient: Pubkey, amount: u64) -> Result<()> {
-    require!(
-        recipient != Pubkey::default(),
-        GatewayError::InvalidRecipient
-    );
+pub fn withdraw_tss(
+    ctx: Context<WithdrawTss>,
+    amount: u64,
+    signature: [u8; 64],
+    recovery_id: u8,
+    message_hash: [u8; 32],
+    nonce: u64,
+) -> Result<()> {
     require!(amount > 0, GatewayError::InvalidAmount);
 
-    let seeds: &[&[u8]] = &[VAULT_SEED, &[ctx.accounts.config.vault_bump]];
+    // instruction_id = 1 for SOL withdraw
+    let instruction_id: u8 = 1;
+    let recipient_bytes = ctx.accounts.recipient.key().to_bytes();
+    let additional: [&[u8]; 1] = [&recipient_bytes[..]];
+    validate_message(
+        &mut ctx.accounts.tss_pda,
+        instruction_id,
+        nonce,
+        Some(amount),
+        &additional,
+        &message_hash,
+        &signature,
+        recovery_id,
+    )?;
 
+    let seeds: &[&[u8]] = &[VAULT_SEED, &[ctx.accounts.config.vault_bump]];
     invoke_signed(
         &system_instruction::transfer(ctx.accounts.vault.key, ctx.accounts.recipient.key, amount),
         &[
@@ -45,24 +73,21 @@ pub fn withdraw(ctx: Context<Withdraw>, recipient: Pubkey, amount: u64) -> Resul
         &[seeds],
     )?;
 
-    // Emit withdraw event (ETH parity)
     emit!(crate::state::WithdrawFunds {
         recipient: ctx.accounts.recipient.key(),
         amount,
-        token: Pubkey::default(), // Native SOL
+        token: Pubkey::default(),
     });
 
     Ok(())
 }
 
-// SPL Token withdraw instruction
 #[derive(Accounts)]
-pub struct WithdrawSplToken<'info> {
+pub struct WithdrawSplTokenTss<'info> {
     #[account(
         seeds = [CONFIG_SEED],
         bump = config.bump,
         constraint = !config.paused @ GatewayError::PausedError,
-        constraint = config.tss_address == tss.key() @ GatewayError::Unauthorized
     )]
     pub config: Account<'info, Config>,
 
@@ -71,11 +96,16 @@ pub struct WithdrawSplToken<'info> {
     )]
     pub whitelist: Account<'info, TokenWhitelist>,
 
-    /// CHECK: Token vault ATA, derived from config PDA and token mint (ZetaChain style)
+    /// CHECK: Token vault ATA, derived from config PDA and token mint
     #[account(mut)]
     pub token_vault: UncheckedAccount<'info>,
 
-    pub tss: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [TSS_SEED],
+        bump = tss_pda.bump,
+    )]
+    pub tss_pda: Account<'info, TssPda>,
 
     /// CHECK: Recipient token account
     #[account(mut)]
@@ -86,27 +116,43 @@ pub struct WithdrawSplToken<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-pub fn withdraw_spl_token(ctx: Context<WithdrawSplToken>, amount: u64) -> Result<()> {
+pub fn withdraw_spl_token_tss(
+    ctx: Context<WithdrawSplTokenTss>,
+    amount: u64,
+    signature: [u8; 64],
+    recovery_id: u8,
+    message_hash: [u8; 32],
+    nonce: u64,
+) -> Result<()> {
     require!(amount > 0, GatewayError::InvalidAmount);
 
-    // Transfer tokens from vault to recipient
-    // We need to derive the bump for the token vault PDA
-    // Use config PDA as authority (ZetaChain style)
-    let seeds: &[&[u8]] = &[CONFIG_SEED, &[ctx.accounts.config.bump]];
+    // instruction_id = 2 for SPL withdraw
+    let instruction_id: u8 = 2;
+    let mut mint_bytes = [0u8; 32];
+    mint_bytes.copy_from_slice(&ctx.accounts.token_mint.key().to_bytes());
+    let additional: [&[u8]; 1] = [&mint_bytes[..]];
+    validate_message(
+        &mut ctx.accounts.tss_pda,
+        instruction_id,
+        nonce,
+        Some(amount),
+        &additional,
+        &message_hash,
+        &signature,
+        recovery_id,
+    )?;
 
+    let seeds: &[&[u8]] = &[CONFIG_SEED, &[ctx.accounts.config.bump]];
     let cpi_accounts = Transfer {
         from: ctx.accounts.token_vault.to_account_info(),
         to: ctx.accounts.recipient_token_account.to_account_info(),
         authority: ctx.accounts.config.to_account_info(),
     };
-
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let seeds_array = [seeds];
     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, &seeds_array);
-
     token::transfer(cpi_ctx, amount)?;
 
-    // Emit withdraw event (ETH parity)
     emit!(crate::state::WithdrawFunds {
         recipient: ctx.accounts.recipient_token_account.key(),
         amount,
@@ -115,6 +161,9 @@ pub fn withdraw_spl_token(ctx: Context<WithdrawSplToken>, amount: u64) -> Result
 
     Ok(())
 }
+
+// SPL Token withdraw instruction
+// Legacy signer-based SPL withdraw removed; use TSS-verified variants below
 
 // =========================
 //   REVERT WITHDRAW FUNCTIONS
