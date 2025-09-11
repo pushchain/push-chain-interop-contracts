@@ -282,7 +282,7 @@ contract UniversalGateway is
 
         _checkUSDCaps(msg.value);
         _handleNativeDeposit(msg.value);
-        _sendTxWithGas(_msgSender(), keccak256(abi.encode(payload)), msg.value, revertCFG, TX_TYPE.GAS_AND_PAYLOAD);  
+        _sendTxWithGas(_msgSender(), abi.encode(payload), msg.value, revertCFG, TX_TYPE.GAS_AND_PAYLOAD);  
     }
 
     /// @notice Allows initiating a TX for funding UEAs or quick executions of payloads on Push Chain with any supported Token.
@@ -322,7 +322,7 @@ contract UniversalGateway is
         _handleNativeDeposit(ethOut);
         _sendTxWithGas(
             _msgSender(),
-            keccak256(abi.encode(payload)),
+            abi.encode(payload),
             ethOut,
             revertCFG,
             TX_TYPE.GAS_AND_PAYLOAD
@@ -332,13 +332,13 @@ contract UniversalGateway is
     /// @dev    Internal helper function to deposit for Instant TX.
     ///         Emits the core TxWithGas event - important for Instant TX Route.
     /// @param _caller Sender address
-    /// @param _payloadHash Payload hash
+    /// @param _payload Payload
     /// @param _nativeTokenAmount Amount of native token deposited
     /// @param _revertCFG Revert settings
     /// @param _txType Transaction type
     function _sendTxWithGas(
         address _caller, 
-        bytes32 _payloadHash, 
+        bytes memory _payload, 
         uint256 _nativeTokenAmount, 
         RevertSettings calldata _revertCFG,
         TX_TYPE _txType
@@ -347,7 +347,7 @@ contract UniversalGateway is
 
         emit TxWithGas({
             sender: _caller,
-            payloadHash: _payloadHash,
+            payload: _payload,
             nativeTokenDeposited: _nativeTokenAmount,
             revertCFG: _revertCFG,
             txType: _txType
@@ -391,7 +391,7 @@ contract UniversalGateway is
             recipient,
             bridgeToken,
             bridgeAmount,
-            bytes32(0), // Empty payload hash for funds-only bridge
+            bytes(""), // Empty payload for funds-only bridge
             revertCFG,
             TX_TYPE.FUNDS
         );
@@ -422,7 +422,7 @@ contract UniversalGateway is
         _handleNativeDeposit(gasAmount);
         _sendTxWithGas(
             _msgSender(),
-            hex"",
+            bytes(""),
             gasAmount,
             revertCFG,
             TX_TYPE.GAS
@@ -435,7 +435,7 @@ contract UniversalGateway is
             address(0),
             bridgeToken,
             bridgeAmount,
-            keccak256(abi.encode(payload)),
+            abi.encode(payload),
             revertCFG,
             TX_TYPE.FUNDS_AND_PAYLOAD
         );
@@ -447,7 +447,7 @@ contract UniversalGateway is
     /// @param _recipient Recipient address
     /// @param _bridgeToken Token address to bridge
     /// @param _bridgeAmount Amount of token to bridge
-    /// @param _payloadHash Payload hash
+    /// @param _payload Payload
     /// @param _revertCFG Revert settings
     /// @param _txType Transaction type
     function _sendTxWithFunds(
@@ -455,14 +455,13 @@ contract UniversalGateway is
         address _recipient,
         address _bridgeToken,
         uint256 _bridgeAmount,
-        bytes32 _payloadHash,
+        bytes memory _payload,
         RevertSettings calldata _revertCFG,
         TX_TYPE _txType
     ) internal {
         if (_revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
         /// for recipient == address(0), the funds are being moved to UEA of the msg.sender on Push Chain.
         if (_recipient == address(0)){
-            if (_payloadHash == bytes32(0)) revert Errors.InvalidData();
             if (
                 _txType != TX_TYPE.FUNDS_AND_PAYLOAD &&
                 _txType != TX_TYPE.GAS_AND_PAYLOAD
@@ -476,7 +475,7 @@ contract UniversalGateway is
             recipient: _recipient,
             bridgeAmount: _bridgeAmount,
             bridgeToken: _bridgeToken,
-            data: abi.encodePacked(_payloadHash),
+            payload: _payload,
             revertCFG: _revertCFG,
             txType: _txType
         });
@@ -627,7 +626,7 @@ contract UniversalGateway is
     /// @dev Check if the amount is within the USD cap range
     ///      Cap Ranges are defined in the constructor or can be updated by the admin.
     /// @param amount Amount to check
-    function _checkUSDCaps(uint256 amount) internal view { 
+    function _checkUSDCaps(uint256 amount) public view { 
         uint256 usdValue = quoteEthAmountInUsd1e18(amount);     
         if (usdValue < MIN_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
         if (usdValue > MAX_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();

@@ -15,7 +15,7 @@ interface IUniversalGateway {
     /// @dev Universal tx deposit (gas funding). Revert settings flattened for indexers.
     event TxWithGas(
         address indexed sender,
-        bytes32 payloadHash,
+        bytes payload,
         uint256 nativeTokenDeposited,
         RevertSettings revertCFG,
         TX_TYPE txType
@@ -27,7 +27,7 @@ interface IUniversalGateway {
         address indexed recipient,      // address(0) for moving funds + payload for execution.
         address bridgeToken,
         uint256 bridgeAmount,
-        bytes   data,
+        bytes   payload,
         RevertSettings revertCFG,
         TX_TYPE txType
     );
