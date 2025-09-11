@@ -537,12 +537,12 @@ contract UniversalGateway is
     //      PUBLIC HELPERS
     // =========================
 
-    /// @notice Get the minimum and maximum ETH amounts that can be deposited based on USD caps.
-    /// @dev    Converts USD cap limits to ETH amounts using current Chainlink price.
-    /// @return minValue Minimum ETH amount (in wei) that can be deposited
-    /// @return maxValue Maximum ETH amount (in wei) that can be deposited
+    /// @notice Computes the minimum and maximum deposit amounts in native ETH (wei) implied by the USD caps.
+    /// @dev    Uses the current ETH/USD price from {getEthUsdPrice}.
+    /// @return minValue Minimum native amount (in wei) allowed by MIN_CAP_UNIVERSAL_TX_USD
+    /// @return maxValue Maximum native amount (in wei) allowed by MAX_CAP_UNIVERSAL_TX_USD
     function getMinMaxValueForNative() public view returns (uint256 minValue, uint256 maxValue) {
-        uint256 ethUsdPrice = ethUsdPrice1e18(); // ETH price in USD (1e18 scaled)
+        (uint256 ethUsdPrice, ) = getEthUsdPrice(); // ETH price in USD (1e18 scaled)
         
         // Convert USD caps to ETH amounts
         // Formula: ETH_amount = (USD_cap * 1e18) / ETH_price_in_USD
@@ -550,9 +550,15 @@ contract UniversalGateway is
         maxValue = (MAX_CAP_UNIVERSAL_TX_USD * 1e18) / ethUsdPrice;
     }
 
-    /// @notice ETH/USD price scaled to 1e18, sourced from Chainlink AggregatorV3.
-    /// @dev Requires `ethUsdFeed` to be set. If `chainlinkStalePeriod` is non-zero, enforces freshness.
-    function ethUsdPrice1e18() public view returns (uint256) {
+    /// @notice Returns the ETH/USD price scaled to 1e18 (i.e., USD with 18 decimals).
+    /// @dev Reads Chainlink AggregatorV3, applies safety checks,
+    ///      then rescales from the feed's native decimals (typically 8) to 1e18.
+    ///      - Output units:
+    ///          • price1e18 = USD(1e18) per 1 ETH. Example: if ETH = $4,400, returns 4_400 * 1e18.
+    ///      - Also returns the raw Chainlink feed decimals for observability.
+    /// @return price1e18 ETH price in USD scaled to 1e18 (USD with 18 decimals)
+    /// @return chainlinkDecimals The decimals of the underlying Chainlink feed (e.g., 8)
+    function getEthUsdPrice() public view returns (uint256, uint8) {
         if (address(ethUsdFeed) == address(0)) revert Errors.InvalidInput(); // feed not set
 
         // Optional L2 sequencer-uptime enforcement for rollups
@@ -576,36 +582,39 @@ contract UniversalGateway is
 
         (
             uint80 roundId,
-            int256 answer,
+            int256 priceInUSD,
             ,
-            uint256 updatedAt,
+            uint256 updatedAt,  
             uint80 answeredInRound
         ) = ethUsdFeed.latestRoundData();
 
         // Basic oracle safety checks
-        if (answer <= 0) revert Errors.InvalidData();
+        if (priceInUSD <= 0) revert Errors.InvalidData();
         if (answeredInRound < roundId) revert Errors.InvalidData();
-        if (updatedAt == 0) revert Errors.InvalidData();
         if (chainlinkStalePeriod != 0 && block.timestamp - updatedAt > chainlinkStalePeriod) {
             revert Errors.InvalidData();
         }
 
         uint8 dec = chainlinkEthUsdDecimals;
-        // Scale answer (decimals = dec) to 1e18
+        // Scale priceInUSD (decimals = dec) to 1e18
         uint256 scale;
         unchecked {
             // dec is expected to be <= 18 for feeds; if >18, this will underflow so guard:
             if (dec > 18) revert Errors.InvalidData();
             scale = 10 ** uint256(18 - dec);
         }
-        return uint256(answer) * scale;
+        return (uint256(priceInUSD) * scale, dec);
     }
 
 
-    /// @notice Convert an ETH amount (wei) into USD 1e18 using Chainlink ETH/USD price.
+    /// @notice Converts an ETH amount (in wei) to USD with 18 decimals via Chainlink price.
+    /// @dev Uses getEthUsdPrice which returns USD(1e18) per ETH and computes:
+    ///         usd1e18 = (amountWei * price1e18) / 1e18.
+    /// @param amountWei Amount of ETH in wei to convert
+    /// @return usd1e18 USD value scaled to 1e18
     function quoteEthAmountInUsd1e18(uint256 amountWei) public view returns (uint256 usd1e18) {
         if (amountWei == 0) return 0;
-        uint256 px1e18 = ethUsdPrice1e18(); // will validate freshness and positivity
+        (uint256 px1e18, ) = getEthUsdPrice(); // will validate freshness and positivity
         // USD(1e18) = (amountWei * px1e18) / 1e18
         // Note: amountWei is 1e18-based (wei), price is scaled to 1e18 above.
         usd1e18 = (amountWei * px1e18) / 1e18;
@@ -619,7 +628,7 @@ contract UniversalGateway is
     ///      Cap Ranges are defined in the constructor or can be updated by the admin.
     /// @param amount Amount to check
     function _checkUSDCaps(uint256 amount) internal view { 
-        uint256 usdValue = quoteEthAmountInUsd1e18(amount);
+        uint256 usdValue = quoteEthAmountInUsd1e18(amount);     
         if (usdValue < MIN_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
         if (usdValue > MAX_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
     }
