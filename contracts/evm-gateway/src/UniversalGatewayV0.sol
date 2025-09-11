@@ -91,9 +91,14 @@ contract UniversalGateway is
     /// @notice Default additional time window used when callers pass deadline = 0 (Uniswap v3 swaps)
     uint256 public defaultSwapDeadlineSec; 
 
+    /// @notice USDT token address for the old addFunds function
+    address public USDT;
+    /// @notice Pool fee for WETH/USDT swap (typically 3000 for 0.3%)
+    uint24 public POOL_FEE = 3000;
+    /// @notice USDT/USD price feed for calculating final USD amount
+    AggregatorV3Interface public usdtUsdPriceFeed;
 
-
-    uint256[43] private __gap;
+    uint256[40] private __gap;
 
     /**
      * @notice Initialize the UniversalGateway contract
@@ -264,6 +269,63 @@ contract UniversalGateway is
     // =========================
     //           DEPOSITS - Fee Abstraction Route
     // =========================
+    
+    struct AmountInUSD {
+        uint256 amountInUSD;
+        uint8 decimals;
+    }
+
+    event FundsAdded(
+        address indexed user,
+        bytes32 indexed transactionHash,
+        AmountInUSD AmountInUSD
+    );
+
+    /// @notice OLD Implementation of sendTxWithGas with ETH as gas input
+    /// Note:   TO BE REMOVED BEFORE MAINNET - Only for public testnet release
+    function addFunds(bytes32 _transactionHash) external payable nonReentrant {
+        if (msg.value == 0) revert Errors.InvalidAmount();
+
+        // Wrap ETH to WETH
+        IWETH(WETH).deposit{value: msg.value}();
+        uint256 WethBalance = IERC20(WETH).balanceOf(address(this));
+        IERC20(WETH).approve(address(uniV3Router), WethBalance);
+
+        // Get current ETH/USD price from Chainlink
+        (uint256 price, uint8 decimals) = getEthUsdPrice();
+
+        // Calculate minimum output with 0.5% slippage
+        uint256 ethInUsd = (price * WethBalance) / 1e18;
+        uint256 minOut = (ethInUsd * 995) / 1000;
+        minOut = minOut / 1e2; // Convert from 8 decimals to 6 decimals (USDT)
+
+        ISwapRouterV3.ExactInputSingleParams memory params = ISwapRouterV3
+            .ExactInputSingleParams({
+                tokenIn: WETH,
+                tokenOut: USDT,
+                fee: POOL_FEE,
+                recipient: address(this),
+                deadline: block.timestamp, //not for sepolia
+                amountIn: WethBalance,
+                amountOutMinimum: minOut, // Adjust to USDT decimals (6) && not for sepolia
+                sqrtPriceLimitX96: 0
+            });
+
+        uint256 usdtReceived = uniV3Router.exactInputSingle(params);
+
+        // Get USDT/USD price and calculate final USD amount
+        (, int256 usdtPrice, , , ) = usdtUsdPriceFeed.latestRoundData();
+        uint8 usdDecimals = usdtUsdPriceFeed.decimals();
+        uint256 usdAmount = (uint256(usdtPrice) * usdtReceived) /
+            10 ** 6;
+
+        AmountInUSD memory usdAmountStruct = AmountInUSD({
+            amountInUSD: usdAmount,
+            decimals: usdDecimals
+        });
+
+        emit FundsAdded(msg.sender, _transactionHash, usdAmountStruct);
+    }
 
     /// @notice Allows initiating a TX for funding UEAs or quick executions of payloads on Push Chain.
     /// @dev    Supports 2 TX types:
