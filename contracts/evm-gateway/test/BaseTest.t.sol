@@ -14,6 +14,8 @@ import {TX_TYPE, RevertSettings, UniversalPayload, VerificationType } from "../s
 import {Errors} from "../src/libraries/Errors.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
+import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
+import {MockSequencerUptimeFeed} from "./mocks/MockSequencerUptimeFeed.sol";
 
 /**
  * @title BaseTest
@@ -50,6 +52,9 @@ abstract contract BaseTest is Test {
     MockERC20 public tokenA;
     MockERC20 public usdc;
     MockWETH public weth;
+    // Chainlink mocks
+    MockAggregatorV3 public ethUsdFeedMock;
+    MockSequencerUptimeFeed public sequencerMock;
 
     // =========================
     //      UNISWAP PLACEHOLDERS
@@ -60,10 +65,12 @@ abstract contract BaseTest is Test {
     // =========================
     //      DEFAULT CONFIG and Constants
     // =========================
-    uint256 public constant MIN_CAP_USD = 1e18; // 1 USD
-    uint256 public constant MAX_CAP_USD = 10e18; // 10 USD
-    uint32 public constant TWAP_WINDOW = 1800; // 30 minutes
-    uint16 public constant MIN_OBS_CARD = 16; // default observation depth
+    uint256 public constant MIN_CAP_USD = 1e18;  // $1 (1e18 = $1)
+    uint256 public constant MAX_CAP_USD = 10e18; // $10 (1e18 = $1)
+
+    // Chainlink defaults (matches gateway expectations)
+    uint8 public constant CHAINLINK_DECIMALS = 8;
+    int256 public constant DEFAULT_ETH_USD_1e8 = 2_000e8; // $2,000 with 8 decimals
 
     // =========================
     //      TEST CONSTANTS
@@ -82,6 +89,8 @@ abstract contract BaseTest is Test {
         _deployUniswapPlaceholders();
         _deployGateway();
         _initializeGateway();
+        _deployOracles();
+        _wireOraclesToGateway();
         _mintAndApproveTokens();
     }
 
@@ -194,6 +203,51 @@ abstract contract BaseTest is Test {
     }
 
     // =========================
+    //      ORACLE (CHAINLINK) MOCKS & WIRING
+    // =========================
+    function _deployOracles() internal {
+        ethUsdFeedMock = new MockAggregatorV3(CHAINLINK_DECIMALS);
+        // seed with a sane, fresh price
+        ethUsdFeedMock.setAnswer(DEFAULT_ETH_USD_1e8, block.timestamp);
+
+        // Sequencer feed is optional; default to a deployed mock but not wired.
+        sequencerMock = new MockSequencerUptimeFeed();
+        // default status: UP (0)
+        sequencerMock.setStatus(false, block.timestamp);
+    }
+
+    function _wireOraclesToGateway() internal {
+        // Set ETH/USD feed on the gateway (required for any cap checks)
+        vm.prank(admin);
+        gateway.setEthUsdFeed(address(ethUsdFeedMock));
+        // chainlinkStalePeriod already set by initialize(); leave as-is unless tests override
+    }
+
+    // === Convenience setters for tests ===
+    function setEthUsdPrice1e8(int256 price1e8) internal {
+        ethUsdFeedMock.setAnswer(price1e8, block.timestamp);
+    }
+
+    function setChainlinkStalePeriod(uint256 staleSec) internal {
+        vm.prank(admin);
+        gateway.setChainlinkStalePeriod(staleSec);
+    }
+
+    function enableSequencerFeed(bool enable) internal {
+        vm.prank(admin);
+        gateway.setL2SequencerFeed(enable ? address(sequencerMock) : address(0));
+    }
+
+    function setSequencerStatusDown(bool isDown) internal {
+        sequencerMock.setStatus(isDown, block.timestamp);
+    }
+
+    function setSequencerGracePeriod(uint256 graceSec) internal {
+        vm.prank(admin);
+        gateway.setL2SequencerGracePeriod(graceSec);
+    }
+
+    // =========================
     //      TOKEN MINTING & APPROVALS
     // =========================
     function _mintAndApproveTokens() internal {
@@ -295,7 +349,7 @@ abstract contract BaseTest is Test {
     }
 
     // =========================
-    //      ORACLE/TWAP CONFIG SETTERS
+    //      ADMIN CONFIG SETTERS (Gateway)
     // =========================
 
     function setV3FeeOrder(uint24 a, uint24 b, uint24 c) internal {
