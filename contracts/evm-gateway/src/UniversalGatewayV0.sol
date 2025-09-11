@@ -43,7 +43,7 @@ import {ISwapRouter as ISwapRouterV3} from "@uniswap/v3-periphery/contracts/inte
 import { AggregatorV3Interface } from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 
 
-contract UniversalGateway is
+contract UniversalGatewayV0 is
     Initializable,
     ContextUpgradeable,
     PausableUpgradeable,
@@ -118,7 +118,10 @@ contract UniversalGateway is
         uint256 maxCapUsd,
         address factory,
         address router,
-        address _wethAddress
+        address _wethAddress,
+        address _usdtAddress,
+        address _usdtUsdPriceFeed,
+        address _ethUsdPriceFeed
     ) external initializer {
         if (admin == address(0) || 
             pauser == address(0) || 
@@ -149,6 +152,9 @@ contract UniversalGateway is
 
         // Set a sane default for Chainlink staleness (can be tuned by admin)
         chainlinkStalePeriod = 1 hours;
+        usdtUsdPriceFeed = AggregatorV3Interface(_usdtUsdPriceFeed);
+        ethUsdFeed = AggregatorV3Interface(_ethUsdPriceFeed);
+
         emit ChainlinkStalePeriodUpdated(chainlinkStalePeriod);
     }
 
