@@ -1,0 +1,23 @@
+[package]
+name = "pushsolanagateway"
+version = "0.1.0"
+description = "Push Solana Gateway - Universal Gateway for Solana"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "pushsolanagateway"
+
+[features]
+default = ["idl-build"]
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
+anchor-spl = { version = "0.31.1", features = ["token"] }
+pyth-solana-receiver-sdk = "0.6.1"
+pyth-sdk-solana = "0.10.4"
