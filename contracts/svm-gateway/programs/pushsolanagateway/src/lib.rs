@@ -155,12 +155,25 @@ pub mod pushsolanagateway {
     pub fn set_pyth_confidence_threshold(ctx: Context<AdminAction>, threshold: u64) -> Result<()> {
         instructions::admin::set_pyth_confidence_threshold(ctx, threshold)
     }
+
+    // =========================
+    //         LEGACY (V0)
+    // =========================
+    /// @notice Legacy-compatible add funds event for offchain relayers (pushsolanalocker)
+    pub fn add_funds(
+        ctx: Context<AddFunds>,
+        amount: u64,
+        transaction_hash: [u8; 32],
+    ) -> Result<()> {
+        instructions::legacy::add_funds(ctx, amount, transaction_hash)
+    }
 }
 
 // Re-export account structs and types
 pub use instructions::admin::{AdminAction, PauseAction, WhitelistAction};
 pub use instructions::deposit::{SendFunds, SendFundsNative, SendTxWithFunds, SendTxWithGas};
 pub use instructions::initialize::Initialize;
+pub use instructions::legacy::{AddFunds, FundsAddedEvent};
 pub use instructions::withdraw::{RevertWithdraw, Withdraw};
 
 pub use state::{

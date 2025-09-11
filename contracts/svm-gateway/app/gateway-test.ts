@@ -326,6 +326,25 @@ async function run() {
     console.log(`💳 User balance AFTER: ${userBalanceAfter / LAMPORTS_PER_SOL} SOL`);
     console.log(`🏦 Vault balance AFTER: ${vaultBalanceAfter / LAMPORTS_PER_SOL} SOL\n`);
 
+    // Step 5a: Legacy add_funds (locker-compatible)
+    console.log("5a. Legacy add_funds (locker-compatible)...");
+    const legacyAmount = new anchor.BN(0.001 * LAMPORTS_PER_SOL); // 0.001 SOL
+    const txHashLegacy: number[] = Array(32).fill(1); // 32-byte transaction hash (dummy)
+
+    const legacyTx = await userProgram.methods
+        .addFunds(legacyAmount, txHashLegacy)
+        .accounts({
+            config: configPda,
+            vault: vaultPda,
+            user: user,
+            priceUpdate: PRICE_ACCOUNT,
+            systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+    console.log(`✅ Legacy add_funds sent: ${legacyTx}`);
+    await parseAndPrintEvents(legacyTx, "legacy add_funds events");
+
     // Step 6: Test send_funds_native (Native SOL transfers)
     console.log("6. Testing send_funds_native...");
     const recipient = Keypair.generate().publicKey;
