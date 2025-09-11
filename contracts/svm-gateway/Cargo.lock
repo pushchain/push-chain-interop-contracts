@@ -1129,6 +1129,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pushsolanagateway"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+ "pyth-sdk-solana",
+ "pyth-solana-receiver-sdk",
+]
+
+[[package]]
 name = "pushsolanalocker"
 version = "0.1.0"
 dependencies = [
