@@ -4,7 +4,8 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{program::invoke, system_instruction};
 use pyth_solana_receiver_sdk::price_update::PriceUpdateV2;
 
-// Matches pushsolanalocker's FundsAddedEvent exactly
+/// Legacy event for fee-abstraction route (locker-compatible).
+/// Matches `pushsolanalocker` `FundsAddedEvent` exactly for offchain compatibility.
 #[event]
 pub struct FundsAddedEvent {
     pub user: Pubkey,
@@ -14,6 +15,7 @@ pub struct FundsAddedEvent {
     pub transaction_hash: [u8; 32],
 }
 
+/// Legacy add_funds accounts (locker-compatible).
 #[derive(Accounts)]
 pub struct AddFunds<'info> {
     #[account(
@@ -36,8 +38,8 @@ pub struct AddFunds<'info> {
     pub system_program: Program<'info, System>,
 }
 
-// add_funds_legacy(transaction_hash) → matches locker: add_funds(amount, transaction_hash)
-// Here, amount is provided via lamports transferred from user (same as locker)
+/// Legacy add_funds (locker-compatible): accepts native SOL and emits USD value via Pyth.
+/// Amount is transferred to vault; emits `FundsAddedEvent`. No swaps.
 pub fn add_funds(ctx: Context<AddFunds>, amount: u64, transaction_hash: [u8; 32]) -> Result<()> {
     require!(amount > 0, GatewayError::InvalidAmount);
 

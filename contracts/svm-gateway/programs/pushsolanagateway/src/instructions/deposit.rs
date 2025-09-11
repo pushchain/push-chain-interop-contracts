@@ -10,9 +10,8 @@ use pyth_solana_receiver_sdk::price_update::PriceUpdateV2;
 //           DEPOSITS
 // =========================
 
-/// @notice Allows initiating a TX for funding UEA with gas deposits from source chain.
-/// @dev    Supports only native SOL deposits for gas funding.
-///         The route emits TxWithGas event - important for Instant TX Route.
+/// GAS route (Instant): fund UEA on Push Chain with native SOL; optional payload.
+/// Enforces USD caps via Pyth (8 decimals). Emits `TxWithGas`.
 pub fn send_tx_with_gas(
     ctx: Context<SendTxWithGas>,
     payload: UniversalPayload,
@@ -70,9 +69,8 @@ pub fn send_tx_with_gas(
     Ok(())
 }
 
-/// @notice Allows initiating a TX for movement of funds from source chain to Push Chain.
-/// @dev    Supports both native SOL and SPL token deposits.
-///         The route emits TxWithFunds event.
+/// FUNDS route (Universal): move funds to Push Chain (no payload).
+/// SPL-only here (native SOL has a dedicated function). Emits `TxWithFunds`.
 pub fn send_funds(
     ctx: Context<SendFunds>,
     recipient: Pubkey,
@@ -137,8 +135,8 @@ pub fn send_funds(
     Ok(())
 }
 
-/// @notice Allows initiating a TX for movement of native SOL from source chain to Push Chain.
-/// @dev    The route emits TxWithFunds event.
+/// FUNDS route (Universal): move native SOL to Push Chain (no payload).
+/// Emits `TxWithFunds` for native.
 pub fn send_funds_native(
     ctx: Context<SendFundsNative>,
     recipient: Pubkey,
@@ -194,9 +192,8 @@ pub fn send_funds_native(
     Ok(())
 }
 
-/// @notice Allows initiating a TX for movement of funds and payload from source chain to Push Chain.
-/// @dev    Supports both native SOL and SPL token deposits with payload execution.
-///         The route emits both TxWithGas and TxWithFunds events.
+/// FUNDS+PAYLOAD route (Universal): bridge SPL/native + execute payload.
+/// Gas amount uses USD caps; emits `TxWithGas` then `TxWithFunds`.
 pub fn send_tx_with_funds(
     ctx: Context<SendTxWithFunds>,
     bridge_token: Pubkey,

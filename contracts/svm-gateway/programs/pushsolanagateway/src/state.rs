@@ -8,31 +8,29 @@ pub const WHITELIST_SEED: &[u8] = b"whitelist";
 // Price feed ID (Pyth SOL/USD), same as locker for now
 pub const FEED_ID: &str = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
 
-// Transaction types EXACTLY matching EVM gateway
+/// Transaction types matching the EVM Universal Gateway `TX_TYPE`.
+/// Kept 1:1 for relayer/event parity with the EVM implementation.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TxType {
-    /// @dev only for funding the UEA on Push Chain with GAS
-    ///      doesn't support movement of high value funds or payload for execution.
+    /// GAS-only route; funds instant UEA gas on Push Chain. No payload execution or high-value movement.
     Gas,
-    /// @dev for funding UEA and execute a payload instantly via UEA on Push Chain. versal transaction route.
-    ///      allows movement of funds between CAP_RANGES ( low fund size ) & requires lower block confirmations.
+    /// GAS + PAYLOAD route (instant). Low-value movement with caps. Executes payload via UEA.
     GasAndPayload,
-    /// @dev for bridging of large funds only from external chain to Push Chain.
-    ///      doesn't support arbitrary payload movement and requires longer block confirmations.
+    /// High-value FUNDS-only bridge (no payload). Requires longer finality.
     Funds,
-    /// @dev for bridging both funds and payload to Push Chain for execution.
-    /// @dev no strict cap ranges for fund amount and requires longer block confirmations.
+    /// FUNDS + PAYLOAD bridge. Requires longer finality. No strict caps for funds (gas caps still apply).
     FundsAndPayload,
 }
 
-// Verification types for payload execution
+/// Verification types for payload execution (parity with EVM).
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VerificationType {
     SignedVerification,
     UniversalTxVerification,
 }
 
-// Universal payload for cross-chain execution (matching EVM)
+/// Universal payload for cross-chain execution (parity with EVM `UniversalPayload`).
+/// Serialized and hashed for event parity with EVM (payload bytes/hash).
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct UniversalPayload {
     pub to: Pubkey,
@@ -46,14 +44,15 @@ pub struct UniversalPayload {
     pub v_type: VerificationType,
 }
 
-// Revert settings for failed transactions (matching EVM)
+/// Revert settings for failed transactions (parity with EVM `RevertSettings`).
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct RevertSettings {
     pub fund_recipient: Pubkey,
     pub revert_msg: Vec<u8>,
 }
 
-// Gateway configuration state
+/// Gateway configuration state (authorities, caps, oracle).
+/// PDA: `[b"config"]`. Holds USD caps (8 decimals) for gas-route deposits and oracle config.
 #[account]
 pub struct Config {
     pub admin: Pubkey,
@@ -74,7 +73,8 @@ impl Config {
     pub const LEN: usize = 8 + 32 + 32 + 32 + 16 + 16 + 1 + 1 + 1 + 32 + 8 + 100;
 }
 
-// SPL Token whitelist state
+/// SPL token whitelist state.
+/// PDA: `[b"whitelist"]`. Simple list of supported SPL mints.
 #[account]
 pub struct TokenWhitelist {
     pub tokens: Vec<Pubkey>,
@@ -85,8 +85,7 @@ impl TokenWhitelist {
     pub const LEN: usize = 8 + 4 + (32 * 50) + 1 + 100; // discriminator + vec length + 50 tokens max + bump + padding
 }
 
-// Event definitions matching EVM gateway
-// TxWithGas(sender, payloadHash, nativeTokenDeposited, revertCFG, txType)
+/// GAS deposit event (parity with EVM `TxWithGas`). Emitted for gas funding on both GAS and GAS+PAYLOAD routes.
 #[event]
 pub struct TxWithGas {
     pub sender: Pubkey,
@@ -96,7 +95,7 @@ pub struct TxWithGas {
     pub tx_type: TxType,
 }
 
-// TxWithFunds(sender, recipient, bridgeAmount, gasAmount, bridgeToken, data, revertCFG, txType)
+/// FUNDS deposit event (parity with EVM `TxWithFunds`). Emitted for FUNDS-only and FUNDS+PAYLOAD routes.
 #[event]
 pub struct TxWithFunds {
     pub sender: Pubkey,
@@ -109,7 +108,7 @@ pub struct TxWithFunds {
     pub tx_type: TxType,
 }
 
-// WithdrawFunds(recipient, amount, token)
+/// Withdraw event (parity with EVM `WithdrawFunds`).
 #[event]
 pub struct WithdrawFunds {
     pub recipient: Pubkey,
