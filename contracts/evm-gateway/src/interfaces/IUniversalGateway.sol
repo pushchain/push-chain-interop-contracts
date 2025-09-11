@@ -27,7 +27,6 @@ interface IUniversalGateway {
         address indexed recipient,      // address(0) for moving funds + payload for execution.
         address bridgeToken,
         uint256 bridgeAmount,
-        uint256 gasAmount,
         bytes   data,
         RevertSettings revertCFG,
         TX_TYPE txType

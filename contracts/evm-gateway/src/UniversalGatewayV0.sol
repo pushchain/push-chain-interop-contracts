@@ -267,6 +267,62 @@ contract UniversalGatewayV0 is
     //           DEPOSITS - Fee Abstraction Route
     // =========================
 
+
+    // // Note: for OLD GAS FUNDING MECHANISM
+    // // Include addFunds() function 
+    // // 1. should logic be exact same ?
+    // // 2. Should event emission and param be exact same?
+    // // 3. Inclusion of old addFunds in sendTxWithFunds() and sendFunds() ?
+    // // 4. getEthUsdPrice keep exact same.
+    // function addFunds(bytes32 _transactionHash) external payable nonReentrant {
+    //     require(msg.value > 0, "No ETH sent");
+
+    //     // Wrap ETH to WETH
+    //     IWETH(WETH).deposit{value: msg.value}();
+    //     uint256 WethBalance = IERC20(WETH).balanceOf(address(this));
+    //     IWETH(WETH).approve(UNISWAP_ROUTER, WethBalance);
+
+    //     // Get current ETH/USD price from Chainlink
+    //     (uint256 price, uint8 decimals) = getEthUsdPrice();
+
+    //     // Calculate minimum output with 0.5% slippage
+    //     uint256 ethInUsd = (price * WethBalance) / 1e18;
+    //     uint256 minOut = (ethInUsd * 995) / 1000;
+    //     minOut = minOut / 1e2; // Convert from 8 decimals to 6 decimals (USDT)
+
+    //     ISwapRouter.ExactInputSingleParams memory params = ISwapRouter
+    //         .ExactInputSingleParams({
+    //             tokenIn: WETH,
+    //             tokenOut: USDT,
+    //             fee: POOL_FEE,
+    //             recipient: address(this),
+    //             deadline: block.timestamp, //not for sepolia
+    //             amountIn: WethBalance,
+    //             amountOutMinimum: minOut, // Adjust to USDT decimals (6) && not for sepolia
+    //             sqrtPriceLimitX96: 0
+    //         });
+
+    //     uint256 usdtReceived = ISwapRouter(UNISWAP_ROUTER).exactInputSingle(
+    //         params
+    //     );
+
+    //     // Get USDT/USD price and calculate final USD amount
+    //     (, int256 usdtPrice, , , ) = usdtUsdPriceFeed.latestRoundData();
+    //     uint8 usdDecimals = usdtUsdPriceFeed.decimals();
+    //     uint256 usdAmount = (uint256(usdtPrice) * usdtReceived) /
+    //         10 ** 6;
+
+    //     AmountInUSD memory usdAmountStruct = AmountInUSD({
+    //         amountInUSD: usdAmount,
+    //         decimals: usdDecimals
+    //     });
+
+    //     emit FundsAdded(msg.sender, _transactionHash, usdAmountStruct);
+    // }
+
+
+
+
     /// @notice Allows initiating a TX for funding UEAs or quick executions of payloads on Push Chain.
     /// @dev    Supports 2 TX types:
     ///          a. GAS.
@@ -393,7 +449,6 @@ contract UniversalGatewayV0 is
             recipient,
             bridgeToken,
             bridgeAmount,
-            0,
             bytes32(0), // Empty payload hash for funds-only bridge
             revertCFG,
             TX_TYPE.FUNDS
@@ -438,72 +493,10 @@ contract UniversalGatewayV0 is
             address(0),
             bridgeToken,
             bridgeAmount,
-            gasAmount,
             keccak256(abi.encode(payload)),
             revertCFG,
             TX_TYPE.FUNDS_AND_PAYLOAD
         );
-    }
-
-    /// @notice Allows initiating a TX for movement of funds and payload from source chain to Push Chain.   
-    ///        Similar to sendTxWithFunds(), but with a token as gas input.
-    /// @dev    The gas token is swapped to native ETH using Uniswap v3.
-    ///         The tokens moved must be supported by the gateway. 
-    ///         Supports the TX type - FUNDS_AND_PAYLOAD.
-    ///         Gas for this transaction can be paid in any token with a valid pool with the native token on AMM. 
-    ///         Imposes a strict check for USD cap for the deposit amount. High Value movement of funds is not allowed through this route.
-    /// @dev    The route emits two different events:
-    ///          a. TxWithGas - for gas funding - no payload is moved. 
-    ///                                   allows user to fund their UEA, which will be used for execution of payload.
-    ///          b. TxWithFunds - for funds and payload movement from source chain to Push Chain.
-    ///                                   
-    ///         Note: Recipient for such TXs are always the user's UEA. Hence, no recipient address is needed.                     
-    /// @param bridgeToken Token address to bridge
-    /// @param bridgeAmount Amount of token to bridge
-    /// @param gasToken Token address to swap from
-    /// @param gasAmount Amount of token to swap
-    /// @param payload Universal payload to e
-    
-    function sendTxWithFunds(
-        address bridgeToken,
-        uint256 bridgeAmount,
-        address gasToken,
-        uint256 gasAmount,
-        uint256 amountOutMinETH,
-        uint256 deadline,
-        UniversalPayload calldata payload,
-        RevertSettings calldata revertCFG
-    ) external nonReentrant whenNotPaused {
-        if (bridgeAmount == 0) revert Errors.InvalidAmount();
-        if (gasToken == address(0)) revert Errors.InvalidInput();
-        if (gasAmount == 0) revert Errors.InvalidAmount();
-
-        // Swap gasToken to native ETH
-        uint256 nativeGasAmount = swapToNative(gasToken, gasAmount, amountOutMinETH, deadline);
-
-        _checkUSDCaps(nativeGasAmount);
-        _handleNativeDeposit(nativeGasAmount);
-
-        _sendTxWithGas(
-            _msgSender(),
-            hex"",
-            nativeGasAmount,
-            revertCFG,
-            TX_TYPE.GAS
-        );
-
-        _handleTokenDeposit(bridgeToken, bridgeAmount);
-        _sendTxWithFunds(
-            _msgSender(),
-            address(0),
-            bridgeToken,
-            bridgeAmount,
-            nativeGasAmount,
-            keccak256(abi.encode(payload)),
-            revertCFG,
-            TX_TYPE.FUNDS_AND_PAYLOAD
-        );
-
     }
 
     /// @notice Internal helper function to deposit for Universal TX.   
@@ -512,7 +505,6 @@ contract UniversalGatewayV0 is
     /// @param _recipient Recipient address
     /// @param _bridgeToken Token address to bridge
     /// @param _bridgeAmount Amount of token to bridge
-    /// @param _gasAmount Amount of gas to deposit
     /// @param _payloadHash Payload hash
     /// @param _revertCFG Revert settings
     /// @param _txType Transaction type
@@ -521,7 +513,6 @@ contract UniversalGatewayV0 is
         address _recipient,
         address _bridgeToken,
         uint256 _bridgeAmount,
-        uint256 _gasAmount,
         bytes32 _payloadHash,
         RevertSettings calldata _revertCFG,
         TX_TYPE _txType
@@ -529,7 +520,6 @@ contract UniversalGatewayV0 is
         if (_revertCFG.fundRecipient == address(0)) revert Errors.InvalidRecipient();
         /// for recipient == address(0), the funds are being moved to UEA of the msg.sender on Push Chain.
         if (_recipient == address(0)){
-            if (_gasAmount == 0) revert Errors.InvalidAmount();
             if (_payloadHash == bytes32(0)) revert Errors.InvalidData();
             if (
                 _txType != TX_TYPE.FUNDS_AND_PAYLOAD &&
@@ -543,7 +533,6 @@ contract UniversalGatewayV0 is
             sender: _caller,
             recipient: _recipient,
             bridgeAmount: _bridgeAmount,
-            gasAmount: _gasAmount,
             bridgeToken: _bridgeToken,
             data: abi.encodePacked(_payloadHash),
             revertCFG: _revertCFG,
