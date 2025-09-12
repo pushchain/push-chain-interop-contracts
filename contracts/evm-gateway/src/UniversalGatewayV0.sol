@@ -154,6 +154,7 @@ contract UniversalGatewayV0 is
         chainlinkStalePeriod = 1 hours;
         usdtUsdPriceFeed = AggregatorV3Interface(_usdtUsdPriceFeed);
         ethUsdFeed = AggregatorV3Interface(_ethUsdPriceFeed);
+        USDT = _usdtAddress;
 
         emit ChainlinkStalePeriodUpdated(chainlinkStalePeriod);
     }
@@ -165,7 +166,7 @@ contract UniversalGatewayV0 is
     }
 
     function version() external pure returns (string memory) {
-        return "1.0.0";
+        return "1.1.1";
     }
 
     // =========================
