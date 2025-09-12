@@ -13,7 +13,7 @@ pub struct PriceData {
 
 pub fn calculate_sol_price(price_update: &Account<PriceUpdateV2>) -> Result<PriceData> {
     let price = price_update
-        .get_price_unchecked(&get_feed_id_from_hex(FEED_ID)?)
+        .get_price_unchecked(&get_feed_id_from_hex(FEED_ID)?) //TODO check time in mainnet
         .map_err(|_| error!(GatewayError::InvalidPrice))?;
 
     require!(price.price > 0, GatewayError::InvalidPrice);

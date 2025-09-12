@@ -96,7 +96,11 @@ pub struct WithdrawSplTokenTss<'info> {
     )]
     pub whitelist: Account<'info, TokenWhitelist>,
 
-    /// CHECK: Token vault ATA, derived from config PDA and token mint
+    /// CHECK: SOL-only PDA, no data
+    #[account(mut, seeds = [VAULT_SEED], bump = config.vault_bump)]
+    pub vault: UncheckedAccount<'info>,
+
+    /// CHECK: Token vault ATA, derived from vault PDA and token mint
     #[account(mut)]
     pub token_vault: UncheckedAccount<'info>,
 
@@ -142,16 +146,21 @@ pub fn withdraw_spl_token_tss(
         recovery_id,
     )?;
 
-    let seeds: &[&[u8]] = &[CONFIG_SEED, &[ctx.accounts.config.bump]];
+    // Note: Recipient ATA must be created off-chain by the client
+    // This is standard practice in Solana programs
+
+    let seeds: &[&[u8]] = &[VAULT_SEED, &[ctx.accounts.config.vault_bump]];
     let cpi_accounts = Transfer {
         from: ctx.accounts.token_vault.to_account_info(),
         to: ctx.accounts.recipient_token_account.to_account_info(),
-        authority: ctx.accounts.config.to_account_info(),
+        authority: ctx.accounts.vault.to_account_info(),
     };
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let seeds_array = [seeds];
     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, &seeds_array);
     token::transfer(cpi_ctx, amount)?;
+
+    // ATA creation is handled off-chain by the client (standard practice)
 
     emit!(crate::state::WithdrawFunds {
         recipient: ctx.accounts.recipient_token_account.key(),
@@ -166,17 +175,16 @@ pub fn withdraw_spl_token_tss(
 // Legacy signer-based SPL withdraw removed; use TSS-verified variants below
 
 // =========================
-//   REVERT WITHDRAW FUNCTIONS
+//   TSS REVERT WITHDRAW FUNCTIONS - FIXED WITH REAL TSS
 // =========================
 
-/// Revert withdraw for SOL (TSS-only)
+/// Revert withdraw for SOL (TSS-verified) - FIXED
 #[derive(Accounts)]
 pub struct RevertWithdraw<'info> {
     #[account(
         seeds = [CONFIG_SEED],
         bump = config.bump,
         constraint = !config.paused @ GatewayError::PausedError,
-        constraint = config.tss_address == tss.key() @ GatewayError::Unauthorized
     )]
     pub config: Account<'info, Config>,
 
@@ -184,7 +192,12 @@ pub struct RevertWithdraw<'info> {
     #[account(mut, seeds = [VAULT_SEED], bump = config.vault_bump)]
     pub vault: UncheckedAccount<'info>,
 
-    pub tss: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [TSS_SEED],
+        bump = tss_pda.bump,
+    )]
+    pub tss_pda: Account<'info, TssPda>,
 
     /// CHECK: Recipient address
     #[account(mut)]
@@ -197,6 +210,10 @@ pub fn revert_withdraw(
     ctx: Context<RevertWithdraw>,
     amount: u64,
     revert_cfg: RevertSettings,
+    signature: [u8; 64],
+    recovery_id: u8,
+    message_hash: [u8; 32],
+    nonce: u64,
 ) -> Result<()> {
     require!(amount > 0, GatewayError::InvalidAmount);
     require!(
@@ -204,8 +221,22 @@ pub fn revert_withdraw(
         GatewayError::InvalidRecipient
     );
 
+    // instruction_id = 3 for SOL revert withdraw (different from regular withdraw)
+    let instruction_id: u8 = 3;
+    let recipient_bytes = revert_cfg.fund_recipient.to_bytes();
+    let additional: [&[u8]; 1] = [&recipient_bytes[..]];
+    validate_message(
+        &mut ctx.accounts.tss_pda,
+        instruction_id,
+        nonce,
+        Some(amount),
+        &additional,
+        &message_hash,
+        &signature,
+        recovery_id,
+    )?;
+
     // Transfer SOL from vault to revert recipient
-    // Use invoke_signed with vault PDA seeds
     let seeds: &[&[u8]] = &[VAULT_SEED, &[ctx.accounts.config.vault_bump]];
     invoke_signed(
         &system_instruction::transfer(
@@ -231,14 +262,13 @@ pub fn revert_withdraw(
     Ok(())
 }
 
-/// Revert withdraw for SPL tokens (TSS-only)
+/// Revert withdraw for SPL tokens (TSS-verified) - FIXED
 #[derive(Accounts)]
 pub struct RevertWithdrawSplToken<'info> {
     #[account(
         seeds = [CONFIG_SEED],
         bump = config.bump,
         constraint = !config.paused @ GatewayError::PausedError,
-        constraint = config.tss_address == tss.key() @ GatewayError::Unauthorized
     )]
     pub config: Account<'info, Config>,
 
@@ -247,11 +277,20 @@ pub struct RevertWithdrawSplToken<'info> {
     )]
     pub whitelist: Account<'info, TokenWhitelist>,
 
-    /// CHECK: Token vault ATA, derived from config PDA and token mint
+    /// CHECK: SOL-only PDA, no data - FIXED: Added vault account
+    #[account(mut, seeds = [VAULT_SEED], bump = config.vault_bump)]
+    pub vault: UncheckedAccount<'info>,
+
+    /// CHECK: Token vault ATA, derived from vault PDA and token mint
     #[account(mut)]
     pub token_vault: UncheckedAccount<'info>,
 
-    pub tss: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [TSS_SEED],
+        bump = tss_pda.bump,
+    )]
+    pub tss_pda: Account<'info, TssPda>,
 
     /// CHECK: Recipient token account
     #[account(mut)]
@@ -266,6 +305,10 @@ pub fn revert_withdraw_spl_token(
     ctx: Context<RevertWithdrawSplToken>,
     amount: u64,
     revert_cfg: RevertSettings,
+    signature: [u8; 64],
+    recovery_id: u8,
+    message_hash: [u8; 32],
+    nonce: u64,
 ) -> Result<()> {
     require!(amount > 0, GatewayError::InvalidAmount);
     require!(
@@ -273,13 +316,29 @@ pub fn revert_withdraw_spl_token(
         GatewayError::InvalidRecipient
     );
 
-    // Transfer tokens from vault to revert recipient
-    let seeds: &[&[u8]] = &[CONFIG_SEED, &[ctx.accounts.config.bump]];
+    // instruction_id = 4 for SPL revert withdraw (different from regular SPL withdraw)
+    let instruction_id: u8 = 4;
+    let mut mint_bytes = [0u8; 32];
+    mint_bytes.copy_from_slice(&ctx.accounts.token_mint.key().to_bytes());
+    let additional: [&[u8]; 1] = [&mint_bytes[..]];
+    validate_message(
+        &mut ctx.accounts.tss_pda,
+        instruction_id,
+        nonce,
+        Some(amount),
+        &additional,
+        &message_hash,
+        &signature,
+        recovery_id,
+    )?;
+
+    // FIXED: Use vault PDA as authority with correct seeds
+    let seeds: &[&[u8]] = &[VAULT_SEED, &[ctx.accounts.config.vault_bump]];
 
     let cpi_accounts = Transfer {
         from: ctx.accounts.token_vault.to_account_info(),
         to: ctx.accounts.recipient_token_account.to_account_info(),
-        authority: ctx.accounts.config.to_account_info(),
+        authority: ctx.accounts.vault.to_account_info(), // FIXED: vault as authority
     };
 
     let cpi_program = ctx.accounts.token_program.to_account_info();

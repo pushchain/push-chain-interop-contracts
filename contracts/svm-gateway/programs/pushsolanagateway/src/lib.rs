@@ -7,7 +7,7 @@ pub mod utils;
 
 use instructions::*;
 
-declare_id!("9nokRuXvtKyT32vvEQ1gkM3o8HzNooStpCuKuYD8BoX5");
+declare_id!("CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS");
 
 #[program]
 pub mod pushsolanagateway {
@@ -200,6 +200,51 @@ pub mod pushsolanagateway {
     }
 
     // =========================
+    //        REVERT WITHDRAW
+    // =========================
+    /// @notice TSS-verified revert withdraw for SOL
+    pub fn revert_withdraw(
+        ctx: Context<RevertWithdraw>,
+        amount: u64,
+        revert_cfg: RevertSettings,
+        signature: [u8; 64],
+        recovery_id: u8,
+        message_hash: [u8; 32],
+        nonce: u64,
+    ) -> Result<()> {
+        instructions::withdraw::revert_withdraw(
+            ctx,
+            amount,
+            revert_cfg,
+            signature,
+            recovery_id,
+            message_hash,
+            nonce,
+        )
+    }
+
+    /// @notice TSS-verified revert withdraw for SPL tokens
+    pub fn revert_withdraw_spl_token(
+        ctx: Context<RevertWithdrawSplToken>,
+        amount: u64,
+        revert_cfg: RevertSettings,
+        signature: [u8; 64],
+        recovery_id: u8,
+        message_hash: [u8; 32],
+        nonce: u64,
+    ) -> Result<()> {
+        instructions::withdraw::revert_withdraw_spl_token(
+            ctx,
+            amount,
+            revert_cfg,
+            signature,
+            recovery_id,
+            message_hash,
+            nonce,
+        )
+    }
+
+    // =========================
     //         LEGACY (V0)
     // =========================
     /// @notice Legacy-compatible add funds event for offchain relayers (pushsolanalocker)
@@ -217,7 +262,7 @@ pub use instructions::admin::{AdminAction, PauseAction, WhitelistAction};
 pub use instructions::deposit::{SendFunds, SendFundsNative, SendTxWithFunds, SendTxWithGas};
 pub use instructions::initialize::Initialize;
 pub use instructions::legacy::{AddFunds, FundsAddedEvent};
-pub use instructions::withdraw::RevertWithdraw;
+pub use instructions::withdraw::{RevertWithdraw, RevertWithdrawSplToken};
 
 pub use state::{
     // Events
