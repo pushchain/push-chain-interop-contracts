@@ -232,3 +232,5 @@ contract DeployGatewayWithProxy is Script {
 
 
 // DEPLOYMENT COMMAND:
+// 1. For Deployment ( Proxy, Implementation, ProxyAdmin ): forge script script/1_DeployGatewayWithProxy.sol:DeployGatewayWithProxy --rpc-url $SEPOLIA_RPC_URL --private-key $KEY --broadcast
+// 2. For Upgrade ( Proxy, Implementation, ProxyAdmin ): forge script script/3_UpgradeGatewayNewImpl.sol:UpgradeGatewayNewImpl --rpc-url $SEPOLIA_RPC_URL --private-key $KEY --broadcast
