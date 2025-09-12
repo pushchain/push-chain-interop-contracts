@@ -49,14 +49,7 @@ remappings = [
 
 # etherscan configuration
 [etherscan]
-arbitrum_one = { key = "${process.env.ARBISCAN_API}" }
-bnb_smart_chain = { key = "${process.env.BNBSCAN_API}" }
-goerli = { key = "${process.env.ETHERSCAN_API}" }
-mainnet = { key = "${process.env.ETHERSCAN_API}" }
-optimism = { key = "${process.env.OPTIMISM_API}" }
-polygon = { key = "${process.env.POLYGONSCAN_API}" }
-sepolia = { key = "${process.env.ETHERSCAN_API}" }
-
+sepolia = { key = "${process.env.ETHERSCAN_API_KEY}" }
 # FUZZ TESTING CONFIGURATION     fuzz testing configuration
 
 [fuzz]
