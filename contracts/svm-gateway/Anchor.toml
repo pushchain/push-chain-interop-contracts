@@ -5,8 +5,8 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
+pushsolanagateway = "CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS"  
 pushsolanalocker = "3zrWaMknHTRQpZSxY4BvQxw9TStSXiHcmcp3NMPTFkke"
-pushsolanagateway = "9nokRuXvtKyT32vvEQ1gkM3o8HzNooStpCuKuYD8BoX5"
 
 [registry]
 url = "https://api.apr.dev"
