@@ -4,9 +4,10 @@ Production-ready Solana program for cross-chain asset bridging to Push Chain. Mi
 
 ## Program Details
 
-**Program ID:** `9nokRuXvtKyT32vvEQ1gkM3o8HzNooStpCuKuYD8BoX5`  
+**Program ID:** `CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS`  
 **Network:** Solana Devnet  
-**Pyth Oracle:** SOL/USD feed `7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE`
+**Pyth Oracle:** SOL/USD feed `7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE`  
+**Legacy Locker:** `3zrWaMknHTRQpZSxY4BvQxw9TStSXiHcmcp3NMPTFkke` (compatible)
 
 ## Core Functions
 
@@ -122,8 +123,9 @@ cd app && ts-node gateway-test.ts
 ## Development
 
 **Build:** `anchor build`  
-**Deploy:** `solana program deploy --program-id <PROGRAM_ID> target/deploy/pushsolanagateway.so`  
-**Test:** Uses devnet SPL tokens and Pyth price feeds
+**Deploy:** `anchor deploy --program-name pushsolanagateway`  
+**Test:** Uses devnet SPL tokens and Pyth price feeds  
+**Current Deployment:** `CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS`
 
 For integration support, ensure your client:
 1. Handles both native SOL and SPL token account contexts
