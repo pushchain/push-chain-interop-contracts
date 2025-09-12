@@ -18,14 +18,14 @@ const PRICE_ACCOUNT = new PublicKey("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLi
 
 // Load keypairs
 const adminKeypair = Keypair.fromSecretKey(
-  Uint8Array.from(JSON.parse(fs.readFileSync("upgrade-keypair.json", "utf8")))
+  Uint8Array.from(JSON.parse(fs.readFileSync("../upgrade-keypair.json", "utf8")))
 );
 const userKeypair = Keypair.fromSecretKey(
-  Uint8Array.from(JSON.parse(fs.readFileSync("clean-user-keypair.json", "utf8")))
+  Uint8Array.from(JSON.parse(fs.readFileSync("../clean-user-keypair.json", "utf8")))
 );
 
 const phantomKeypair = Keypair.fromSecretKey(
-  Uint8Array.from(JSON.parse(fs.readFileSync("phantom-keypair.json", "utf8")))
+  Uint8Array.from(JSON.parse(fs.readFileSync("../phantom-keypair.json", "utf8")))
 );
 
 // Set up connection and provider
@@ -43,7 +43,7 @@ const phantomProvider = new anchor.AnchorProvider(connection, new anchor.Wallet(
 anchor.setProvider(adminProvider);  // Set admin as default provider
 
 // Load IDL
-const idl = JSON.parse(fs.readFileSync("target/idl/pushsolanalocker.json", "utf8"));
+const idl = JSON.parse(fs.readFileSync("../target/idl/pushsolanalocker.json", "utf8"));
 const program = new Program(idl as Pushsolanalocker, adminProvider);
 const programWithoutSigner = new Program(idl as Pushsolanalocker);
 const userProgram = new Program(idl as Pushsolanalocker, userProvider);  // Create program instance for user

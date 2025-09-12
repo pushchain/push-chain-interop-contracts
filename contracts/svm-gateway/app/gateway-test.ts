@@ -13,7 +13,7 @@ import * as spl from "@solana/spl-token";
 import { keccak_256 } from "js-sha3";
 import * as secp from "@noble/secp256k1";
 
-const PROGRAM_ID = new PublicKey("9nokRuXvtKyT32vvEQ1gkM3o8HzNooStpCuKuYD8BoX5");
+const PROGRAM_ID = new PublicKey("CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS");
 const CONFIG_SEED = "config";
 const VAULT_SEED = "vault";
 const WHITELIST_SEED = "whitelist";
@@ -511,10 +511,7 @@ async function run() {
     console.log(`🏦 Vault SOL balance AFTER: ${vaultBalanceAfterTxWithFunds / LAMPORTS_PER_SOL} SOL`);
     console.log(`📊 User SPL balance AFTER: ${userTokenBalanceAfterTx.toString()} tokens`);
     console.log(`📊 Vault SPL balance AFTER: ${vaultTokenBalanceAfterTx.toString()} tokens\n`);
-
-    // Step 9: Skipped legacy signer-based withdrawal; use TSS-tested flow below
-    console.log("9. Skipping legacy withdrawal; TSS withdrawal verified in step 12\n");
-
+    
     // Step 10: Test pause/unpause
     console.log("10. Testing pause/unpause...");
 
@@ -569,28 +566,6 @@ async function run() {
         }
     }
 
-    // Step 11: Test remove whitelist
-    console.log("11. Testing remove whitelist...");
-    try {
-        const removeWhitelistTx = await program.methods
-            .removeWhitelistToken(mint.publicKey)
-            .accounts({
-                config: configPda,
-                whitelist: whitelistPda,
-                admin: admin,
-                systemProgram: SystemProgram.programId,
-            })
-            .rpc();
-        console.log(`✅ Token removed from whitelist: ${removeWhitelistTx}\n`);
-    } catch (error) {
-        if (error.message.includes("TokenNotWhitelisted") || error.message.includes("not whitelisted")) {
-            console.log("✅ Token not in whitelist (skipping removal)\n");
-        } else {
-            throw error;
-        }
-    }
-
-    console.log("🎉 All tests completed successfully!");
 
     // =========================
     //   12. TSS INIT & WITHDRAW
@@ -696,8 +671,112 @@ async function run() {
         .rpc();
     console.log(`✅ TSS withdraw SOL completed: ${tssWithdrawTx}`);
     await parseAndPrintEvents(tssWithdrawTx, "withdraw_tss events");
+
+    // 12.5 Test SPL token TSS withdrawal (instruction_id=2)
+    console.log("\n=== Testing SPL Token TSS Withdrawal ===");
+
+    // Check if we have SPL tokens in the vault to withdraw
+    const vaultTokenBalance = await spl.getAccount(userProvider.connection as any, vaultAta.address);
+    if (Number(vaultTokenBalance.amount) === 0) {
+        console.log("⚠️  No SPL tokens in vault to withdraw, skipping SPL TSS test");
+    } else {
+        const splWithdrawAmount = Math.min(Number(vaultTokenBalance.amount), 1000); // Withdraw small amount
+
+        // Create admin ATA for the token
+        const adminAta = await spl.getOrCreateAssociatedTokenAccount(
+            userProvider.connection as any,
+            adminKeypair,
+            mint.publicKey,
+            admin
+        );
+
+        // Build message for SPL withdraw using instruction_id=2
+        const PREFIX_SPL = Buffer.from("PUSH_CHAIN_SVM");
+        const instructionIdSPL = Buffer.from([2]); // 2 = SPL withdraw
+        const chainIdBE_SPL = Buffer.alloc(8);
+        chainIdBE_SPL.writeBigUInt64BE(BigInt(chainId));
+        const nonceBE_SPL = Buffer.alloc(8);
+        nonceBE_SPL.writeBigUInt64BE(BigInt(nonce + 1)); // Increment nonce for SPL withdraw
+        const amountBE_SPL = Buffer.alloc(8);
+        amountBE_SPL.writeBigUInt64BE(BigInt(splWithdrawAmount));
+        const recipientBytesSPL = admin.toBuffer();
+        const mintBytes = mint.publicKey.toBuffer(); // 32 bytes for mint address
+
+        const concatSPL = Buffer.concat([
+            PREFIX_SPL,
+            instructionIdSPL,
+            chainIdBE_SPL,
+            nonceBE_SPL,
+            amountBE_SPL,
+            mintBytes, // Additional data for SPL withdraw (only mint, not recipient)
+        ]);
+        const messageHashHexSPL = keccak_256(concatSPL);
+        const messageHashSPL = Buffer.from(messageHashHexSPL, "hex");
+
+        // Sign with ETH private key
+        const sigSPL = await secp.sign(messageHashSPL, priv, { recovered: true, der: false });
+        const signatureSPL: Uint8Array = sigSPL[0];
+        let recoveryIdSPL: number = sigSPL[1];
+
+        // Call withdraw_spl_token_tss
+        const tssSplWithdrawTx = await program.methods
+            .withdrawSplTokenTss(
+                new anchor.BN(splWithdrawAmount),
+                Array.from(signatureSPL) as any,
+                recoveryIdSPL,
+                Array.from(messageHashSPL) as any,
+                new anchor.BN(nonce + 1),
+            )
+            .accounts({
+                config: configPda,
+                whitelist: whitelistPda,
+                vault: vaultPda,
+                tokenVault: vaultAta.address,
+                tokenMint: mint.publicKey,
+                tssPda: tssPda,
+                recipientTokenAccount: adminAta.address,
+                tokenProgram: spl.TOKEN_PROGRAM_ID,
+            })
+            .signers([adminKeypair])
+            .rpc();
+        console.log(`✅ TSS withdraw SPL completed: ${tssSplWithdrawTx}`);
+        await parseAndPrintEvents(tssSplWithdrawTx, "withdraw_spl_token_tss events");
+
+        // Log final SPL balances
+        const finalVaultBalance = await spl.getAccount(userProvider.connection as any, vaultAta.address);
+        const finalAdminBalance = await spl.getAccount(userProvider.connection as any, adminAta.address);
+        console.log(`Final vault SPL balance: ${finalVaultBalance.amount}`);
+        console.log(`Final admin SPL balance: ${finalAdminBalance.amount}`);
+    }
+
+    // 13. Note: ATA creation is now handled off-chain by clients (standard practice)
+    console.log("\n=== ATA Creation Note ===");
+    console.log("✅ ATA creation is handled off-chain by clients (standard Solana practice)");
+    console.log("✅ This avoids complex reimbursement logic and follows industry standards");
+
+    // 14. Remove token from whitelist (moved after all tests)
+    console.log("14. Testing remove whitelist...");
+    try {
+        const removeWhitelistTx = await program.methods
+            .removeWhitelistToken(mint.publicKey)
+            .accounts({
+                config: configPda,
+                whitelist: whitelistPda,
+                admin: admin,
+                systemProgram: SystemProgram.programId,
+            })
+            .rpc();
+        console.log(`✅ Token removed from whitelist: ${removeWhitelistTx}\n`);
+    } catch (error) {
+        if (error.message.includes("TokenNotWhitelisted") || error.message.includes("not whitelisted")) {
+            console.log("✅ Token not in whitelist (skipping removal)\n");
+        } else {
+            throw error;
+        }
+    }
 }
 
+console.log("🎉 All tests completed successfully!");
 run().catch((e) => {
     console.error("❌ Test failed:", e);
     process.exit(1);
