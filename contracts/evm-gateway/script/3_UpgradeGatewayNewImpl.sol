@@ -20,8 +20,8 @@ contract UpgradeGatewayNewImpl is Script {
     // =========================
     
     // Existing proxy and admin addresses (set these before running)
-    address constant EXISTING_PROXY = 0x4305D572F2bf38Fc2AE8D0172055b1EFd18F57a6;
-    address constant EXISTING_PROXY_ADMIN = 0x88D4639A02974E9E1a2238118d1E780C057041d2;
+    address constant EXISTING_PROXY = 0x05bD7a3D18324c1F7e216f7fBF2b15985aE5281A;
+    address constant EXISTING_PROXY_ADMIN = 0x756C0bEa91F5692384AEe147C10409BB062Bf39b;
     
     // New implementation address (will be deployed or set)
     address public newImplementationAddress;
@@ -94,13 +94,6 @@ contract UpgradeGatewayNewImpl is Script {
         console.log("  ProxyAdmin Address:", EXISTING_PROXY_ADMIN);
         console.log("  New Implementation:", newImplementationAddress);
         console.log("");
-        console.log("Upgrade completed successfully!");
-        console.log("");
-        console.log("Next steps:");
-        console.log("1. Verify the new implementation on Etherscan");
-        console.log("2. Test the upgraded proxy functionality");
-        console.log("3. Update any frontend/backend integrations if needed");
-        console.log("");
         console.log("Proxy Address (unchanged): %s", EXISTING_PROXY);
     }
     
@@ -111,8 +104,7 @@ contract UpgradeGatewayNewImpl is Script {
         // Note: In OpenZeppelin v5, we can't easily get implementation from ProxyAdmin
         // This verification is simplified - the upgrade call itself will revert if it fails
         console.log("Upgrade verification: Implementation was set to:", newImplementationAddress);
-        console.log("Note: In OpenZeppelin v5, implementation getters were removed from ProxyAdmin");
-        console.log("The upgrade call itself validates the implementation change");
+
     }
     
     // Alternative function to upgrade to a specific implementation address
