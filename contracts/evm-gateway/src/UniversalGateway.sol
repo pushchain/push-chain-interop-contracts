@@ -441,6 +441,66 @@ contract UniversalGateway is
         );
     }
 
+    /// @notice Allows initiating a TX for movement of funds and payload from source chain to Push Chain.   
+    ///        Similar to sendTxWithFunds(), but with a token as gas input.
+    /// @dev    The gas token is swapped to native ETH using Uniswap v3.
+    ///         The tokens moved must be supported by the gateway. 
+    ///         Supports the TX type - FUNDS_AND_PAYLOAD.
+    ///         Gas for this transaction can be paid in any token with a valid pool with the native token on AMM. 
+    ///         Imposes a strict check for USD cap for the deposit amount. High Value movement of funds is not allowed through this route.
+    /// @dev    The route emits two different events:
+    ///          a. TxWithGas - for gas funding - no payload is moved. 
+    ///                                   allows user to fund their UEA, which will be used for execution of payload.
+    ///          b. TxWithFunds - for funds and payload movement from source chain to Push Chain.
+    ///                                   
+    ///         Note: Recipient for such TXs are always the user's UEA. Hence, no recipient address is needed.                     
+    /// @param bridgeToken Token address to bridge
+    /// @param bridgeAmount Amount of token to bridge
+    /// @param gasToken Token address to swap from
+    /// @param gasAmount Amount of token to swap
+    /// @param payload Universal payload to e
+    
+    function sendTxWithFunds(
+        address bridgeToken,
+        uint256 bridgeAmount,
+        address gasToken,
+        uint256 gasAmount,
+        uint256 amountOutMinETH,
+        uint256 deadline,
+        UniversalPayload calldata payload,
+        RevertSettings calldata revertCFG
+    ) external nonReentrant whenNotPaused {
+        if (bridgeAmount == 0) revert Errors.InvalidAmount();
+        if (gasToken == address(0)) revert Errors.InvalidInput();
+        if (gasAmount == 0) revert Errors.InvalidAmount();
+
+        // Swap gasToken to native ETH
+        uint256 nativeGasAmount = swapToNative(gasToken, gasAmount, amountOutMinETH, deadline);
+
+        _checkUSDCaps(nativeGasAmount);
+        _handleNativeDeposit(nativeGasAmount);
+
+        _sendTxWithGas(
+            _msgSender(),
+            bytes(""),
+            nativeGasAmount,
+            revertCFG,
+            TX_TYPE.GAS
+        );
+
+        _handleTokenDeposit(bridgeToken, bridgeAmount);
+        _sendTxWithFunds(
+            _msgSender(),
+            address(0),
+            bridgeToken,
+            bridgeAmount,
+            abi.encode(payload),
+            revertCFG,
+            TX_TYPE.FUNDS_AND_PAYLOAD
+        );
+
+    }
+
     /// @notice Internal helper function to deposit for Universal TX.   
     /// @dev    Emits the core TxWithFunds event - important for Universal TX Route.
     /// @param _caller Sender address
