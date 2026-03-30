@@ -6,9 +6,10 @@
 
 | Contract | Address |
 | -------- | ------- |
-| UniversalGateway Proxy | `` |
-| UniversalGateway ProxyAdmin | `` |
-| UniversalGateway Implementation | `` |
+| UniversalGateway Proxy | `0xFD4fef1F43aFEc8b5bcdEEc47f35a1431479aC16` |
+| UniversalGateway ProxyAdmin | `0x0b30F0ECd37B8D44FE1d2b98d5Dc64654d9ac9b3` |
+| UniversalGateway Implementation (temp, superseded) | `0xAcd73BE76e83c6047579EF4Ec543e663506Bba7b` |
+| UniversalGateway Implementation (current) | `0x2B6C570a408A486d27656e02EC5392613C37DD53` |
 
 ## Vault System
 

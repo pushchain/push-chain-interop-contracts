@@ -6,10 +6,9 @@
 
 | Contract | Address |
 | -------- | ------- |
-| UniversalGatewayV0 Proxy | `0x4DCab975cDe839632db6695e2e936A29ce3e325E` |
-| UniversalGatewayV0 ProxyAdmin | `0xcbA0AcB79eB7f309dAfC3a27eeFD15F11773Bc2D` |
-| UniversalGatewayV0 Impl 1 (with `moveFunds_temp`, superseded) | `0x173FA31277f64628931678070cf85e7248489A11` |
-| UniversalGatewayV0 Impl 2 (current, clean) | `0xfae94DE08Fd934b039e8194B04927d2351619634` |
+| UniversalGatewayV0 Proxy | `0x05bD7a3D18324c1F7e216f7fBF2b15985aE5281A` |
+| UniversalGatewayV0 ProxyAdmin | `0x756c0BeA91f5692384aEE147C10409Bb062BF39B` |
+| UniversalGatewayV0 Implementation (current) | `0x92B973F17d4E9365f6110fD03D2866b398416C5b` |
 
 ## Vault System (Current - with new Gateway)
 
