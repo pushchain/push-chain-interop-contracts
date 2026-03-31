@@ -3,22 +3,21 @@ pragma solidity 0.8.26;
 
 import { Script } from "forge-std/Script.sol";
 import { console } from "forge-std/console.sol";
-import { UniversalGatewayV0 } from "../../src/testnetV0/UniversalGatewayV0.sol";
+import { UniversalGatewayPC } from "../../../src/UniversalGatewayPC.sol";
 import { ProxyAdmin } from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
-import {
-    ITransparentUpgradeableProxy
-} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import { ITransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import { GatewayPCConfig } from "../../config/mainnet/GatewayPCConfig.sol";
 
 /**
- * @title UpgradeGatewayV0_Base_BSCTestnet
- * @notice Simple upgrade script: deploys a new UniversalGatewayV0 implementation
- *         and upgrades the existing BSC Testnet proxy. No migration steps.
+ * @title UpgradeGatewayPC
+ * @notice Upgrade script for UniversalGatewayPC proxy on Push Chain
+ * @dev Deploys new implementation and upgrades existing proxy
  *
  * USAGE:
- * forge script script/bscTestnet/upgradeGatewayV0_upgradeBase.s.sol:UpgradeGatewayV0_Base_BSCTestnet \
- *   --rpc-url $BSC_TESTNET_RPC_URL --private-key $KEY --broadcast -vvv
+ * forge script script/gatewayPC/UpgradeGatewayPC.s.sol:UpgradeGatewayPC \
+ *   --rpc-url $PUSH_CHAIN_RPC_URL --private-key $PRIVATE_KEY --broadcast
  */
-contract UpgradeGatewayV0_Base_BSCTestnet is Script {
+contract UpgradeGatewayPC is Script, GatewayPCConfig {
     // ========================================
     //        EIP-1967 PROXY CONSTANTS
     // ========================================
@@ -28,42 +27,50 @@ contract UpgradeGatewayV0_Base_BSCTestnet is Script {
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
     // ========================================
-    //     CONFIGURATION
-    // ========================================
-    address constant GATEWAY_PROXY = 0x44aFFC61983F4348DdddB886349eb992C061EaC0;
-
-    // ========================================
     //         UPGRADE STATE
     // ========================================
+    Config cfg;
     address public oldImplementation;
     address public newImplementation;
     address public proxyAdmin;
     uint256 public upgradeChainId;
 
     // ========================================
-    //         MAIN
+    //         MAIN UPGRADE
     // ========================================
     function run() external {
+        cfg = getConfig();
         upgradeChainId = block.chainid;
-        require(upgradeChainId == 97, "Wrong chain: expected BSC Testnet (97)");
 
         console.log("========================================");
-        console.log("  UPGRADING UniversalGatewayV0");
-        console.log("  BSC TESTNET");
+        console.log("  UPGRADING GATEWAYPC ON PUSH CHAIN");
         console.log("========================================");
+        console.log("");
         console.log("Chain ID:", upgradeChainId);
         console.log("Upgrader:", msg.sender);
         console.log("");
 
+        // Pre-upgrade validation
         _validateConfiguration();
+
+        // Get old implementation
         _recordOldImplementation();
 
+        // Start broadcasting
         vm.startBroadcast();
+
+        // Deploy new implementation
         _deployNewImplementation();
+
+        // Perform upgrade
         _performUpgrade();
+
+        // Verify upgrade
         _verifyUpgrade();
+
         vm.stopBroadcast();
 
+        // Print summary
         _printUpgradeSummary();
     }
 
@@ -72,17 +79,27 @@ contract UpgradeGatewayV0_Base_BSCTestnet is Script {
     // ========================================
     function _validateConfiguration() internal view {
         console.log("--- Pre-Upgrade Validation ---");
+        console.log("");
 
-        uint256 codeSize;
-        address proxyAddr = GATEWAY_PROXY;
-        assembly { codeSize := extcodesize(proxyAddr) }
-        require(codeSize > 0, "Gateway proxy not found at GATEWAY_PROXY");
+        // Validate proxy address
+        require(cfg.gatewayPCProxy != address(0), "gatewayPCProxy not set in config");
 
+        // Verify proxy has code
+        uint256 proxyCodeSize;
+        address proxyAddr = cfg.gatewayPCProxy;
+        assembly {
+            proxyCodeSize := extcodesize(proxyAddr)
+        }
+        require(proxyCodeSize > 0, "GatewayPC proxy not found at config address");
+
+        // Verify msg.sender is ProxyAdmin owner
         address proxyAdminAddr = _getProxyAdmin();
-        address owner = ProxyAdmin(proxyAdminAddr).owner();
+        ProxyAdmin admin = ProxyAdmin(proxyAdminAddr);
+        address owner = admin.owner();
+
         require(msg.sender == owner, "Caller is not ProxyAdmin owner");
 
-        console.log("OK: Proxy found at:", GATEWAY_PROXY);
+        console.log("OK: Proxy found at:", cfg.gatewayPCProxy);
         console.log("OK: ProxyAdmin:", proxyAdminAddr);
         console.log("OK: ProxyAdmin owner:", owner);
         console.log("OK: Caller authorized for upgrade");
@@ -91,8 +108,10 @@ contract UpgradeGatewayV0_Base_BSCTestnet is Script {
 
     function _recordOldImplementation() internal {
         console.log("--- Recording Old Implementation ---");
+
         proxyAdmin = _getProxyAdmin();
         oldImplementation = _getImplementation();
+
         console.log("Old Implementation:", oldImplementation);
         console.log("");
     }
@@ -102,19 +121,24 @@ contract UpgradeGatewayV0_Base_BSCTestnet is Script {
     // ========================================
     function _deployNewImplementation() internal {
         console.log("--- Deploying New Implementation ---");
-        UniversalGatewayV0 impl = new UniversalGatewayV0();
-        newImplementation = address(impl);
-        console.log("New Implementation deployed at:", newImplementation);
+
+        UniversalGatewayPC implementation = new UniversalGatewayPC();
+        newImplementation = address(implementation);
+
+        console.log("New Implementation deployed at:", newImplementation, "");
         console.log("");
     }
 
     function _performUpgrade() internal {
         console.log("--- Performing Upgrade ---");
-        ProxyAdmin(proxyAdmin).upgradeAndCall(
-            ITransparentUpgradeableProxy(GATEWAY_PROXY),
-            newImplementation,
-            ""
+
+        ProxyAdmin admin = ProxyAdmin(proxyAdmin);
+
+        // Upgrade the proxy to new implementation
+        admin.upgradeAndCall(
+            ITransparentUpgradeableProxy(cfg.gatewayPCProxy), newImplementation, ""
         );
+
         console.log("Upgrade executed");
         console.log("");
     }
@@ -125,21 +149,25 @@ contract UpgradeGatewayV0_Base_BSCTestnet is Script {
     function _verifyUpgrade() internal view {
         console.log("--- Upgrade Verification ---");
 
-        address currentImpl = _getImplementation();
-        require(currentImpl == newImplementation, "Implementation not updated");
-        require(currentImpl != oldImplementation, "Implementation unchanged");
+        address currentImplementation = _getImplementation();
 
-        UniversalGatewayV0 gateway = UniversalGatewayV0(payable(GATEWAY_PROXY));
-        address tss     = gateway.TSS_ADDRESS();
-        address vault   = gateway.VAULT();
-        address ceaFact = gateway.CEA_FACTORY();
+        require(currentImplementation == newImplementation, "Implementation not updated");
+        require(currentImplementation != oldImplementation, "Implementation unchanged");
 
-        require(tss != address(0), "TSS_ADDRESS corrupted");
+        // Verify proxy still works (call a view function)
+        UniversalGatewayPC gatewayPC = UniversalGatewayPC(cfg.gatewayPCProxy);
+        address universalCore = gatewayPC.UNIVERSAL_CORE();
+        address vaultPC = address(gatewayPC.VAULT_PC());
+        uint256 currentNonce = gatewayPC.nonce();
+
+        require(universalCore != address(0), "GatewayPC state corrupted");
+        require(vaultPC != address(0), "GatewayPC state corrupted");
 
         console.log("OK: Implementation updated successfully");
-        console.log("OK: TSS_ADDRESS intact:", tss);
-        console.log("OK: VAULT intact:", vault);
-        console.log("OK: CEA_FACTORY intact:", ceaFact);
+        console.log("OK: GatewayPC state preserved");
+        console.log("OK: UniversalCore reference intact:", universalCore);
+        console.log("OK: VaultPC reference intact:", vaultPC);
+        console.log("OK: Current nonce:", currentNonce);
         console.log("");
     }
 
@@ -147,42 +175,48 @@ contract UpgradeGatewayV0_Base_BSCTestnet is Script {
         console.log("========================================");
         console.log("     UPGRADE SUMMARY");
         console.log("========================================");
+        console.log("");
         console.log("Chain ID:", upgradeChainId);
         console.log("Upgrader:", msg.sender);
         console.log("");
-        console.log("Gateway Proxy:        ", GATEWAY_PROXY);
+        console.log("GatewayPC Proxy:      ", cfg.gatewayPCProxy);
         console.log("Proxy Admin:          ", proxyAdmin);
         console.log("");
         console.log("Old Implementation:   ", oldImplementation);
-        console.log("New Implementation:   ", newImplementation);
+        console.log("New Implementation:   ", newImplementation, "");
         console.log("");
         console.log("========================================");
         console.log("Upgrade Complete!");
         console.log("========================================");
         console.log("");
         console.log("NEXT STEPS:");
-        console.log("1. Verify new implementation on BscScan");
-        console.log("2. Update docs/addresses/bsc-testnet.md");
-        console.log("3. Call setCEAFactory(0xe2182dae2dc11cBF6AA6c8B1a7f9c8315A6B0719) if needed");
+        console.log("1. Verify new implementation on block explorer");
+        console.log("2. Test GatewayPC functionality");
+        console.log("3. Test outbound transaction flow");
+        console.log("4. Monitor nonce and fee collection");
+        console.log("5. Update frontend to use new ABI if needed");
     }
 
     // ========================================
     //         HELPERS
     // ========================================
-    function _getProxyAdmin() internal view returns (address) {
-        return address(uint160(uint256(vm.load(GATEWAY_PROXY, _ADMIN_SLOT))));
+    function _getProxyAdmin() internal view returns (address proxyAdminAddr) {
+        bytes32 raw = vm.load(cfg.gatewayPCProxy, _ADMIN_SLOT);
+        proxyAdminAddr = address(uint160(uint256(raw)));
     }
 
-    function _getImplementation() internal view returns (address) {
-        return address(uint160(uint256(vm.load(GATEWAY_PROXY, _IMPLEMENTATION_SLOT))));
+    function _getImplementation() internal view returns (address implementation) {
+        bytes32 raw = vm.load(cfg.gatewayPCProxy, _IMPLEMENTATION_SLOT);
+        implementation = address(uint160(uint256(raw)));
     }
 }
 
 // ========================================
-//      VERIFICATION COMMAND
+//      VERIFICATION COMMANDS
 // ========================================
 //
-// forge verify-contract --chain bsc-testnet \
+// Verify New Implementation:
+// forge verify-contract --chain <CHAIN> \
 //   --constructor-args $(cast abi-encode "constructor()") \
-//   <NEW_IMPL_ADDR> src/testnetV0/UniversalGatewayV0.sol:UniversalGatewayV0 \
-//   --etherscan-api-key $BSC_SCAN_API_KEY
+//   <NEW_IMPL_ADDR> src/UniversalGatewayPC.sol:UniversalGatewayPC \
+//   --etherscan-api-key $ETHERSCAN_API_KEY

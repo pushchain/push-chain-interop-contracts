@@ -3,10 +3,10 @@ pragma solidity 0.8.26;
 
 import { Script } from "forge-std/Script.sol";
 import { console } from "forge-std/console.sol";
-import { UniversalGateway } from "../../src/UniversalGateway.sol";
+import { UniversalGateway } from "../../../src/UniversalGateway.sol";
 import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import { ProxyAdmin } from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
-import { GatewayConfig } from "../config/GatewayConfig.sol";
+import { GatewayConfig } from "../../config/mainnet/GatewayConfig.sol";
 
 /**
  * @title DeployGateway
@@ -14,8 +14,9 @@ import { GatewayConfig } from "../config/GatewayConfig.sol";
  * @dev Deploys implementation + proxy + initializes with all required parameters
  *
  * USAGE:
- * forge script script/gateway/DeployGateway.s.sol:DeployGateway \
- *   --rpc-url $RPC_URL --private-key $PRIVATE_KEY --broadcast
+ * forge script script/mainnet/gateway/deployGateway.s.sol:DeployGateway \
+ *   --rpc-url $RPC_URL --private-key $PRIVATE_KEY --broadcast --verify \
+ *   --etherscan-api-key $ETHERSCAN_API_KEY
  */
 contract DeployGateway is Script, GatewayConfig {
     // ========================================
@@ -25,15 +26,10 @@ contract DeployGateway is Script, GatewayConfig {
         0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
 
     // ========================================
-    //     CONFIGURATION PARAMETERS
+    //     ROLE ADDRESSES
     // ========================================
-
-    // Gateway USD caps (18 decimals: 1e18 = $1 USD)
-    uint256 constant MIN_CAP_USD = 1e18; // $1 USD minimum
-    uint256 constant MAX_CAP_USD = 100e18; // $100 USD maximum
-
-    // Role addresses (set to msg.sender by default, transfer later)
     address admin;
+    address pauser;
     address tss;
 
     // ========================================
@@ -59,30 +55,18 @@ contract DeployGateway is Script, GatewayConfig {
         console.log("Deployer:", msg.sender);
         console.log("");
 
-        // Pre-deployment validation
         _validateConfiguration();
 
-        // Start broadcasting
         vm.startBroadcast();
 
-        // Load roles
         _loadRoles();
-
-        // Deploy implementation
         _deployImplementation();
-
-        // Deploy proxy with initialization
         _deployProxy();
-
-        // Configure gateway
         _configureGateway();
-
-        // Verify deployment
         _verifyDeployment();
 
         vm.stopBroadcast();
 
-        // Print summary
         _printDeploymentSummary();
     }
 
@@ -93,30 +77,33 @@ contract DeployGateway is Script, GatewayConfig {
         console.log("--- Pre-Deployment Validation ---");
         console.log("");
 
-        // Critical validation: Vault must be deployed first
-        if (cfg.vault == address(0)) {
-            console.log("ERROR: vault is not set in config!");
-            console.log("Please deploy Vault first and update GatewayConfig.");
-            revert("vault not set in config");
-        }
-
-        // Verify Vault has code
+        // Critical: Vault must be deployed first
+        require(cfg.vault != address(0), "vault not set in config");
         uint256 vaultCodeSize;
         address vaultAddr = cfg.vault;
         assembly {
             vaultCodeSize := extcodesize(vaultAddr)
         }
-        require(vaultCodeSize > 0, "Vault contract not found at config vault address");
+        require(vaultCodeSize > 0, "Vault contract not found at config address");
 
-        // Validate USD caps
-        require(MIN_CAP_USD > 0, "MIN_CAP_USD must be > 0");
-        require(MAX_CAP_USD > MIN_CAP_USD, "MAX_CAP_USD must be > MIN_CAP_USD");
+        // Critical: TSS must be explicitly set (never deployer on mainnet)
+        require(cfg.tssAddress != address(0), "tssAddress not set in config");
 
-        // Validate addresses
+        // Critical: Admin must be explicitly set (multisig on mainnet)
+        require(cfg.admin != address(0), "admin not set in config");
+
+        // Validate USD caps from config
+        require(cfg.minCapUsd > 0, "minCapUsd must be > 0");
+        require(cfg.maxCapUsd > cfg.minCapUsd, "maxCapUsd must be > minCapUsd");
+
+        // Validate oracle config
+        require(cfg.ethUsdFeed != address(0), "ethUsdFeed is zero in config");
+        require(cfg.chainlinkStalePeriodSec > 0, "chainlinkStalePeriodSec must be > 0");
+
+        // Validate DEX addresses
         require(cfg.uniswapV3Factory != address(0), "uniswapV3Factory is zero in config");
         require(cfg.uniswapV3Router != address(0), "uniswapV3Router is zero in config");
         require(cfg.weth != address(0), "weth is zero in config");
-        require(cfg.ethUsdFeed != address(0), "ethUsdFeed is zero in config");
 
         console.log("OK: All validation checks passed");
         console.log("");
@@ -125,11 +112,13 @@ contract DeployGateway is Script, GatewayConfig {
     function _loadRoles() internal {
         console.log("--- Loading Role Configuration ---");
 
-        // Default all roles to deployer (can transfer later)
-        admin = msg.sender;
-        tss = msg.sender;
+        // Read from config — fallback to msg.sender only if not set
+        admin = cfg.admin != address(0) ? cfg.admin : msg.sender;
+        pauser = cfg.pauser != address(0) ? cfg.pauser : msg.sender;
+        tss = cfg.tssAddress;
 
         console.log("Admin:", admin);
+        console.log("Pauser:", pauser);
         console.log("TSS:", tss);
         console.log("");
     }
@@ -150,21 +139,20 @@ contract DeployGateway is Script, GatewayConfig {
     function _deployProxy() internal {
         console.log("--- Deploying Transparent Upgradeable Proxy ---");
 
-        // Encode initialization call
+        // initialize(admin, pauser, tss, vaultAddress, minCapUsd, maxCapUsd, factory, router, wethAddress)
         bytes memory initData = abi.encodeWithSelector(
             UniversalGateway.initialize.selector,
             admin,
+            pauser,
             tss,
             cfg.vault,
-            MIN_CAP_USD,
-            MAX_CAP_USD,
+            cfg.minCapUsd,
+            cfg.maxCapUsd,
             cfg.uniswapV3Factory,
             cfg.uniswapV3Router,
-            cfg.weth,
-            cfg.ethUsdFeed
+            cfg.weth
         );
 
-        // Deploy proxy with implementation and initialization
         TransparentUpgradeableProxy proxy =
             new TransparentUpgradeableProxy(gatewayImplementation, cfg.deployer, initData);
 
@@ -179,14 +167,27 @@ contract DeployGateway is Script, GatewayConfig {
 
         UniversalGateway gateway = UniversalGateway(payable(gatewayProxy));
 
-        // Set staleness period (24 hours for testnet, adjust for mainnet)
-        console.log("Setting Chainlink staleness period to 24 hours...");
-        gateway.setChainlinkStalePeriod(24 hours);
+        // Set ETH/USD price feed (not part of initialize)
+        console.log("Setting ETH/USD feed:", cfg.ethUsdFeed);
+        gateway.setEthUsdFeed(cfg.ethUsdFeed);
 
-        // Disable L2 sequencer feed (for L1 chains like Sepolia/Mainnet)
-        // For L2 chains (Arbitrum, Optimism, Base), set appropriate sequencer feed
-        console.log("Disabling L2 sequencer feed (L1 chain)...");
-        gateway.setL2SequencerFeed(address(0));
+        // Set Chainlink staleness period from config
+        console.log("Setting Chainlink staleness period:", cfg.chainlinkStalePeriodSec, "sec");
+        gateway.setChainlinkStalePeriod(cfg.chainlinkStalePeriodSec);
+
+        // Set L2 sequencer feed (address(0) disables for L1)
+        console.log("Setting L2 sequencer feed:", cfg.l2SequencerFeed);
+        gateway.setL2SequencerFeed(cfg.l2SequencerFeed);
+        if (cfg.l2SequencerGracePeriodSec > 0) {
+            console.log("Setting L2 sequencer grace period:", cfg.l2SequencerGracePeriodSec, "sec");
+            gateway.setL2SequencerGracePeriod(cfg.l2SequencerGracePeriodSec);
+        }
+
+        // Set CEA Factory if available
+        if (cfg.ceaFactory != address(0)) {
+            console.log("Setting CEA Factory:", cfg.ceaFactory);
+            gateway.setCEAFactory(cfg.ceaFactory);
+        }
 
         console.log("Configuration complete");
         console.log("");
@@ -206,14 +207,21 @@ contract DeployGateway is Script, GatewayConfig {
         // Verify initialization parameters
         require(gateway.VAULT() == cfg.vault, "Vault address mismatch");
         require(gateway.TSS_ADDRESS() == tss, "TSS address mismatch");
-        require(gateway.MIN_CAP_UNIVERSAL_TX_USD() == MIN_CAP_USD, "Min cap mismatch");
-        require(gateway.MAX_CAP_UNIVERSAL_TX_USD() == MAX_CAP_USD, "Max cap mismatch");
+        require(gateway.MIN_CAP_UNIVERSAL_TX_USD() == cfg.minCapUsd, "Min cap mismatch");
+        require(gateway.MAX_CAP_UNIVERSAL_TX_USD() == cfg.maxCapUsd, "Max cap mismatch");
         require(gateway.WETH() == cfg.weth, "WETH mismatch");
         require(address(gateway.ethUsdFeed()) == cfg.ethUsdFeed, "ETH/USD feed mismatch");
+        require(gateway.chainlinkStalePeriod() == cfg.chainlinkStalePeriodSec, "Staleness mismatch");
 
         // Verify roles
         require(gateway.hasRole(gateway.DEFAULT_ADMIN_ROLE(), admin), "Admin role not set");
+        require(gateway.hasRole(gateway.PAUSER_ROLE(), pauser), "Pauser role not set");
         require(gateway.hasRole(gateway.TSS_ROLE(), tss), "TSS role not set");
+
+        // Verify CEA Factory if set
+        if (cfg.ceaFactory != address(0)) {
+            require(gateway.CEA_FACTORY() == cfg.ceaFactory, "CEA_FACTORY mismatch");
+        }
 
         console.log("OK: All parameters verified");
         console.log("OK: All roles assigned correctly");
@@ -236,11 +244,13 @@ contract DeployGateway is Script, GatewayConfig {
         console.log("Configuration:");
         console.log("  Vault:          ", cfg.vault);
         console.log("  Admin:          ", admin);
+        console.log("  Pauser:         ", pauser);
         console.log("  TSS:            ", tss);
-        console.log("  Min USD Cap:     $", MIN_CAP_USD / 1e18);
-        console.log("  Max USD Cap:     $", MAX_CAP_USD / 1e18);
+        console.log("  Min USD Cap:     $", cfg.minCapUsd / 1e18);
+        console.log("  Max USD Cap:     $", cfg.maxCapUsd / 1e18);
         console.log("  WETH:           ", cfg.weth);
         console.log("  ETH/USD Feed:   ", cfg.ethUsdFeed);
+        console.log("  Staleness:       ", cfg.chainlinkStalePeriodSec, "sec");
         console.log("");
         console.log("========================================");
         console.log("Gateway Address: %s", gatewayProxy);
@@ -249,8 +259,7 @@ contract DeployGateway is Script, GatewayConfig {
         console.log("NEXT STEPS:");
         console.log("1. Update Vault.setGateway(%s)", gatewayProxy);
         console.log("2. Verify contracts on block explorer");
-        console.log("3. Transfer roles if needed");
-        console.log("4. Test integration with Vault");
+        console.log("3. Transfer DEFAULT_ADMIN_ROLE to multisig if not already set");
     }
 
     // ========================================
@@ -259,12 +268,6 @@ contract DeployGateway is Script, GatewayConfig {
     function _getProxyAdmin() internal view returns (address proxyAdmin) {
         bytes32 raw = vm.load(gatewayProxy, _ADMIN_SLOT);
         proxyAdmin = address(uint160(uint256(raw)));
-    }
-
-    function _getProxyAdminOwner() internal view returns (address owner) {
-        address proxyAdminAddr = _getProxyAdmin();
-        ProxyAdmin proxyAdminContract = ProxyAdmin(proxyAdminAddr);
-        owner = proxyAdminContract.owner();
     }
 }
 

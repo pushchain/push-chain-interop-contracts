@@ -3,9 +3,9 @@ pragma solidity 0.8.26;
 
 import { Script } from "forge-std/Script.sol";
 import { console } from "forge-std/console.sol";
-import { UniversalGatewayV0_temp } from "../../src/testnetV0/UniversalGatewayV0_temp.sol";
+import { UniversalGatewayV0_temp } from "../../../src/testnetV0/UniversalGatewayV0_temp.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { GatewayConfig } from "../config/GatewayConfig.sol";
+import { GatewayConfig } from "../../config/testnet/GatewayConfig.sol";
 
 /**
  * @title MoveFunds

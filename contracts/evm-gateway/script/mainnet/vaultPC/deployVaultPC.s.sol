@@ -3,25 +3,21 @@ pragma solidity 0.8.26;
 
 import { Script } from "forge-std/Script.sol";
 import { console } from "forge-std/console.sol";
-import { UniversalGatewayPC } from "../../src/UniversalGatewayPC.sol";
+import { VaultPC } from "../../../src/VaultPC.sol";
 import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import { ProxyAdmin } from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
-import { GatewayPCConfig } from "../config/GatewayPCConfig.sol";
+import { VaultPCConfig } from "../../config/mainnet/VaultPCConfig.sol";
 
 /**
- * @title DeployGatewayPC
- * @notice Deployment script for UniversalGatewayPC on Push Chain
+ * @title DeployVaultPC
+ * @notice Deployment script for VaultPC on Push Chain
  * @dev Deploys implementation + proxy + initializes with all required parameters
  *
- * PREREQUISITES:
- * - VaultPC must be deployed first
- * - UniversalCore address must be known
- *
  * USAGE:
- * forge script script/gatewayPC/DeployGatewayPC.s.sol:DeployGatewayPC \
+ * forge script script/vaultPC/DeployVaultPC.s.sol:DeployVaultPC \
  *   --rpc-url $PUSH_CHAIN_RPC_URL --private-key $PRIVATE_KEY --broadcast
  */
-contract DeployGatewayPC is Script, GatewayPCConfig {
+contract DeployVaultPC is Script, VaultPCConfig {
     // ========================================
     //        EIP-1967 PROXY CONSTANTS
     // ========================================
@@ -31,13 +27,14 @@ contract DeployGatewayPC is Script, GatewayPCConfig {
     // Role addresses (set to msg.sender by default, transfer later)
     address admin;
     address pauser;
+    address fundManager;
 
     // ========================================
     //         DEPLOYMENT STATE
     // ========================================
     Config cfg;
-    address public gatewayPCImplementation;
-    address public gatewayPCProxy;
+    address public vaultPCImplementation;
+    address public vaultPCProxy;
     uint256 public deployChainId;
 
     // ========================================
@@ -48,7 +45,7 @@ contract DeployGatewayPC is Script, GatewayPCConfig {
         deployChainId = block.chainid;
 
         console.log("========================================");
-        console.log("  DEPLOYING GATEWAYPC ON PUSH CHAIN");
+        console.log("  DEPLOYING VAULTPC ON PUSH CHAIN");
         console.log("========================================");
         console.log("");
         console.log("Chain ID:", deployChainId);
@@ -86,38 +83,10 @@ contract DeployGatewayPC is Script, GatewayPCConfig {
         console.log("--- Pre-Deployment Validation ---");
         console.log("");
 
-        // Critical validation: UniversalCore must be set
-        if (cfg.universalCore == address(0)) {
-            console.log("ERROR: universalCore is not set in config!");
-            console.log("Please set universalCore address in GatewayPCConfig.");
-            revert("universalCore not set in config");
-        }
+        // Basic sanity checks
+        require(msg.sender != address(0), "Invalid deployer");
+        require(cfg.deployer != address(0), "deployer not set in config");
 
-        // Critical validation: VaultPC must be deployed
-        if (cfg.vaultPC == address(0)) {
-            console.log("ERROR: vaultPC is not set in config!");
-            console.log("Please deploy VaultPC first and update GatewayPCConfig.");
-            revert("vaultPC not set in config");
-        }
-
-        // Verify UniversalCore has code
-        uint256 universalCoreCodeSize;
-        address universalCoreAddr = cfg.universalCore;
-        assembly {
-            universalCoreCodeSize := extcodesize(universalCoreAddr)
-        }
-        require(universalCoreCodeSize > 0, "UniversalCore contract not found at config address");
-
-        // Verify VaultPC has code
-        uint256 vaultPCCodeSize;
-        address vaultPCAddr = cfg.vaultPC;
-        assembly {
-            vaultPCCodeSize := extcodesize(vaultPCAddr)
-        }
-        require(vaultPCCodeSize > 0, "VaultPC contract not found at config address");
-
-        console.log("OK: UniversalCore found at:", cfg.universalCore);
-        console.log("OK: VaultPC found at:", cfg.vaultPC);
         console.log("OK: All validation checks passed");
         console.log("");
     }
@@ -128,9 +97,11 @@ contract DeployGatewayPC is Script, GatewayPCConfig {
         // Default all roles to deployer (can transfer later)
         admin = msg.sender;
         pauser = msg.sender;
+        fundManager = msg.sender;
 
         console.log("Admin:", admin);
         console.log("Pauser:", pauser);
+        console.log("Fund Manager:", fundManager);
         console.log("");
     }
 
@@ -138,12 +109,12 @@ contract DeployGatewayPC is Script, GatewayPCConfig {
     //         DEPLOYMENT STEPS
     // ========================================
     function _deployImplementation() internal {
-        console.log("--- Deploying GatewayPC Implementation ---");
+        console.log("--- Deploying VaultPC Implementation ---");
 
-        UniversalGatewayPC implementation = new UniversalGatewayPC();
-        gatewayPCImplementation = address(implementation);
+        VaultPC implementation = new VaultPC();
+        vaultPCImplementation = address(implementation);
 
-        console.log("Implementation deployed at:", gatewayPCImplementation);
+        console.log("Implementation deployed at:", vaultPCImplementation);
         console.log("");
     }
 
@@ -152,19 +123,18 @@ contract DeployGatewayPC is Script, GatewayPCConfig {
 
         // Encode initialization call
         bytes memory initData = abi.encodeWithSelector(
-            UniversalGatewayPC.initialize.selector,
+            VaultPC.initialize.selector,
             admin,
             pauser,
-            cfg.universalCore,
-            cfg.vaultPC
+            fundManager
         );
 
         // Deploy proxy with implementation and initialization
         TransparentUpgradeableProxy proxy =
-            new TransparentUpgradeableProxy(gatewayPCImplementation, cfg.deployer, initData);
+            new TransparentUpgradeableProxy(vaultPCImplementation, cfg.deployer, initData);
 
-        gatewayPCProxy = address(proxy);
-        console.log("Proxy deployed at:", gatewayPCProxy);
+        vaultPCProxy = address(proxy);
+        console.log("Proxy deployed at:", vaultPCProxy);
         console.log("Proxy Admin:", _getProxyAdmin());
         console.log("");
     }
@@ -175,23 +145,16 @@ contract DeployGatewayPC is Script, GatewayPCConfig {
     function _verifyDeployment() internal view {
         console.log("--- Deployment Verification ---");
 
-        require(gatewayPCImplementation != address(0), "Implementation not deployed");
-        require(gatewayPCProxy != address(0), "Proxy not deployed");
+        require(vaultPCImplementation != address(0), "Implementation not deployed");
+        require(vaultPCProxy != address(0), "Proxy not deployed");
 
-        UniversalGatewayPC gatewayPC = UniversalGatewayPC(gatewayPCProxy);
-
-        // Verify initialization parameters
-        require(gatewayPC.UNIVERSAL_CORE() == cfg.universalCore, "UniversalCore address mismatch");
-        require(address(gatewayPC.VAULT_PC()) == cfg.vaultPC, "VaultPC address mismatch");
+        VaultPC vaultPC = VaultPC(payable(vaultPCProxy));
 
         // Verify roles
-        require(gatewayPC.hasRole(gatewayPC.DEFAULT_ADMIN_ROLE(), admin), "Admin role not set");
-        require(gatewayPC.hasRole(gatewayPC.PAUSER_ROLE(), pauser), "Pauser role not set");
+        require(vaultPC.hasRole(vaultPC.DEFAULT_ADMIN_ROLE(), admin), "Admin role not set");
+        require(vaultPC.hasRole(vaultPC.PAUSER_ROLE(), pauser), "Pauser role not set");
+        require(vaultPC.hasRole(vaultPC.MANAGER_ROLE(), fundManager), "Manager role not set");
 
-        // Verify nonce initialized
-        require(gatewayPC.nonce() == 0, "Nonce should be 0 on fresh deployment");
-
-        console.log("OK: All parameters verified");
         console.log("OK: All roles assigned correctly");
         console.log("");
     }
@@ -205,32 +168,31 @@ contract DeployGatewayPC is Script, GatewayPCConfig {
         console.log("Deployer:", msg.sender);
         console.log("");
         console.log("Deployed Contracts:");
-        console.log("  GatewayPC Implementation:", gatewayPCImplementation);
-        console.log("  GatewayPC Proxy:         ", gatewayPCProxy);
-        console.log("  Proxy Admin:             ", _getProxyAdmin());
+        console.log("  VaultPC Implementation:", vaultPCImplementation);
+        console.log("  VaultPC Proxy:         ", vaultPCProxy);
+        console.log("  Proxy Admin:           ", _getProxyAdmin());
         console.log("");
         console.log("Configuration:");
-        console.log("  UniversalCore:           ", cfg.universalCore);
-        console.log("  VaultPC:                 ", cfg.vaultPC);
-        console.log("  Admin:                   ", admin);
-        console.log("  Pauser:                  ", pauser);
+        console.log("  Admin:                 ", admin);
+        console.log("  Pauser:                ", pauser);
+        console.log("  Fund Manager:          ", fundManager);
         console.log("");
         console.log("========================================");
-        console.log("GatewayPC Address: %s", gatewayPCProxy);
+        console.log("VaultPC Address: %s", vaultPCProxy);
         console.log("========================================");
         console.log("");
         console.log("NEXT STEPS:");
-        console.log("1. Verify contracts on block explorer");
-        console.log("2. Transfer roles if needed");
-        console.log("3. Test outbound transaction flow");
-        console.log("4. Monitor nonce and fee collection");
+        console.log("1. Deploy UniversalGatewayPC with VAULT_PC=%s", vaultPCProxy);
+        console.log("2. Verify contracts on block explorer");
+        console.log("3. Transfer roles if needed");
+        console.log("4. Test fee collection and withdrawal");
     }
 
     // ========================================
     //         HELPERS
     // ========================================
     function _getProxyAdmin() internal view returns (address proxyAdmin) {
-        bytes32 raw = vm.load(gatewayPCProxy, _ADMIN_SLOT);
+        bytes32 raw = vm.load(vaultPCProxy, _ADMIN_SLOT);
         proxyAdmin = address(uint160(uint256(raw)));
     }
 
@@ -248,7 +210,7 @@ contract DeployGatewayPC is Script, GatewayPCConfig {
 // 1. Verify Implementation:
 // forge verify-contract --chain <CHAIN> \
 //   --constructor-args $(cast abi-encode "constructor()") \
-//   <IMPL_ADDR> src/UniversalGatewayPC.sol:UniversalGatewayPC \
+//   <IMPL_ADDR> src/VaultPC.sol:VaultPC \
 //   --etherscan-api-key $ETHERSCAN_API_KEY
 //
 // 2. Verify Proxy:

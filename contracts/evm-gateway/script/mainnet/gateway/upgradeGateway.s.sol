@@ -3,21 +3,21 @@ pragma solidity 0.8.26;
 
 import { Script } from "forge-std/Script.sol";
 import { console } from "forge-std/console.sol";
-import { VaultPC } from "../../src/VaultPC.sol";
+import { UniversalGateway } from "../../../src/UniversalGateway.sol";
 import { ProxyAdmin } from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import { ITransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import { VaultPCConfig } from "../config/VaultPCConfig.sol";
+import { GatewayConfig } from "../../config/mainnet/GatewayConfig.sol";
 
 /**
- * @title UpgradeVaultPC
- * @notice Upgrade script for VaultPC proxy on Push Chain
+ * @title UpgradeGateway
+ * @notice Upgrade script for UniversalGateway proxy
  * @dev Deploys new implementation and upgrades existing proxy
  *
  * USAGE:
- * forge script script/vaultPC/UpgradeVaultPC.s.sol:UpgradeVaultPC \
- *   --rpc-url $PUSH_CHAIN_RPC_URL --private-key $PRIVATE_KEY --broadcast
+ * forge script script/gateway/UpgradeGateway.s.sol:UpgradeGateway \
+ *   --rpc-url $RPC_URL --private-key $PRIVATE_KEY --broadcast
  */
-contract UpgradeVaultPC is Script, VaultPCConfig {
+contract UpgradeGateway is Script, GatewayConfig {
     // ========================================
     //        EIP-1967 PROXY CONSTANTS
     // ========================================
@@ -43,7 +43,7 @@ contract UpgradeVaultPC is Script, VaultPCConfig {
         upgradeChainId = block.chainid;
 
         console.log("========================================");
-        console.log("  UPGRADING VAULTPC ON PUSH CHAIN");
+        console.log("  UPGRADING UNIVERSAL GATEWAY");
         console.log("========================================");
         console.log("");
         console.log("Chain ID:", upgradeChainId);
@@ -82,15 +82,15 @@ contract UpgradeVaultPC is Script, VaultPCConfig {
         console.log("");
 
         // Validate proxy address
-        require(cfg.vaultPCProxy != address(0), "vaultPCProxy not set in config");
+        require(cfg.gatewayProxy != address(0), "gatewayProxy not set in config");
 
         // Verify proxy has code
         uint256 proxyCodeSize;
-        address proxyAddr = cfg.vaultPCProxy;
+        address proxyAddr = cfg.gatewayProxy;
         assembly {
             proxyCodeSize := extcodesize(proxyAddr)
         }
-        require(proxyCodeSize > 0, "VaultPC proxy not found at config address");
+        require(proxyCodeSize > 0, "Gateway proxy not found at config address");
 
         // Verify msg.sender is ProxyAdmin owner
         address proxyAdminAddr = _getProxyAdmin();
@@ -99,7 +99,7 @@ contract UpgradeVaultPC is Script, VaultPCConfig {
 
         require(msg.sender == owner, "Caller is not ProxyAdmin owner");
 
-        console.log("OK: Proxy found at:", cfg.vaultPCProxy);
+        console.log("OK: Proxy found at:", cfg.gatewayProxy);
         console.log("OK: ProxyAdmin:", proxyAdminAddr);
         console.log("OK: ProxyAdmin owner:", owner);
         console.log("OK: Caller authorized for upgrade");
@@ -122,10 +122,10 @@ contract UpgradeVaultPC is Script, VaultPCConfig {
     function _deployNewImplementation() internal {
         console.log("--- Deploying New Implementation ---");
 
-        VaultPC implementation = new VaultPC();
+        UniversalGateway implementation = new UniversalGateway();
         newImplementation = address(implementation);
 
-        console.log("New Implementation deployed at:", newImplementation, "");
+        console.log("New Implementation deployed at:", newImplementation);
         console.log("");
     }
 
@@ -134,9 +134,9 @@ contract UpgradeVaultPC is Script, VaultPCConfig {
 
         ProxyAdmin admin = ProxyAdmin(proxyAdmin);
 
-        // Upgrade the proxy to new implementation
+        // Upgrade the proxy to new implementation (OpenZeppelin v5 uses upgradeAndCall)
         admin.upgradeAndCall(
-            ITransparentUpgradeableProxy(cfg.vaultPCProxy), newImplementation, ""
+            ITransparentUpgradeableProxy(cfg.gatewayProxy), newImplementation, ""
         );
 
         console.log("Upgrade executed");
@@ -154,15 +154,37 @@ contract UpgradeVaultPC is Script, VaultPCConfig {
         require(currentImplementation == newImplementation, "Implementation not updated");
         require(currentImplementation != oldImplementation, "Implementation unchanged");
 
-        // Verify proxy still works (call a view function)
-        VaultPC vaultPC = VaultPC(payable(cfg.vaultPCProxy));
+        UniversalGateway gateway = UniversalGateway(payable(cfg.gatewayProxy));
 
-        // Check role constants are accessible (indicates contract is functional)
-        bytes32 pauserRole = vaultPC.PAUSER_ROLE();
-        require(pauserRole == keccak256("PAUSER_ROLE"), "VaultPC state corrupted");
+        // Verify all critical state preserved
+        address vault = gateway.VAULT();
+        address tssAddr = gateway.TSS_ADDRESS();
+        address ceaFactory = gateway.CEA_FACTORY();
+        uint256 minCap = gateway.MIN_CAP_UNIVERSAL_TX_USD();
+        uint256 maxCap = gateway.MAX_CAP_UNIVERSAL_TX_USD();
+
+        require(vault != address(0), "VAULT lost after upgrade");
+        require(tssAddr != address(0), "TSS_ADDRESS lost after upgrade");
+        require(ceaFactory != address(0), "CEA_FACTORY lost after upgrade");
+        require(minCap > 0, "MIN_CAP lost after upgrade");
+        require(maxCap > minCap, "MAX_CAP invalid after upgrade");
+        require(gateway.epochDurationSec() > 0, "epochDurationSec lost after upgrade");
+        require(gateway.chainlinkStalePeriod() > 0, "chainlinkStalePeriod lost after upgrade");
+        require(address(gateway.ethUsdFeed()) != address(0), "ethUsdFeed lost after upgrade");
+        require(address(gateway.uniV3Factory()) != address(0), "uniV3Factory lost after upgrade");
+        require(address(gateway.uniV3Router()) != address(0), "uniV3Router lost after upgrade");
+
+        // Verify roles preserved
+        require(gateway.hasRole(gateway.VAULT_ROLE(), vault), "VAULT_ROLE lost after upgrade");
+        require(gateway.hasRole(gateway.TSS_ROLE(), tssAddr), "TSS_ROLE lost after upgrade");
 
         console.log("OK: Implementation updated successfully");
-        console.log("OK: VaultPC state preserved");
+        console.log("OK: VAULT:", vault);
+        console.log("OK: TSS_ADDRESS:", tssAddr);
+        console.log("OK: CEA_FACTORY:", ceaFactory);
+        console.log("OK: MIN_CAP:", minCap);
+        console.log("OK: MAX_CAP:", maxCap);
+        console.log("OK: Roles preserved");
         console.log("");
     }
 
@@ -174,11 +196,11 @@ contract UpgradeVaultPC is Script, VaultPCConfig {
         console.log("Chain ID:", upgradeChainId);
         console.log("Upgrader:", msg.sender);
         console.log("");
-        console.log("VaultPC Proxy:        ", cfg.vaultPCProxy);
+        console.log("Gateway Proxy:        ", cfg.gatewayProxy);
         console.log("Proxy Admin:          ", proxyAdmin);
         console.log("");
         console.log("Old Implementation:   ", oldImplementation);
-        console.log("New Implementation:   ", newImplementation, "");
+        console.log("New Implementation:   ", newImplementation);
         console.log("");
         console.log("========================================");
         console.log("Upgrade Complete!");
@@ -186,21 +208,21 @@ contract UpgradeVaultPC is Script, VaultPCConfig {
         console.log("");
         console.log("NEXT STEPS:");
         console.log("1. Verify new implementation on block explorer");
-        console.log("2. Test VaultPC functionality");
-        console.log("3. Test fee withdrawal");
-        console.log("4. Monitor for any issues");
+        console.log("2. Test gateway functionality");
+        console.log("3. Monitor for any issues");
+        console.log("4. Update frontend to use new ABI if needed");
     }
 
     // ========================================
     //         HELPERS
     // ========================================
     function _getProxyAdmin() internal view returns (address proxyAdminAddr) {
-        bytes32 raw = vm.load(cfg.vaultPCProxy, _ADMIN_SLOT);
+        bytes32 raw = vm.load(cfg.gatewayProxy, _ADMIN_SLOT);
         proxyAdminAddr = address(uint160(uint256(raw)));
     }
 
     function _getImplementation() internal view returns (address implementation) {
-        bytes32 raw = vm.load(cfg.vaultPCProxy, _IMPLEMENTATION_SLOT);
+        bytes32 raw = vm.load(cfg.gatewayProxy, _IMPLEMENTATION_SLOT);
         implementation = address(uint160(uint256(raw)));
     }
 }
@@ -212,5 +234,5 @@ contract UpgradeVaultPC is Script, VaultPCConfig {
 // Verify New Implementation:
 // forge verify-contract --chain <CHAIN> \
 //   --constructor-args $(cast abi-encode "constructor()") \
-//   <NEW_IMPL_ADDR> src/VaultPC.sol:VaultPC \
+//   <NEW_IMPL_ADDR> src/UniversalGateway.sol:UniversalGateway \
 //   --etherscan-api-key $ETHERSCAN_API_KEY
