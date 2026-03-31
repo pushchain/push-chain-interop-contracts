@@ -8,7 +8,8 @@
 | -------- | ------- |
 | UniversalGatewayV0 Proxy | `0x05bD7a3D18324c1F7e216f7fBF2b15985aE5281A` |
 | UniversalGatewayV0 ProxyAdmin | `0x756c0BeA91f5692384aEE147C10409Bb062BF39B` |
-| UniversalGatewayV0 Implementation (current) | `0x92B973F17d4E9365f6110fD03D2866b398416C5b` |
+| UniversalGatewayV0 Implementation (temp, superseded) | `0xd55f719fB004cA3b5D0bCbfc1C2f497692b15A41` |
+| UniversalGatewayV0 Implementation (current) | `0xA787f0Cb585456b4B1b23E17D8E1f986d9585Cd7` |
 
 ## Vault System (Current - with new Gateway)
 
