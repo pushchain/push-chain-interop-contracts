@@ -3,24 +3,21 @@ pragma solidity 0.8.26;
 
 import { Script } from "forge-std/Script.sol";
 import { console } from "forge-std/console.sol";
-import { UniversalGatewayV0 } from "../../src/testnetV0/UniversalGatewayV0.sol";
+import { UniversalGateway } from "../../../src/UniversalGateway.sol";
 import { ProxyAdmin } from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import { ITransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import { GatewayConfig } from "../../config/mainnet/GatewayConfig.sol";
 
 /**
- * @title UpgradeGatewayV0_1
- * @notice Upgrade 1: Deploys the updated UniversalGatewayV0 implementation (with moveFunds_temp)
- *         and upgrades the existing Sepolia proxy.
- *
- * @dev  Storage layout of the V0 deployment is PRESERVED — no re-initialization.
- *       New VAULT and CEA_FACTORY slots are appended after the existing __gap.
- *       Run registerVault.s.sol AFTER this upgrade to configure VAULT and CEA_FACTORY.
+ * @title UpgradeGateway
+ * @notice Upgrade script for UniversalGateway proxy
+ * @dev Deploys new implementation and upgrades existing proxy
  *
  * USAGE:
- * forge script script/gatewayV0/upgradeGatewayV0_upgrade1.s.sol:UpgradeGatewayV0_1 \
- *   --rpc-url $SEPOLIA_RPC_URL --private-key $KEY --broadcast -vvv
+ * forge script script/gateway/UpgradeGateway.s.sol:UpgradeGateway \
+ *   --rpc-url $RPC_URL --private-key $PRIVATE_KEY --broadcast
  */
-contract UpgradeGatewayV0_1 is Script {
+contract UpgradeGateway is Script, GatewayConfig {
     // ========================================
     //        EIP-1967 PROXY CONSTANTS
     // ========================================
@@ -30,13 +27,9 @@ contract UpgradeGatewayV0_1 is Script {
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
     // ========================================
-    //     CONFIGURATION PARAMETERS
-    // ========================================
-    address constant GATEWAY_PROXY = 0x4DCab975cDe839632db6695e2e936A29ce3e325E;
-
-    // ========================================
     //         UPGRADE STATE
     // ========================================
+    Config cfg;
     address public oldImplementation;
     address public newImplementation;
     address public proxyAdmin;
@@ -46,26 +39,38 @@ contract UpgradeGatewayV0_1 is Script {
     //         MAIN UPGRADE
     // ========================================
     function run() external {
+        cfg = getConfig();
         upgradeChainId = block.chainid;
 
         console.log("========================================");
-        console.log("  UPGRADE 1: UniversalGatewayV0");
-        console.log("  (includes moveFunds_temp)");
+        console.log("  UPGRADING UNIVERSAL GATEWAY");
         console.log("========================================");
         console.log("");
         console.log("Chain ID:", upgradeChainId);
         console.log("Upgrader:", msg.sender);
         console.log("");
 
+        // Pre-upgrade validation
         _validateConfiguration();
+
+        // Get old implementation
         _recordOldImplementation();
 
+        // Start broadcasting
         vm.startBroadcast();
+
+        // Deploy new implementation
         _deployNewImplementation();
+
+        // Perform upgrade
         _performUpgrade();
+
+        // Verify upgrade
         _verifyUpgrade();
+
         vm.stopBroadcast();
 
+        // Print summary
         _printUpgradeSummary();
     }
 
@@ -76,21 +81,25 @@ contract UpgradeGatewayV0_1 is Script {
         console.log("--- Pre-Upgrade Validation ---");
         console.log("");
 
-        require(GATEWAY_PROXY != address(0), "GATEWAY_PROXY not set");
+        // Validate proxy address
+        require(cfg.gatewayProxy != address(0), "gatewayProxy not set in config");
 
+        // Verify proxy has code
         uint256 proxyCodeSize;
-        address proxyAddr = GATEWAY_PROXY;
+        address proxyAddr = cfg.gatewayProxy;
         assembly {
             proxyCodeSize := extcodesize(proxyAddr)
         }
-        require(proxyCodeSize > 0, "Gateway proxy not found at GATEWAY_PROXY");
+        require(proxyCodeSize > 0, "Gateway proxy not found at config address");
 
+        // Verify msg.sender is ProxyAdmin owner
         address proxyAdminAddr = _getProxyAdmin();
         ProxyAdmin admin = ProxyAdmin(proxyAdminAddr);
         address owner = admin.owner();
+
         require(msg.sender == owner, "Caller is not ProxyAdmin owner");
 
-        console.log("OK: Proxy found at:", GATEWAY_PROXY);
+        console.log("OK: Proxy found at:", cfg.gatewayProxy);
         console.log("OK: ProxyAdmin:", proxyAdminAddr);
         console.log("OK: ProxyAdmin owner:", owner);
         console.log("OK: Caller authorized for upgrade");
@@ -99,8 +108,10 @@ contract UpgradeGatewayV0_1 is Script {
 
     function _recordOldImplementation() internal {
         console.log("--- Recording Old Implementation ---");
+
         proxyAdmin = _getProxyAdmin();
         oldImplementation = _getImplementation();
+
         console.log("Old Implementation:", oldImplementation);
         console.log("");
     }
@@ -110,16 +121,24 @@ contract UpgradeGatewayV0_1 is Script {
     // ========================================
     function _deployNewImplementation() internal {
         console.log("--- Deploying New Implementation ---");
-        UniversalGatewayV0 implementation = new UniversalGatewayV0();
+
+        UniversalGateway implementation = new UniversalGateway();
         newImplementation = address(implementation);
+
         console.log("New Implementation deployed at:", newImplementation);
         console.log("");
     }
 
     function _performUpgrade() internal {
         console.log("--- Performing Upgrade ---");
+
         ProxyAdmin admin = ProxyAdmin(proxyAdmin);
-        admin.upgradeAndCall(ITransparentUpgradeableProxy(GATEWAY_PROXY), newImplementation, "");
+
+        // Upgrade the proxy to new implementation (OpenZeppelin v5 uses upgradeAndCall)
+        admin.upgradeAndCall(
+            ITransparentUpgradeableProxy(cfg.gatewayProxy), newImplementation, ""
+        );
+
         console.log("Upgrade executed");
         console.log("");
     }
@@ -130,67 +149,90 @@ contract UpgradeGatewayV0_1 is Script {
     function _verifyUpgrade() internal view {
         console.log("--- Upgrade Verification ---");
 
-        address currentImpl = _getImplementation();
-        require(currentImpl == newImplementation, "Implementation not updated");
-        require(currentImpl != oldImplementation, "Implementation unchanged");
+        address currentImplementation = _getImplementation();
 
-        UniversalGatewayV0 gateway = UniversalGatewayV0(payable(GATEWAY_PROXY));
+        require(currentImplementation == newImplementation, "Implementation not updated");
+        require(currentImplementation != oldImplementation, "Implementation unchanged");
 
-        // Verify critical storage is preserved
-        address tss = gateway.TSS_ADDRESS();
-        require(tss != address(0), "TSS_ADDRESS corrupted");
-        console.log("OK: Implementation updated successfully");
-        console.log("OK: TSS_ADDRESS preserved:", tss);
+        UniversalGateway gateway = UniversalGateway(payable(cfg.gatewayProxy));
 
-        // Verify VAULT and CEA_FACTORY are not yet set (expected: address(0) until registerVault runs)
+        // Verify all critical state preserved
         address vault = gateway.VAULT();
+        address tssAddr = gateway.TSS_ADDRESS();
         address ceaFactory = gateway.CEA_FACTORY();
-        console.log("OK: VAULT (not yet set):", vault);
-        console.log("OK: CEA_FACTORY (not yet set):", ceaFactory);
+        uint256 minCap = gateway.MIN_CAP_UNIVERSAL_TX_USD();
+        uint256 maxCap = gateway.MAX_CAP_UNIVERSAL_TX_USD();
 
-        // Verify version updated
-        string memory ver = gateway.version();
-        console.log("OK: version:", ver);
+        require(vault != address(0), "VAULT lost after upgrade");
+        require(tssAddr != address(0), "TSS_ADDRESS lost after upgrade");
+        require(ceaFactory != address(0), "CEA_FACTORY lost after upgrade");
+        require(minCap > 0, "MIN_CAP lost after upgrade");
+        require(maxCap > minCap, "MAX_CAP invalid after upgrade");
+        require(gateway.epochDurationSec() > 0, "epochDurationSec lost after upgrade");
+        require(gateway.chainlinkStalePeriod() > 0, "chainlinkStalePeriod lost after upgrade");
+        require(address(gateway.ethUsdFeed()) != address(0), "ethUsdFeed lost after upgrade");
+        require(address(gateway.uniV3Factory()) != address(0), "uniV3Factory lost after upgrade");
+        require(address(gateway.uniV3Router()) != address(0), "uniV3Router lost after upgrade");
+
+        // Verify roles preserved
+        require(gateway.hasRole(gateway.VAULT_ROLE(), vault), "VAULT_ROLE lost after upgrade");
+        require(gateway.hasRole(gateway.TSS_ROLE(), tssAddr), "TSS_ROLE lost after upgrade");
+
+        console.log("OK: Implementation updated successfully");
+        console.log("OK: VAULT:", vault);
+        console.log("OK: TSS_ADDRESS:", tssAddr);
+        console.log("OK: CEA_FACTORY:", ceaFactory);
+        console.log("OK: MIN_CAP:", minCap);
+        console.log("OK: MAX_CAP:", maxCap);
+        console.log("OK: Roles preserved");
         console.log("");
     }
 
     function _printUpgradeSummary() internal view {
         console.log("========================================");
-        console.log("     UPGRADE 1 SUMMARY");
+        console.log("     UPGRADE SUMMARY");
         console.log("========================================");
         console.log("");
         console.log("Chain ID:", upgradeChainId);
         console.log("Upgrader:", msg.sender);
         console.log("");
-        console.log("Gateway Proxy:        ", GATEWAY_PROXY);
+        console.log("Gateway Proxy:        ", cfg.gatewayProxy);
         console.log("Proxy Admin:          ", proxyAdmin);
         console.log("");
         console.log("Old Implementation:   ", oldImplementation);
         console.log("New Implementation:   ", newImplementation);
         console.log("");
         console.log("========================================");
-        console.log("NEXT STEPS:");
-        console.log("1. Run registerVault.s.sol to set VAULT and CEA_FACTORY");
-        console.log("2. Run moveFunds.s.sol to migrate USDT from Gateway to Vault");
-        console.log("3. Run upgradeGatewayV0_upgrade2.s.sol to remove moveFunds_temp");
-        console.log("4. Verify implementation on Etherscan:");
-        console.log("   forge verify-contract --chain sepolia \\");
-        console.log("     --constructor-args $(cast abi-encode 'constructor()') \\");
-        console.log("     <IMPL_ADDR> src/UniversalGatewayV0.sol:UniversalGatewayV0 \\");
-        console.log("     --etherscan-api-key $ETHERSCAN_API_KEY");
+        console.log("Upgrade Complete!");
         console.log("========================================");
+        console.log("");
+        console.log("NEXT STEPS:");
+        console.log("1. Verify new implementation on block explorer");
+        console.log("2. Test gateway functionality");
+        console.log("3. Monitor for any issues");
+        console.log("4. Update frontend to use new ABI if needed");
     }
 
     // ========================================
     //         HELPERS
     // ========================================
     function _getProxyAdmin() internal view returns (address proxyAdminAddr) {
-        bytes32 raw = vm.load(GATEWAY_PROXY, _ADMIN_SLOT);
+        bytes32 raw = vm.load(cfg.gatewayProxy, _ADMIN_SLOT);
         proxyAdminAddr = address(uint160(uint256(raw)));
     }
 
     function _getImplementation() internal view returns (address implementation) {
-        bytes32 raw = vm.load(GATEWAY_PROXY, _IMPLEMENTATION_SLOT);
+        bytes32 raw = vm.load(cfg.gatewayProxy, _IMPLEMENTATION_SLOT);
         implementation = address(uint160(uint256(raw)));
     }
 }
+
+// ========================================
+//      VERIFICATION COMMANDS
+// ========================================
+//
+// Verify New Implementation:
+// forge verify-contract --chain <CHAIN> \
+//   --constructor-args $(cast abi-encode "constructor()") \
+//   <NEW_IMPL_ADDR> src/UniversalGateway.sol:UniversalGateway \
+//   --etherscan-api-key $ETHERSCAN_API_KEY

@@ -3,9 +3,10 @@ pragma solidity 0.8.26;
 
 import { Script } from "forge-std/Script.sol";
 import { console } from "forge-std/console.sol";
-import { VaultPC } from "../../src/VaultPC.sol";
+import { VaultPC } from "../../../src/VaultPC.sol";
 import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import { ProxyAdmin } from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import { VaultPCConfig } from "../../config/mainnet/VaultPCConfig.sol";
 
 /**
  * @title DeployVaultPC
@@ -16,21 +17,14 @@ import { ProxyAdmin } from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin
  * forge script script/vaultPC/DeployVaultPC.s.sol:DeployVaultPC \
  *   --rpc-url $PUSH_CHAIN_RPC_URL --private-key $PRIVATE_KEY --broadcast
  */
-contract DeployVaultPC is Script {
+contract DeployVaultPC is Script, VaultPCConfig {
     // ========================================
     //        EIP-1967 PROXY CONSTANTS
     // ========================================
-    bytes32 internal constant _ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
+    bytes32 internal constant _ADMIN_SLOT =
+        0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
 
-    // ========================================
-    //     CONFIGURATION PARAMETERS
-    // ========================================
-    // **TODO: UPDATE THESE BEFORE DEPLOYMENT**
-
-    // Deployer will be ProxyAdmin owner
-    address constant DEPLOYER = 0xe520d4A985A2356Fa615935a822Ce4eFAcA24aB6;
-
-    // Role addresses (set to msg.sender by default, transfer later if needed)
+    // Role addresses (set to msg.sender by default, transfer later)
     address admin;
     address pauser;
     address fundManager;
@@ -38,6 +32,7 @@ contract DeployVaultPC is Script {
     // ========================================
     //         DEPLOYMENT STATE
     // ========================================
+    Config cfg;
     address public vaultPCImplementation;
     address public vaultPCProxy;
     uint256 public deployChainId;
@@ -46,6 +41,7 @@ contract DeployVaultPC is Script {
     //         MAIN DEPLOYMENT
     // ========================================
     function run() external {
+        cfg = getConfig();
         deployChainId = block.chainid;
 
         console.log("========================================");
@@ -89,6 +85,7 @@ contract DeployVaultPC is Script {
 
         // Basic sanity checks
         require(msg.sender != address(0), "Invalid deployer");
+        require(cfg.deployer != address(0), "deployer not set in config");
 
         console.log("OK: All validation checks passed");
         console.log("");
@@ -127,17 +124,14 @@ contract DeployVaultPC is Script {
         // Encode initialization call
         bytes memory initData = abi.encodeWithSelector(
             VaultPC.initialize.selector,
-            admin,          // admin
-            pauser,         // pauser
-            fundManager     // fundManager
+            admin,
+            pauser,
+            fundManager
         );
 
         // Deploy proxy with implementation and initialization
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
-            vaultPCImplementation,
-            DEPLOYER,
-            initData
-        );
+        TransparentUpgradeableProxy proxy =
+            new TransparentUpgradeableProxy(vaultPCImplementation, cfg.deployer, initData);
 
         vaultPCProxy = address(proxy);
         console.log("Proxy deployed at:", vaultPCProxy);

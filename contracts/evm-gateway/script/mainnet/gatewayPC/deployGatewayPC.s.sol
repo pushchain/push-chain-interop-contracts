@@ -3,64 +3,52 @@ pragma solidity 0.8.26;
 
 import { Script } from "forge-std/Script.sol";
 import { console } from "forge-std/console.sol";
-import { Vault } from "../../src/Vault.sol";
+import { UniversalGatewayPC } from "../../../src/UniversalGatewayPC.sol";
 import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import { ProxyAdmin } from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import { GatewayPCConfig } from "../../config/mainnet/GatewayPCConfig.sol";
 
 /**
- * @title DeployVault
- * @notice Deployment script for Vault on external EVM chains
+ * @title DeployGatewayPC
+ * @notice Deployment script for UniversalGatewayPC on Push Chain
  * @dev Deploys implementation + proxy + initializes with all required parameters
  *
  * PREREQUISITES:
- * - CEAFactory must be deployed first
- * - Gateway can be set to address(0) initially, then updated via setGateway()
+ * - VaultPC must be deployed first
+ * - UniversalCore address must be known
  *
  * USAGE:
- * forge script script/vault/DeployVault.s.sol:DeployVault \
- *   --rpc-url $RPC_URL --private-key $PRIVATE_KEY --broadcast
+ * forge script script/gatewayPC/DeployGatewayPC.s.sol:DeployGatewayPC \
+ *   --rpc-url $PUSH_CHAIN_RPC_URL --private-key $PRIVATE_KEY --broadcast
  */
-contract DeployVault is Script {
+contract DeployGatewayPC is Script, GatewayPCConfig {
     // ========================================
     //        EIP-1967 PROXY CONSTANTS
     // ========================================
-    bytes32 internal constant _ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
+    bytes32 internal constant _ADMIN_SLOT =
+        0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
 
-    // ========================================
-    //     CONFIGURATION PARAMETERS
-    // ========================================
-    // **TODO: UPDATE THESE BEFORE DEPLOYMENT**
-
-    // Deployer will be ProxyAdmin owner
-    address constant DEPLOYER = 0xe520d4A985A2356Fa615935a822Ce4eFAcA24aB6;
-
-    // Role addresses (set to msg.sender by default, transfer later if needed)
+    // Role addresses (set to msg.sender by default, transfer later)
     address admin;
     address pauser;
-    address tss;
-
-    // Gateway address (can deploy Vault first, then set gateway later via setGateway())
-    // Set to address(0) to deploy Vault before Gateway
-    address constant GATEWAY_ADDRESS = 0x4DCab975cDe839632db6695e2e936A29ce3e325E;
-
-    // CEAFactory address (REQUIRED - must be deployed first)
-    address constant CEA_FACTORY_ADDRESS = 0xE86655567d3682c0f141d0F924b9946999DC3381;
 
     // ========================================
     //         DEPLOYMENT STATE
     // ========================================
-    address public vaultImplementation;
-    address public vaultProxy;
+    Config cfg;
+    address public gatewayPCImplementation;
+    address public gatewayPCProxy;
     uint256 public deployChainId;
 
     // ========================================
     //         MAIN DEPLOYMENT
     // ========================================
     function run() external {
+        cfg = getConfig();
         deployChainId = block.chainid;
 
         console.log("========================================");
-        console.log("  DEPLOYING VAULT");
+        console.log("  DEPLOYING GATEWAYPC ON PUSH CHAIN");
         console.log("========================================");
         console.log("");
         console.log("Chain ID:", deployChainId);
@@ -98,35 +86,38 @@ contract DeployVault is Script {
         console.log("--- Pre-Deployment Validation ---");
         console.log("");
 
-        // Critical validation: CEAFactory must be deployed
-        if (CEA_FACTORY_ADDRESS == address(0)) {
-            console.log("ERROR: CEA_FACTORY_ADDRESS is not set!");
-            console.log("Please deploy CEAFactory first and update CEA_FACTORY_ADDRESS in this script.");
-            revert("CEA_FACTORY_ADDRESS not set");
+        // Critical validation: UniversalCore must be set
+        if (cfg.universalCore == address(0)) {
+            console.log("ERROR: universalCore is not set in config!");
+            console.log("Please set universalCore address in GatewayPCConfig.");
+            revert("universalCore not set in config");
         }
 
-        // Verify CEAFactory has code
-        uint256 ceaFactoryCodeSize;
-        address ceaFactoryAddr = CEA_FACTORY_ADDRESS;
+        // Critical validation: VaultPC must be deployed
+        if (cfg.vaultPC == address(0)) {
+            console.log("ERROR: vaultPC is not set in config!");
+            console.log("Please deploy VaultPC first and update GatewayPCConfig.");
+            revert("vaultPC not set in config");
+        }
+
+        // Verify UniversalCore has code
+        uint256 universalCoreCodeSize;
+        address universalCoreAddr = cfg.universalCore;
         assembly {
-            ceaFactoryCodeSize := extcodesize(ceaFactoryAddr)
+            universalCoreCodeSize := extcodesize(universalCoreAddr)
         }
-        require(ceaFactoryCodeSize > 0, "CEAFactory contract not found at CEA_FACTORY_ADDRESS");
+        require(universalCoreCodeSize > 0, "UniversalCore contract not found at config address");
 
-        // Gateway validation (optional - can be set later)
-        if (GATEWAY_ADDRESS != address(0)) {
-            uint256 gatewayCodeSize;
-            address gatewayAddr = GATEWAY_ADDRESS;
-            assembly {
-                gatewayCodeSize := extcodesize(gatewayAddr)
-            }
-            require(gatewayCodeSize > 0, "Gateway contract not found at GATEWAY_ADDRESS");
-            console.log("OK: Gateway found at:", GATEWAY_ADDRESS);
-        } else {
-            console.log("INFO: Gateway not set - will need to call setGateway() after deployment");
+        // Verify VaultPC has code
+        uint256 vaultPCCodeSize;
+        address vaultPCAddr = cfg.vaultPC;
+        assembly {
+            vaultPCCodeSize := extcodesize(vaultPCAddr)
         }
+        require(vaultPCCodeSize > 0, "VaultPC contract not found at config address");
 
-        console.log("OK: CEAFactory found at:", CEA_FACTORY_ADDRESS);
+        console.log("OK: UniversalCore found at:", cfg.universalCore);
+        console.log("OK: VaultPC found at:", cfg.vaultPC);
         console.log("OK: All validation checks passed");
         console.log("");
     }
@@ -137,11 +128,9 @@ contract DeployVault is Script {
         // Default all roles to deployer (can transfer later)
         admin = msg.sender;
         pauser = msg.sender;
-        tss = msg.sender;
 
         console.log("Admin:", admin);
         console.log("Pauser:", pauser);
-        console.log("TSS:", tss);
         console.log("");
     }
 
@@ -149,12 +138,12 @@ contract DeployVault is Script {
     //         DEPLOYMENT STEPS
     // ========================================
     function _deployImplementation() internal {
-        console.log("--- Deploying Vault Implementation ---");
+        console.log("--- Deploying GatewayPC Implementation ---");
 
-        Vault implementation = new Vault();
-        vaultImplementation = address(implementation);
+        UniversalGatewayPC implementation = new UniversalGatewayPC();
+        gatewayPCImplementation = address(implementation);
 
-        console.log("Implementation deployed at:", vaultImplementation);
+        console.log("Implementation deployed at:", gatewayPCImplementation);
         console.log("");
     }
 
@@ -163,19 +152,19 @@ contract DeployVault is Script {
 
         // Encode initialization call
         bytes memory initData = abi.encodeWithSelector(
-            Vault.initialize.selector,
-            admin, // admin
-            pauser, // pauser
-            tss, // tss
-            GATEWAY_ADDRESS, // gateway (can be address(0))
-            CEA_FACTORY_ADDRESS // ceaFactory
+            UniversalGatewayPC.initialize.selector,
+            admin,
+            pauser,
+            cfg.universalCore,
+            cfg.vaultPC
         );
 
         // Deploy proxy with implementation and initialization
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(vaultImplementation, DEPLOYER, initData);
+        TransparentUpgradeableProxy proxy =
+            new TransparentUpgradeableProxy(gatewayPCImplementation, cfg.deployer, initData);
 
-        vaultProxy = address(proxy);
-        console.log("Proxy deployed at:", vaultProxy);
+        gatewayPCProxy = address(proxy);
+        console.log("Proxy deployed at:", gatewayPCProxy);
         console.log("Proxy Admin:", _getProxyAdmin());
         console.log("");
     }
@@ -186,20 +175,21 @@ contract DeployVault is Script {
     function _verifyDeployment() internal view {
         console.log("--- Deployment Verification ---");
 
-        require(vaultImplementation != address(0), "Implementation not deployed");
-        require(vaultProxy != address(0), "Proxy not deployed");
+        require(gatewayPCImplementation != address(0), "Implementation not deployed");
+        require(gatewayPCProxy != address(0), "Proxy not deployed");
 
-        Vault vault = Vault(vaultProxy);
+        UniversalGatewayPC gatewayPC = UniversalGatewayPC(gatewayPCProxy);
 
         // Verify initialization parameters
-        require(address(vault.gateway()) == GATEWAY_ADDRESS, "Gateway address mismatch");
-        require(address(vault.CEAFactory()) == CEA_FACTORY_ADDRESS, "CEAFactory address mismatch");
-        require(vault.TSS_ADDRESS() == tss, "TSS address mismatch");
+        require(gatewayPC.UNIVERSAL_CORE() == cfg.universalCore, "UniversalCore address mismatch");
+        require(address(gatewayPC.VAULT_PC()) == cfg.vaultPC, "VaultPC address mismatch");
 
         // Verify roles
-        require(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), admin), "Admin role not set");
-        require(vault.hasRole(vault.PAUSER_ROLE(), pauser), "Pauser role not set");
-        require(vault.hasRole(vault.TSS_ROLE(), tss), "TSS role not set");
+        require(gatewayPC.hasRole(gatewayPC.DEFAULT_ADMIN_ROLE(), admin), "Admin role not set");
+        require(gatewayPC.hasRole(gatewayPC.PAUSER_ROLE(), pauser), "Pauser role not set");
+
+        // Verify nonce initialized
+        require(gatewayPC.nonce() == 0, "Nonce should be 0 on fresh deployment");
 
         console.log("OK: All parameters verified");
         console.log("OK: All roles assigned correctly");
@@ -215,39 +205,32 @@ contract DeployVault is Script {
         console.log("Deployer:", msg.sender);
         console.log("");
         console.log("Deployed Contracts:");
-        console.log("  Vault Implementation:  ", vaultImplementation);
-        console.log("  Vault Proxy:           ", vaultProxy);
-        console.log("  Proxy Admin:           ", _getProxyAdmin());
+        console.log("  GatewayPC Implementation:", gatewayPCImplementation);
+        console.log("  GatewayPC Proxy:         ", gatewayPCProxy);
+        console.log("  Proxy Admin:             ", _getProxyAdmin());
         console.log("");
         console.log("Configuration:");
-        console.log("  Gateway:               ", GATEWAY_ADDRESS);
-        console.log("  CEAFactory:            ", CEA_FACTORY_ADDRESS);
-        console.log("  Admin:                 ", admin);
-        console.log("  Pauser:                ", pauser);
-        console.log("  TSS:                   ", tss);
+        console.log("  UniversalCore:           ", cfg.universalCore);
+        console.log("  VaultPC:                 ", cfg.vaultPC);
+        console.log("  Admin:                   ", admin);
+        console.log("  Pauser:                  ", pauser);
         console.log("");
         console.log("========================================");
-        console.log("Vault Address: %s", vaultProxy);
+        console.log("GatewayPC Address: %s", gatewayPCProxy);
         console.log("========================================");
         console.log("");
         console.log("NEXT STEPS:");
-        if (GATEWAY_ADDRESS == address(0)) {
-            console.log("1. Deploy UniversalGateway with VAULT_ADDRESS=%s", vaultProxy);
-            console.log("2. Call vault.setGateway(<gateway_proxy_address>)");
-        } else {
-            console.log("1. Call gateway.updateVault(%s)", vaultProxy);
-            console.log("2. Verify integration between Gateway and Vault");
-        }
-        console.log("3. Verify contracts on block explorer");
-        console.log("4. Transfer roles if needed");
-        console.log("5. Test CEA deployment functionality");
+        console.log("1. Verify contracts on block explorer");
+        console.log("2. Transfer roles if needed");
+        console.log("3. Test outbound transaction flow");
+        console.log("4. Monitor nonce and fee collection");
     }
 
     // ========================================
     //         HELPERS
     // ========================================
     function _getProxyAdmin() internal view returns (address proxyAdmin) {
-        bytes32 raw = vm.load(vaultProxy, _ADMIN_SLOT);
+        bytes32 raw = vm.load(gatewayPCProxy, _ADMIN_SLOT);
         proxyAdmin = address(uint160(uint256(raw)));
     }
 
@@ -265,7 +248,7 @@ contract DeployVault is Script {
 // 1. Verify Implementation:
 // forge verify-contract --chain <CHAIN> \
 //   --constructor-args $(cast abi-encode "constructor()") \
-//   <IMPL_ADDR> src/Vault.sol:Vault \
+//   <IMPL_ADDR> src/UniversalGatewayPC.sol:UniversalGatewayPC \
 //   --etherscan-api-key $ETHERSCAN_API_KEY
 //
 // 2. Verify Proxy:
