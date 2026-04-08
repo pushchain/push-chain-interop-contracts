@@ -86,44 +86,51 @@ async function main() {
   console.log("  rent:", RENT_SYSVAR.toBase58());
   console.log();
 
-  // Get confirmed slot for ALT creation (stays valid longer than current slot)
-  const slot = await connection.getSlot("confirmed");
+  // Create ALT with retry loop to handle stale slots
+  let lookupTableAddress!: PublicKey;
+  let sig: string | undefined;
 
-  // Create ALT
-  const [lookupTableInstruction, lookupTableAddress] =
-    AddressLookupTableProgram.createLookupTable({
-      authority: wallet.publicKey,
-      payer: wallet.publicKey,
-      recentSlot: slot,
-    });
+  const maxAttempts = 5;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const slot = await connection.getSlot("confirmed");
+      const [createIx, altAddress] = AddressLookupTableProgram.createLookupTable({
+        authority: wallet.publicKey,
+        payer: wallet.publicKey,
+        recentSlot: slot,
+      });
 
-  console.log("📍 Creating ALT at address:", lookupTableAddress.toBase58());
+      const extendIx = AddressLookupTableProgram.extendLookupTable({
+        lookupTable: altAddress,
+        authority: wallet.publicKey,
+        payer: wallet.publicKey,
+        addresses: staticAccounts,
+      });
 
-  // Extend ALT with static accounts
-  const extendInstruction = AddressLookupTableProgram.extendLookupTable({
-    lookupTable: lookupTableAddress,
-    authority: wallet.publicKey,
-    payer: wallet.publicKey,
-    addresses: staticAccounts,
-  });
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      const tx = new Transaction().add(createIx, extendIx);
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = wallet.publicKey;
 
-  // Send transaction
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      sig = await connection.sendTransaction(tx, [wallet]);
+      await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight });
 
-  const tx = new Transaction().add(
-    lookupTableInstruction,
-    extendInstruction
-  );
-  tx.recentBlockhash = blockhash;
-  tx.feePayer = wallet.publicKey;
+      lookupTableAddress = altAddress;
+      if (attempt > 1) console.log(`✅ Succeeded on attempt ${attempt}`);
+      break;
+    } catch (error: any) {
+      if (error.message?.includes("not a recent slot") && attempt < maxAttempts) {
+        console.log(`⚠️  Slot became stale (attempt ${attempt}/${maxAttempts}), retrying...`);
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } else if (attempt === maxAttempts) {
+        throw new Error(`Failed to create ALT after ${maxAttempts} attempts: ${error.message}`);
+      } else {
+        throw error;
+      }
+    }
+  }
 
-  const sig = await connection.sendTransaction(tx, [wallet]);
-  await connection.confirmTransaction({
-    signature: sig,
-    blockhash,
-    lastValidBlockHeight,
-  });
-
+  console.log("📍 ALT address:", lookupTableAddress.toBase58());
   console.log("✅ Protocol Static ALT created!");
   console.log("   Signature:", sig);
   console.log();
@@ -155,18 +162,27 @@ async function main() {
     console.error(`   solana address-lookup-table ${lookupTableAddress.toBase58()}`);
   }
 
-  // Save to file
+  // Save to file — name by program so dummy and main don't overwrite each other
+  const KNOWN: Record<string, string> = {
+    "DJoFYDpgbTfxbXBv1QYhYGc9FK4J5FUKpYXAfSkHryXp": "dummy",
+    "CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS": "main",
+  };
+  const label = KNOWN[PROGRAM_ID.toBase58()] ?? PROGRAM_ID.toBase58().slice(0, 8);
+
   const altConfig = {
+    programId: PROGRAM_ID.toBase58(),
+    programLabel: label,
     protocolStaticALT: lookupTableAddress.toBase58(),
     accounts: staticAccounts.map(acc => acc.toBase58()),
     network: rpcUrl.includes("devnet") ? "devnet" : "mainnet",
     createdAt: new Date().toISOString(),
   };
 
-  const outputPath = "./alt-config-protocol.json";
+  const outputPath = `./alt-config-protocol-${label}.json`;
   fs.writeFileSync(outputPath, JSON.stringify(altConfig, null, 2));
 
   console.log("💾 ALT config saved to:", outputPath);
+  console.log("   Program:", PROGRAM_ID.toBase58(), `(${label})`);
   console.log();
   console.log("🎉 Done! Use this ALT for ALL finalize_universal_tx transactions.");
   console.log("   Savings: 185 bytes per transaction (7×32 - ALT overhead of 32+7)");

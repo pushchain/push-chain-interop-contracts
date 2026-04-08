@@ -24,7 +24,6 @@ import * as spl from "@solana/spl-token";
 //   npx ts-node app/create-universal-alt.ts            # default: dummy program
 //   npx ts-node app/create-universal-alt.ts dummy      # dummy program
 //   npx ts-node app/create-universal-alt.ts main       # main program
-//   PROGRAM_ID=<pubkey> npx ts-node app/create-universal-alt.ts
 
 const PROGRAMS: Record<string, string> = {
     main:  "CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS", // main program
@@ -32,8 +31,11 @@ const PROGRAMS: Record<string, string> = {
 };
 
 const programArg = process.argv[2]; // "main", "dummy", or undefined
+if (programArg && !(programArg in PROGRAMS)) {
+    throw new Error(`Unknown program label "${programArg}". Use "main" or "dummy".`);
+}
+
 const programIdStr =
-    process.env.PROGRAM_ID ??
     (programArg && PROGRAMS[programArg]) ??
     PROGRAMS["dummy"];
 
@@ -152,5 +154,3 @@ main().catch((err) => {
     console.error("create-universal-alt failed:", err);
     process.exit(1);
 });
-
-

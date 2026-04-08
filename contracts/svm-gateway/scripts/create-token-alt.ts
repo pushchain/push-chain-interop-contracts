@@ -198,7 +198,7 @@ async function createTokenALT(
     } catch (error: any) {
       if (error.message?.includes("not a recent slot") && attempt < maxAttempts) {
         console.log(`⚠️  Slot became stale (attempt ${attempt}/${maxAttempts}), retrying...`);
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 600));
       } else if (attempt === maxAttempts) {
         throw new Error(`Failed to create ALT after ${maxAttempts} attempts: ${error.message}`);
       } else {
@@ -290,12 +290,20 @@ async function main() {
     }
   }
 
-  // Save to file
-  const outputPath = "./alt-config-tokens.json";
+  // Save to file — name by program so dummy and main don't overwrite each other
+  const KNOWN: Record<string, string> = {
+    "DJoFYDpgbTfxbXBv1QYhYGc9FK4J5FUKpYXAfSkHryXp": "dummy",
+    "CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS": "main",
+  };
+  const label = KNOWN[PROGRAM_ID.toBase58()] ?? PROGRAM_ID.toBase58().slice(0, 8);
+
+  const outputPath = `./alt-config-tokens-${label}.json`;
   fs.writeFileSync(
     outputPath,
     JSON.stringify(
       {
+        programId: PROGRAM_ID.toBase58(),
+        programLabel: label,
         network: isDevnet ? "devnet" : "mainnet",
         tokens: altConfigs,
         createdAt: new Date().toISOString(),

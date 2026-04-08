@@ -39,8 +39,17 @@ const KNOWN_PROGRAMS: Record<string, string> = {
   dummy: "DJoFYDpgbTfxbXBv1QYhYGc9FK4J5FUKpYXAfSkHryXp",
 };
 
+const programArg = process.argv[2]; // "main", "dummy", or undefined
+if (programArg && !(programArg in KNOWN_PROGRAMS)) {
+  throw new Error(`Unknown program label "${programArg}". Use "main" or "dummy".`);
+}
+
+const programIdStr =
+  (programArg && KNOWN_PROGRAMS[programArg]) ??
+  KNOWN_PROGRAMS["dummy"];
+
 const PROGRAM_ID = new PublicKey(
-  process.env.PROGRAM_ID ?? KNOWN_PROGRAMS["dummy"]
+  programIdStr
 );
 const CONFIG_SEED = "config";
 const VAULT_SEED = "vault";
