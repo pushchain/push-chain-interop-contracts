@@ -27,7 +27,7 @@ pub struct FinalizeUniversalTx<'info> {
 
     #[account(
         seeds = [b"config"],
-        bump,
+        bump = config.bump,
     )]
     pub config: Account<'info, Config>,
 
@@ -52,7 +52,7 @@ pub struct FinalizeUniversalTx<'info> {
     #[account(
         mut,
         seeds = [TSS_SEED],
-        bump,
+        bump = tss_pda.bump,
     )]
     pub tss_pda: Account<'info, TssPda>,
 
