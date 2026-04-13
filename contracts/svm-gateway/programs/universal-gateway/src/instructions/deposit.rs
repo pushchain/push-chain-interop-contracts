@@ -161,10 +161,7 @@ fn send_tx_with_gas_route(
     // Payload-only execution (gas_amount == 0) - EVM V0 parity
     // User already has UEA with gas on Push Chain, just execute payload
     if gas_amount == 0 {
-        require!(
-            matches!(tx_type, TxType::GasAndPayload | TxType::FundsAndPayload),
-            GatewayError::InvalidAmount
-        );
+        require!(tx_type == TxType::GasAndPayload, GatewayError::InvalidAmount);
 
         emit!(UniversalTx {
             sender: ctx.accounts.user.key(),
