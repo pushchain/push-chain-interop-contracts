@@ -170,9 +170,8 @@ fn send_tx_with_gas_route(
 
     // Performs rate-limit checks and handle deposit
     // USD caps: min $1, max $10 (enforced via Pyth oracle)
-    check_usd_caps(&ctx.accounts.config, gas_amount, &ctx.accounts.price_update)?;
-    let price_data = calculate_sol_price(&ctx.accounts.price_update)?;
-    let usd_amount = calculate_usd_amount(gas_amount, &price_data)?;
+    let usd_amount =
+        check_usd_caps(&ctx.accounts.config, gas_amount, &ctx.accounts.price_update)?;
     // Block-based USD cap: per-slot limit (disabled if block_usd_cap == 0)
     check_block_usd_cap(&mut ctx.accounts.rate_limit_config, usd_amount)?;
 

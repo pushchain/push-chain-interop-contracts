@@ -70,7 +70,7 @@ pub fn check_usd_caps(
     config: &Config,
     lamports: u64,
     price_update: &Account<PriceUpdateV2>,
-) -> Result<()> {
+) -> Result<u128> {
     let price_data = calculate_sol_price(price_update)?;
     if config.pyth_confidence_threshold > 0 {
         require!(
@@ -87,7 +87,7 @@ pub fn check_usd_caps(
         usd_amount <= config.max_cap_universal_tx_usd,
         GatewayError::AboveMaxCap
     );
-    Ok(())
+    Ok(usd_amount)
 }
 
 /// View function for SOL price (locker-compatible)
