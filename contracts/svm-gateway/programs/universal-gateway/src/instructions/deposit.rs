@@ -126,7 +126,6 @@ fn fetch_tx_type(req: &UniversalTxRequest, native_amount: u64) -> Result<TxType>
 /// @notice Internal helper function to deposit for Instant TX (GAS route).
 /// @dev    Handles rate-limit checks for Fee Abstraction Tx Route.
 ///         - Validates revert instruction recipient
-///         - Validates payload: GAS must have empty payload, GAS_AND_PAYLOAD must have non-empty payload
 ///         - Supports payload-only execution (gas_amount == 0) for EVM V0 parity
 ///         - Enforces USD caps ($1-$10) and block-based USD cap via Pyth oracle
 ///         - Transfers native SOL to vault (recipient as Pubkey::default() → UEA)
@@ -143,15 +142,6 @@ fn send_tx_with_gas_route(
         matches!(tx_type, TxType::Gas | TxType::GasAndPayload),
         GatewayError::InvalidTxType
     );
-
-    // NOTE: Payload validation removed for testnet (matching EVM V0)
-    // V0 has these validations commented out (lines 1271-1277)
-    // if tx_type == TxType::GasAndPayload {
-    //     require!(!payload.is_empty(), GatewayError::InvalidInput);
-    // }
-    // if tx_type == TxType::Gas {
-    //     require!(payload.is_empty(), GatewayError::InvalidInput);
-    // }
 
     require!(
         *revert_recipient != Pubkey::default(),
@@ -225,11 +215,6 @@ fn send_tx_with_funds_route(
         GatewayError::InvalidRecipient
     );
     require!(req.amount > 0, GatewayError::InvalidAmount);
-    if tx_type == TxType::Funds {
-        require!(req.payload.is_empty(), GatewayError::InvalidInput);
-    } else {
-        require!(!req.payload.is_empty(), GatewayError::InvalidInput);
-    }
 
     if req.token == Pubkey::default() {
         handle_native_funds_route(ctx, &req, native_amount, tx_type)?;

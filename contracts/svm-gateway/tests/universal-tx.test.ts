@@ -237,7 +237,6 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
     it("Should route GAS request with payload to GAS_AND_PAYLOAD (not reject)", async () => {
       // NOTE: This test verifies the correct behavior - amount==0 + payload>0 routes to GAS_AND_PAYLOAD
-      // The payload validation is commented out in send_tx_with_gas_route (matching EVM V0)
       const gasAmount = calculateSolAmount(2.5, solPrice);
       const nativeSolTokenRateLimitPda = getTokenRateLimitPda(
         PublicKey.default
