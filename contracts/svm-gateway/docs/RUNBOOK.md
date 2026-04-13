@@ -17,6 +17,8 @@ anchor deploy --provider.cluster devnet
 
 There is currently no standalone `config:init` CLI command. Bootstrap is done by calling the on-chain `initialize(...)` instruction from an Anchor client.
 
+`initialize(...)` is gated to the program's current upgrade authority. The caller must pass the gateway program account and its `ProgramData` account, and the signing authority must match `program_data.upgrade_authority_address`.
+
 Working references:
 - `app/gateway-test.ts` — devnet bootstrap example
 - `tests/helpers/test-setup.ts` — test bootstrap flow

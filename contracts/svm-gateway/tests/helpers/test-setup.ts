@@ -1,7 +1,11 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { UniversalGateway } from "../../target/types/universal_gateway";
-import { PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
+import {
+    PublicKey,
+    Keypair,
+    SystemProgram,
+} from "@solana/web3.js";
 import { createMockUSDT, createMockUSDC } from "./mockSpl";
 import * as sharedState from "../shared-state";
 import { getTssEthAddress, TSS_CHAIN_ID } from "./tss";
@@ -9,6 +13,9 @@ import { setupPriceFeed } from "../setup-pricefeed";
 
 // Module-level promise to ensure setup runs only once per process
 let setupPromise: Promise<void> | null = null;
+const UPGRADEABLE_LOADER_PROGRAM_ID = new PublicKey(
+    "BPFLoaderUpgradeab1e11111111111111111111111"
+);
 
 /**
  * Ensures test setup is complete. Idempotent - runs exactly once per process.
@@ -113,6 +120,10 @@ export async function ensureTestSetup(): Promise<void> {
             // Use existing price feed from config
             sharedState.setMockPriceFeed(configAccount.pythPriceFeed);
         } catch {
+            const [programData] = PublicKey.findProgramAddressSync(
+                [program.programId.toBuffer()],
+                UPGRADEABLE_LOADER_PROGRAM_ID
+            );
             // Initialize with mock-pyth price feed
             await program.methods
                 .initialize(
@@ -123,7 +134,14 @@ export async function ensureTestSetup(): Promise<void> {
                     new anchor.BN(1_000_000_000),
                     mockPriceFeed
                 )
-                .accountsPartial({ admin: admin.publicKey })
+                .accountsPartial({
+                    config: configPda,
+                    vault: vaultPda,
+                    program: program.programId,
+                    programData,
+                    admin: admin.publicKey,
+                    systemProgram: SystemProgram.programId,
+                })
                 .signers([admin])
                 .rpc();
             configAccount = await program.account.config.fetch(configPda);

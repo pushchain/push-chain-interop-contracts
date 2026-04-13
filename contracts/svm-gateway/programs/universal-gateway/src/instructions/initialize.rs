@@ -20,7 +20,19 @@ pub struct Initialize<'info> {
     )]
     pub vault: UncheckedAccount<'info>,
 
-    #[account(mut)]
+    pub program: Program<'info, crate::program::UniversalGateway>,
+
+    #[account(
+        constraint = program.programdata_address()? == Some(program_data.key())
+            @ crate::errors::GatewayError::Unauthorized
+    )]
+    pub program_data: Account<'info, ProgramData>,
+
+    #[account(
+        mut,
+        constraint = program_data.upgrade_authority_address == Some(admin.key())
+            @ crate::errors::GatewayError::Unauthorized
+    )]
     pub admin: Signer<'info>,
 
     pub system_program: Program<'info, System>,

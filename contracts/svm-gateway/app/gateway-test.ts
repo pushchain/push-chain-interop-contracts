@@ -51,6 +51,9 @@ const programIdStr =
 const PROGRAM_ID = new PublicKey(
   programIdStr
 );
+const UPGRADEABLE_LOADER_PROGRAM_ID = new PublicKey(
+  "BPFLoaderUpgradeab1e11111111111111111111111"
+);
 const CONFIG_SEED = "config";
 const VAULT_SEED = "vault";
 const EXECUTED_SUB_TX_SEED = "executed_sub_tx";
@@ -446,6 +449,10 @@ async function run() {
   console.log("1. Initializing Gateway...");
   const configAccount = await connection.getAccountInfo(configPda);
   if (!configAccount) {
+    const [programData] = PublicKey.findProgramAddressSync(
+      [program.programId.toBuffer()],
+      UPGRADEABLE_LOADER_PROGRAM_ID
+    );
     const tx = await program.methods
       .initialize(
         admin, // admin
@@ -458,6 +465,8 @@ async function run() {
       .accountsPartial({
         config: configPda,
         vault: vaultPda,
+        program: program.programId,
+        programData,
         admin: admin,
         systemProgram: SystemProgram.programId,
       })
