@@ -47,6 +47,7 @@ The program uses PDAs for all protocol state. No external signers or owner keys 
 | `rescue_funds` | Outbound | TSS signature | Emergency release to any recipient (id=4) |
 | `initialize` | Admin | Upgrade authority signature | One-time program setup |
 | `set_*` | Admin | Admin/pauser signature | Config updates (TSS address, caps, pause) |
+| `propose_authorities` | Admin | Admin signature | Propose new admin and/or pauser (two-step handover) |
 | `accept_admin` | Admin | Pending admin signature | Accept a proposed admin handover |
 | `accept_pauser` | Admin | Pending pauser signature | Accept a proposed pauser handover |
 
