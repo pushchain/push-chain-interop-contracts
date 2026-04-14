@@ -53,17 +53,41 @@ Only the current admin can update TSS. The TSS address is stored in `TssPda` and
 
 ## Authority Rotation
 
-### Update admin and/or pauser
+### Propose admin and/or pauser
 
 ```bash
-npm run config:authority-set -- --new-admin <new-admin-pubkey>
-npm run config:authority-set -- --new-pauser <new-pauser-pubkey>
-npm run config:authority-set -- --new-admin <new-admin-pubkey> --new-pauser <new-pauser-pubkey>
+npm run config:authority-propose -- --new-admin <new-admin-pubkey>
+npm run config:authority-propose -- --new-pauser <new-pauser-pubkey>
+npm run config:authority-propose -- --new-admin <new-admin-pubkey> --new-pauser <new-pauser-pubkey>
 ```
 
-If admin is changed, `Config.admin` is updated immediately. `update_tss` authorization follows `Config.admin`.
+This only records a pending authority. The current admin and pauser remain active until the proposed authority accepts.
+Proposing the same role again overwrites the previous pending proposal.
 
-After rotating admin, update your operator signer/keypair used by CLI before running additional admin commands.
+### Accept pending admin
+
+```bash
+npm run config:authority-accept-admin -- --keypair <path-to-new-admin-keypair.json>
+```
+
+The proposed admin keypair is both the signer and the fee payer for this transaction.
+
+### Accept pending pauser
+
+```bash
+npm run config:authority-accept-pauser -- --keypair <path-to-new-pauser-keypair.json>
+```
+
+The proposed pauser keypair is both the signer and the fee payer for this transaction.
+
+After acceptance:
+- `Config.admin` or `Config.pauser` is updated
+- the corresponding pending field is cleared
+- the old authority immediately loses access
+
+After `accept_admin`, update the operator keypair used by the CLI before running any further admin commands. The default admin CLI path still reads `./upgrade-keypair.json`.
+
+Use `npm run config:show` to inspect current and pending authorities before and after acceptance.
 
 ---
 
@@ -196,6 +220,7 @@ npm run config:show
 
 Shows current values for:
 - Admin, pauser addresses
+- Pending admin, pending pauser addresses
 - USD caps
 - Pyth feed
 - Protocol fee

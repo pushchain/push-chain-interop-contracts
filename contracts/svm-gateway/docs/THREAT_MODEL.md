@@ -51,7 +51,9 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 | Authority | Protected Surface |
 |---|---|
-| `Config.admin` | all `set_*` admin setters, `set_authorities`, `set_protocol_fee`, `init_tss`, `update_tss` |
+| `Config.admin` | all `set_*` admin setters, `propose_authorities`, `set_protocol_fee`, `init_tss`, `update_tss` |
+| `Config.pending_admin` | `accept_admin` |
+| `Config.pending_pauser` | `accept_pauser` |
 | `Config.pauser` or `Config.admin` | `pause`, `unpause` |
 | TSS signature (`TssPda.tss_eth_address`) | `finalize_universal_tx`, `revert_universal_tx`, `rescue_funds` |
 | Public | `send_universal_tx` |
@@ -77,38 +79,42 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Control: separate pauser can stop user flows.  
    Residual: most setters are immediate (no timelock).
 
-3. **Outbound replay (`sub_tx_id`)**  
+3. **Authority handover typo / wrong recipient key**  
+   Risk: one-step transfer can permanently assign control to an unusable pubkey.  
+   Control: authority changes are proposal + acceptance; current authority remains active until the proposed key accepts.
+
+4. **Outbound replay (`sub_tx_id`)**  
    Risk: duplicate release for same outbound request.  
    Control: `ExecutedSubTx` PDA is created with `init`; reuse fails.
 
-4. **Message tampering by UV**  
+5. **Message tampering by UV**  
    Risk: UV mutates recipient/amount/accounts/gas fields.  
    Control: program reconstructs message hash and verifies recovered TSS address.
 
-5. **Execute account privilege escalation**  
+6. **Execute account privilege escalation**  
    Risk: injected signer or mismatched account list in `remaining_accounts`.  
    Control: signer entries rejected; account metas validated against signed payload.
 
-6. **Oracle account substitution / staleness**  
+7. **Oracle account substitution / staleness**  
    Risk: bad price used for inbound gas-route caps.  
    Control: `price_update.key() == config.pyth_price_feed` + feed-id check + positive price + staleness check (`get_price_no_older_than`) + confidence threshold (`config.pyth_confidence_threshold`).  
    Residual: max-age is a code constant and should be tuned per deployment policy.
 
-7. **Inbound SPL account spoofing**  
+8. **Inbound SPL account spoofing**  
    Risk: user supplies fake source/destination token accounts.  
    Control: owner and mint checks on both `user_token_account` and `gateway_token_account`.
 
-8. **Fee vault depletion**  
+9. **Fee vault depletion**  
    Risk: revert/rescue fail due to reimbursement shortfall.  
    Control: reimbursement checks available lamports above rent and fails safely (`InsufficientFeePool`).
 
-9. **Pause griefing**  
+10. **Pause griefing**  
    Risk: pauser halts flows.  
    Control: admin can unpause directly; keep admin/pauser as separate keys.
 
-10. **Wrong `token_rate_limit` account passed**  
-    Risk: bypass token caps using another token's state account.  
-    Control: account must be program-owned `TokenRateLimit` and internal `token_mint` must match expected mint.
+11. **Wrong `token_rate_limit` account passed**  
+   Risk: bypass token caps using another token's state account.  
+   Control: account must be program-owned `TokenRateLimit` and internal `token_mint` must match expected mint.
 
 ---
 

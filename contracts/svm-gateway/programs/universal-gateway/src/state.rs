@@ -76,12 +76,14 @@ pub struct Config {
     // Pyth oracle configuration
     pub pyth_price_feed: Pubkey,        // Pyth SOL/USD price feed
     pub pyth_confidence_threshold: u64, // Confidence threshold for price validation
+    pub pending_admin: Pubkey,
+    pub pending_pauser: Pubkey,
 }
 
 impl Config {
     // discriminator + fields + padding
-    // 8 + 32 + 32 + 32 + 16 + 16 + 1 + 1 + 1 + 32 + 8 + 100
-    pub const LEN: usize = 8 + 32 + 32 + 32 + 16 + 16 + 1 + 1 + 1 + 32 + 8 + 100;
+    // 8 + 32 + 32 + 32 + 16 + 16 + 1 + 1 + 1 + 32 + 8 + 32 + 32 + 36
+    pub const LEN: usize = 8 + 32 + 32 + 32 + 16 + 16 + 1 + 1 + 1 + 32 + 8 + 32 + 32 + 36;
 }
 
 /// Fee vault: holds protocol fee lamports and the per-tx fee config.

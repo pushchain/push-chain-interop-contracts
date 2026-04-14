@@ -16,9 +16,9 @@ pub struct AdminAction<'info> {
 }
 
 /// Authority update action (available while paused).
-/// Updates admin and/or pauser in one instruction.
+/// Proposes admin and/or pauser updates. Proposed authorities must accept explicitly.
 #[derive(Accounts)]
-pub struct SetAuthoritiesAction<'info> {
+pub struct ProposeAuthoritiesAction<'info> {
     #[account(
         mut,
         seeds = [CONFIG_SEED],
@@ -28,6 +28,32 @@ pub struct SetAuthoritiesAction<'info> {
     pub config: Account<'info, Config>,
 
     pub admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct AcceptAdminAction<'info> {
+    #[account(
+        mut,
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        constraint = config.pending_admin == pending_admin.key() @ GatewayError::Unauthorized
+    )]
+    pub config: Account<'info, Config>,
+
+    pub pending_admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct AcceptPauserAction<'info> {
+    #[account(
+        mut,
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        constraint = config.pending_pauser == pending_pauser.key() @ GatewayError::Unauthorized
+    )]
+    pub config: Account<'info, Config>,
+
+    pub pending_pauser: Signer<'info>,
 }
 
 #[derive(Accounts)]
@@ -53,8 +79,8 @@ pub fn unpause(ctx: Context<PauseAction>) -> Result<()> {
     Ok(())
 }
 
-pub fn set_authorities(
-    ctx: Context<SetAuthoritiesAction>,
+pub fn propose_authorities(
+    ctx: Context<ProposeAuthoritiesAction>,
     new_admin: Option<Pubkey>,
     new_pauser: Option<Pubkey>,
 ) -> Result<()> {
@@ -67,14 +93,28 @@ pub fn set_authorities(
 
     if let Some(next) = new_admin {
         require!(next != Pubkey::default(), GatewayError::ZeroAddress);
-        config.admin = next;
+        config.pending_admin = next;
     }
 
     if let Some(next) = new_pauser {
         require!(next != Pubkey::default(), GatewayError::ZeroAddress);
-        config.pauser = next;
+        config.pending_pauser = next;
     }
 
+    Ok(())
+}
+
+pub fn accept_admin(ctx: Context<AcceptAdminAction>) -> Result<()> {
+    let config = &mut ctx.accounts.config;
+    config.admin = ctx.accounts.pending_admin.key();
+    config.pending_admin = Pubkey::default();
+    Ok(())
+}
+
+pub fn accept_pauser(ctx: Context<AcceptPauserAction>) -> Result<()> {
+    let config = &mut ctx.accounts.config;
+    config.pauser = ctx.accounts.pending_pauser.key();
+    config.pending_pauser = Pubkey::default();
     Ok(())
 }
 
@@ -122,7 +162,9 @@ pub fn set_protocol_fee(ctx: Context<FeeVaultAdminAction>, fee_lamports: u64) ->
     // Keep bump persisted so seeded constraints continue to validate consistently.
     ctx.accounts.fee_vault.bump = ctx.bumps.fee_vault;
     ctx.accounts.fee_vault.protocol_fee_lamports = fee_lamports;
-    emit!(ProtocolFeeUpdated { new_fee_lamports: fee_lamports });
+    emit!(ProtocolFeeUpdated {
+        new_fee_lamports: fee_lamports
+    });
     Ok(())
 }
 

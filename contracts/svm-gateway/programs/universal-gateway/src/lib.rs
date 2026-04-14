@@ -63,13 +63,23 @@ pub mod universal_gateway {
         instructions::admin::unpause(ctx)
     }
 
-    /// @notice Update admin and/or pauser authority.
-    pub fn set_authorities(
-        ctx: Context<SetAuthoritiesAction>,
+    /// @notice Propose new admin and/or pauser authority.
+    pub fn propose_authorities(
+        ctx: Context<ProposeAuthoritiesAction>,
         new_admin: Option<Pubkey>,
         new_pauser: Option<Pubkey>,
     ) -> Result<()> {
-        instructions::admin::set_authorities(ctx, new_admin, new_pauser)
+        instructions::admin::propose_authorities(ctx, new_admin, new_pauser)
+    }
+
+    /// @notice Accept pending admin authority.
+    pub fn accept_admin(ctx: Context<AcceptAdminAction>) -> Result<()> {
+        instructions::admin::accept_admin(ctx)
+    }
+
+    /// @notice Accept pending pauser authority.
+    pub fn accept_pauser(ctx: Context<AcceptPauserAction>) -> Result<()> {
+        instructions::admin::accept_pauser(ctx)
     }
 
     /// @notice Set USD caps
@@ -249,7 +259,8 @@ pub struct GetSolPrice<'info> {
 
 // Re-export account structs and types
 pub use instructions::admin::{
-    AdminAction, FeeVaultAdminAction, PauseAction, RateLimitConfigAction, SetAuthoritiesAction, TokenRateLimitAction,
+    AdminAction, FeeVaultAdminAction, PauseAction, ProposeAuthoritiesAction, RateLimitConfigAction,
+    TokenRateLimitAction,
 };
 pub use instructions::deposit::SendUniversalTx;
 pub use instructions::execute::FinalizeUniversalTx;

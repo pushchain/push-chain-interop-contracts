@@ -24,12 +24,12 @@ const RATE_LIMIT_CONFIG_SEED = "rate_limit_config";
 const RATE_LIMIT_SEED = "rate_limit";
 
 // Load keypairs (same style as token-cli.ts)
-const adminKeypair = Keypair.fromSecretKey(
-    Uint8Array.from(JSON.parse(fs.readFileSync("./upgrade-keypair.json", "utf8")))
-);
-const pauserKeypair = Keypair.fromSecretKey(
-    Uint8Array.from(JSON.parse(fs.readFileSync("./upgrade-keypair.json", "utf8")))
-);
+function loadKeypair(path: string): Keypair {
+    return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(path, "utf8"))));
+}
+
+const adminKeypair = loadKeypair("./upgrade-keypair.json");
+const pauserKeypair = loadKeypair("./upgrade-keypair.json");
 
 // Set up connection and provider
 const connection = new anchor.web3.Connection("https://api.devnet.solana.com", "confirmed");
@@ -42,6 +42,13 @@ anchor.setProvider(adminProvider);
 // Load IDL
 const idl = JSON.parse(fs.readFileSync("./target/idl/universal_gateway.json", "utf8"));
 const program = new Program(idl as UniversalGateway, adminProvider);
+
+function createProgramForKeypair(keypair: Keypair): Program<UniversalGateway> {
+    const provider = new anchor.AnchorProvider(connection, new anchor.Wallet(keypair), {
+        commitment: "confirmed",
+    });
+    return new Program(idl as UniversalGateway, provider);
+}
 
 // Helper: Derive PDAs
 function deriveConfigPda(): PublicKey {
@@ -255,8 +262,8 @@ program_cli
 // ============================================
 
 program_cli
-    .command("authority:set")
-    .description("Update admin and/or pauser authority")
+    .command("authority:propose")
+    .description("Propose new admin and/or pauser authority")
     .option("--new-admin <pubkey>", "New admin public key")
     .option("--new-pauser <pubkey>", "New pauser public key")
     .action(async (options) => {
@@ -265,7 +272,7 @@ program_cli
                 throw new Error("Provide at least one of --new-admin or --new-pauser");
             }
 
-            console.log("=== SETTING AUTHORITIES ===\n");
+            console.log("=== PROPOSING AUTHORITIES ===\n");
 
             const newAdmin = options.newAdmin ? new PublicKey(options.newAdmin) : null;
             const newPauser = options.newPauser ? new PublicKey(options.newPauser) : null;
@@ -273,16 +280,16 @@ program_cli
 
             console.log(`Current signer (admin): ${adminKeypair.publicKey.toBase58()}`);
             if (newAdmin) {
-                console.log(`New admin: ${newAdmin.toBase58()}`);
+                console.log(`Proposed admin: ${newAdmin.toBase58()}`);
             }
             if (newPauser) {
-                console.log(`New pauser: ${newPauser.toBase58()}`);
+                console.log(`Proposed pauser: ${newPauser.toBase58()}`);
             }
             console.log(`Config PDA: ${configPda.toBase58()}`);
             console.log();
 
             const tx = await program.methods
-                .setAuthorities(newAdmin, newPauser)
+                .proposeAuthorities(newAdmin, newPauser)
                 .accountsPartial({
                     config: configPda,
                     admin: adminKeypair.publicKey,
@@ -290,10 +297,78 @@ program_cli
                 .signers([adminKeypair])
                 .rpc();
 
-            console.log(`✅ Authorities updated successfully!`);
+            console.log(`✅ Authorities proposed successfully!`);
             console.log(`   Transaction: ${tx}\n`);
         } catch (error: any) {
-            console.error(`❌ Error setting authorities: ${error.message}`);
+            console.error(`❌ Error proposing authorities: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program_cli
+    .command("authority:accept-admin")
+    .description("Accept pending admin authority using the proposed admin keypair")
+    .requiredOption("--keypair <path>", "Path to the proposed admin keypair JSON")
+    .action(async (options) => {
+        try {
+            console.log("=== ACCEPTING ADMIN AUTHORITY ===\n");
+
+            const pendingAdminKeypair = loadKeypair(options.keypair);
+            const pendingAdminProgram = createProgramForKeypair(pendingAdminKeypair);
+            const configPda = deriveConfigPda();
+
+            console.log(`Pending admin signer: ${pendingAdminKeypair.publicKey.toBase58()}`);
+            console.log(`Fee payer: ${pendingAdminKeypair.publicKey.toBase58()}`);
+            console.log(`Config PDA: ${configPda.toBase58()}`);
+            console.log();
+
+            const tx = await pendingAdminProgram.methods
+                .acceptAdmin()
+                .accountsPartial({
+                    config: configPda,
+                    pendingAdmin: pendingAdminKeypair.publicKey,
+                })
+                .signers([pendingAdminKeypair])
+                .rpc();
+
+            console.log(`✅ Admin authority accepted successfully!`);
+            console.log(`   Transaction: ${tx}\n`);
+        } catch (error: any) {
+            console.error(`❌ Error accepting admin authority: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program_cli
+    .command("authority:accept-pauser")
+    .description("Accept pending pauser authority using the proposed pauser keypair")
+    .requiredOption("--keypair <path>", "Path to the proposed pauser keypair JSON")
+    .action(async (options) => {
+        try {
+            console.log("=== ACCEPTING PAUSER AUTHORITY ===\n");
+
+            const pendingPauserKeypair = loadKeypair(options.keypair);
+            const pendingPauserProgram = createProgramForKeypair(pendingPauserKeypair);
+            const configPda = deriveConfigPda();
+
+            console.log(`Pending pauser signer: ${pendingPauserKeypair.publicKey.toBase58()}`);
+            console.log(`Fee payer: ${pendingPauserKeypair.publicKey.toBase58()}`);
+            console.log(`Config PDA: ${configPda.toBase58()}`);
+            console.log();
+
+            const tx = await pendingPauserProgram.methods
+                .acceptPauser()
+                .accountsPartial({
+                    config: configPda,
+                    pendingPauser: pendingPauserKeypair.publicKey,
+                })
+                .signers([pendingPauserKeypair])
+                .rpc();
+
+            console.log(`✅ Pauser authority accepted successfully!`);
+            console.log(`   Transaction: ${tx}\n`);
+        } catch (error: any) {
+            console.error(`❌ Error accepting pauser authority: ${error.message}`);
             process.exit(1);
         }
     });

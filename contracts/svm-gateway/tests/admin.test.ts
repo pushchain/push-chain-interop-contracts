@@ -93,14 +93,16 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             expect(config.admin.toString()).to.equal(admin.publicKey.toString());
             expect(config.tssAddress.toString()).to.equal(tssAddress.publicKey.toString());
             expect(config.pauser.toString()).to.equal(pauser.publicKey.toString());
+            expect(config.pendingAdmin.toString()).to.equal(PublicKey.default.toString());
+            expect(config.pendingPauser.toString()).to.equal(PublicKey.default.toString());
             expect(config.paused).to.be.false;
 
         });
 
         it("Rotates admin authority", async () => {
-            // Rotate admin -> newAdmin
+            // Propose admin -> newAdmin
             await program.methods
-                .setAuthorities(newAdmin.publicKey, null)
+                .proposeAuthorities(newAdmin.publicKey, null)
                 .accountsPartial({
                     config: configPda,
                     admin: admin.publicKey,
@@ -109,7 +111,36 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 .rpc();
 
             let config = await program.account.config.fetch(configPda);
+            expect(config.admin.toString()).to.equal(admin.publicKey.toString());
+            expect(config.pendingAdmin.toString()).to.equal(newAdmin.publicKey.toString());
+
+            try {
+                await program.methods
+                    .acceptAdmin()
+                    .accountsPartial({
+                        config: configPda,
+                        pendingAdmin: unauthorizedUser.publicKey,
+                    })
+                    .signers([unauthorizedUser])
+                    .rpc();
+                expect.fail("Only the proposed admin should be able to accept");
+            } catch (error: any) {
+                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                expect(errorCode).to.equal("Unauthorized");
+            }
+
+            await program.methods
+                .acceptAdmin()
+                .accountsPartial({
+                    config: configPda,
+                    pendingAdmin: newAdmin.publicKey,
+                })
+                .signers([newAdmin])
+                .rpc();
+
+            config = await program.account.config.fetch(configPda);
             expect(config.admin.toString()).to.equal(newAdmin.publicKey.toString());
+            expect(config.pendingAdmin.toString()).to.equal(PublicKey.default.toString());
 
             // Old admin should now fail admin-only action
             try {
@@ -129,7 +160,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
 
             // Rotate back to original admin to keep suite stable
             await program.methods
-                .setAuthorities(admin.publicKey, null)
+                .proposeAuthorities(admin.publicKey, null)
                 .accountsPartial({
                     config: configPda,
                     admin: newAdmin.publicKey,
@@ -138,12 +169,26 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 .rpc();
 
             config = await program.account.config.fetch(configPda);
+            expect(config.admin.toString()).to.equal(newAdmin.publicKey.toString());
+            expect(config.pendingAdmin.toString()).to.equal(admin.publicKey.toString());
+
+            await program.methods
+                .acceptAdmin()
+                .accountsPartial({
+                    config: configPda,
+                    pendingAdmin: admin.publicKey,
+                })
+                .signers([admin])
+                .rpc();
+
+            config = await program.account.config.fetch(configPda);
             expect(config.admin.toString()).to.equal(admin.publicKey.toString());
+            expect(config.pendingAdmin.toString()).to.equal(PublicKey.default.toString());
         });
 
         it("Updates pauser authority", async () => {
             await program.methods
-                .setAuthorities(null, newPauser.publicKey)
+                .proposeAuthorities(null, newPauser.publicKey)
                 .accountsPartial({
                     config: configPda,
                     admin: admin.publicKey,
@@ -152,7 +197,21 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 .rpc();
 
             let config = await program.account.config.fetch(configPda);
+            expect(config.pauser.toString()).to.equal(pauser.publicKey.toString());
+            expect(config.pendingPauser.toString()).to.equal(newPauser.publicKey.toString());
+
+            await program.methods
+                .acceptPauser()
+                .accountsPartial({
+                    config: configPda,
+                    pendingPauser: newPauser.publicKey,
+                })
+                .signers([newPauser])
+                .rpc();
+
+            config = await program.account.config.fetch(configPda);
             expect(config.pauser.toString()).to.equal(newPauser.publicKey.toString());
+            expect(config.pendingPauser.toString()).to.equal(PublicKey.default.toString());
 
             // New pauser can pause/unpause
             await program.methods
@@ -173,9 +232,24 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 .signers([newPauser])
                 .rpc();
 
+            try {
+                await program.methods
+                    .pause()
+                    .accountsPartial({
+                        pauser: pauser.publicKey,
+                        config: configPda,
+                    })
+                    .signers([pauser])
+                    .rpc();
+                expect.fail("Old pauser should not have access after acceptance");
+            } catch (error: any) {
+                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                expect(errorCode).to.equal("Unauthorized");
+            }
+
             // Restore original pauser for remaining tests
             await program.methods
-                .setAuthorities(null, pauser.publicKey)
+                .proposeAuthorities(null, pauser.publicKey)
                 .accountsPartial({
                     config: configPda,
                     admin: admin.publicKey,
@@ -184,7 +258,21 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 .rpc();
 
             config = await program.account.config.fetch(configPda);
+            expect(config.pauser.toString()).to.equal(newPauser.publicKey.toString());
+            expect(config.pendingPauser.toString()).to.equal(pauser.publicKey.toString());
+
+            await program.methods
+                .acceptPauser()
+                .accountsPartial({
+                    config: configPda,
+                    pendingPauser: pauser.publicKey,
+                })
+                .signers([pauser])
+                .rpc();
+
+            config = await program.account.config.fetch(configPda);
             expect(config.pauser.toString()).to.equal(pauser.publicKey.toString());
+            expect(config.pendingPauser.toString()).to.equal(PublicKey.default.toString());
         });
 
         it("Updates USD caps", async () => {
@@ -207,34 +295,34 @@ describe("Universal Gateway - Admin Functions Tests", () => {
 
         });
 
-        it("Rejects set_authorities from non-admin", async () => {
+        it("Rejects propose_authorities from non-admin", async () => {
             try {
                 await program.methods
-                    .setAuthorities(unauthorizedUser.publicKey, null)
+                    .proposeAuthorities(unauthorizedUser.publicKey, null)
                     .accountsPartial({
                         config: configPda,
                         admin: unauthorizedUser.publicKey,
                     })
                     .signers([unauthorizedUser])
                     .rpc();
-                expect.fail("Unauthorized set_authorities should have failed");
+                expect.fail("Unauthorized propose_authorities should have failed");
             } catch (error: any) {
                 const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
                 expect(errorCode).to.equal("Unauthorized");
             }
         });
 
-        it("Rejects set_authorities with both args null", async () => {
+        it("Rejects propose_authorities with both args null", async () => {
             try {
                 await program.methods
-                    .setAuthorities(null, null)
+                    .proposeAuthorities(null, null)
                     .accountsPartial({
                         config: configPda,
                         admin: admin.publicKey,
                     })
                     .signers([admin])
                     .rpc();
-                expect.fail("set_authorities with both null should have failed");
+                expect.fail("propose_authorities with both null should have failed");
             } catch (error: any) {
                 const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
                 expect(errorCode).to.equal("InvalidInput");
