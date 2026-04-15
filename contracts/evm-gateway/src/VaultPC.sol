@@ -84,7 +84,7 @@ contract VaultPC is
         (bool success,) = payable(to).call{ value: amount }("");
         if (!success) revert Errors.WithdrawFailed();
 
-        emit FeesWithdrawn(msg.sender, address(0), amount);
+        emit FeesWithdrawn(msg.sender, to, address(0), amount);
     }
 
     /// @inheritdoc IVaultPC
@@ -103,7 +103,7 @@ contract VaultPC is
         }
 
         IERC20(token).safeTransfer(to, amount);
-        emit FeesWithdrawn(msg.sender, token, amount);
+        emit FeesWithdrawn(msg.sender, to, token, amount);
     }
 
     /// @notice Allow contract to receive native PC tokens

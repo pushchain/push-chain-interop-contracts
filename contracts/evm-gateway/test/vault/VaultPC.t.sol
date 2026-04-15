@@ -27,7 +27,7 @@ contract VaultPCTest is Test {
 
     // Events
     event GatewayPCUpdated(address indexed oldGatewayPC, address indexed newGatewayPC);
-    event FeesWithdrawn(address indexed caller, address indexed token, uint256 amount);
+    event FeesWithdrawn(address indexed caller, address indexed to, address indexed token, uint256 amount);
 
     function setUp() public {
         admin = makeAddr("admin");
@@ -214,8 +214,8 @@ contract VaultPCTest is Test {
         uint256 amount = 1000e18;
 
         vm.prank(fundManager);
-        vm.expectEmit(true, true, false, true);
-        emit FeesWithdrawn(fundManager, address(prc20Token), amount);
+        vm.expectEmit(true, true, true, true);
+        emit FeesWithdrawn(fundManager, user1, address(prc20Token), amount);
         vault.withdrawToken(address(prc20Token), user1, amount);
     }
 
@@ -300,8 +300,8 @@ contract VaultPCTest is Test {
         vm.deal(address(vault), amount);
 
         vm.prank(fundManager);
-        vm.expectEmit(true, true, false, true);
-        emit FeesWithdrawn(fundManager, address(0), amount);
+        vm.expectEmit(true, true, true, true);
+        emit FeesWithdrawn(fundManager, user1, address(0), amount);
         vault.withdraw(user1, amount);
     }
 

@@ -12,9 +12,10 @@ interface IVaultPC {
 
     /// @notice              Emitted when fees are withdrawn from the vault
     /// @param caller        The address that initiated the withdrawal (MANAGER_ROLE)
+    /// @param to            The recipient address that received the withdrawn funds
     /// @param token         The PRC20 token address (address(0) for native PC)
     /// @param amount        The amount withdrawn
-    event FeesWithdrawn(address indexed caller, address indexed token, uint256 amount);
+    event FeesWithdrawn(address indexed caller, address indexed to, address indexed token, uint256 amount);
 
     // =========================
     //      VPC_2: WITHDRAW
