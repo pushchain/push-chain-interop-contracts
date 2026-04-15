@@ -887,10 +887,6 @@ contract UniversalGateway is
     /// @return fee             The fee tier of the pool
     function _findV3PoolWithNative(address tokenIn) internal view returns (IUniswapV3Pool pool, uint24 fee) {
         if (tokenIn == address(0) || WETH == address(0)) revert Errors.ZeroAddress();
-        if (tokenIn == WETH) {
-            // Caller should handle the WETH fast-path; we return zeroed pool/fee here.
-            return (IUniswapV3Pool(address(0)), 0);
-        }
 
         // Try fee tiers in the configured order
         for (uint256 i = 0; i < v3FeeOrder.length; i++) {
