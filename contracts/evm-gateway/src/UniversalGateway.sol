@@ -213,24 +213,6 @@ contract UniversalGateway is
         emit VaultUpdated(old, newVault);
     }
 
-    /// @inheritdoc AccessControlUpgradeable
-    /// @dev TSS_ROLE and VAULT_ROLE must be managed exclusively through setTSS() and setVault()
-    ///      to keep TSS_ADDRESS/VAULT state variables in sync. Direct grantRole for these roles
-    ///      reverts (audit finding F-2026-15642).
-    function grantRole(bytes32 role, address account) public override onlyRole(getRoleAdmin(role)) {
-        if (role == TSS_ROLE || role == VAULT_ROLE) revert Errors.ManagedRole(role);
-        super.grantRole(role, account);
-    }
-
-    /// @inheritdoc AccessControlUpgradeable
-    /// @dev TSS_ROLE and VAULT_ROLE must be managed exclusively through setTSS() and setVault()
-    ///      to keep TSS_ADDRESS/VAULT state variables in sync. Direct revokeRole for these roles
-    ///      reverts (audit finding F-2026-15642).
-    function revokeRole(bytes32 role, address account) public override onlyRole(getRoleAdmin(role)) {
-        if (role == TSS_ROLE || role == VAULT_ROLE) revert Errors.ManagedRole(role);
-        super.revokeRole(role, account);
-    }
-
     /// @notice                Allows the admin to set the USD cap ranges
     /// @param minCapUsd       Minimum USD cap
     /// @param maxCapUsd       Maximum USD cap

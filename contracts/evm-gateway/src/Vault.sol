@@ -103,22 +103,6 @@ contract Vault is
         emit TSSUpdated(old, newTss);
     }
 
-    /// @inheritdoc AccessControlUpgradeable
-    /// @dev TSS_ROLE must be managed exclusively through setTSS() to keep TSS_ADDRESS in sync.
-    ///      Direct grantRole for TSS_ROLE reverts (audit finding F-2026-15642).
-    function grantRole(bytes32 role, address account) public override onlyRole(getRoleAdmin(role)) {
-        if (role == TSS_ROLE) revert Errors.ManagedRole(role);
-        super.grantRole(role, account);
-    }
-
-    /// @inheritdoc AccessControlUpgradeable
-    /// @dev TSS_ROLE must be managed exclusively through setTSS() to keep TSS_ADDRESS in sync.
-    ///      Direct revokeRole for TSS_ROLE reverts (audit finding F-2026-15642).
-    function revokeRole(bytes32 role, address account) public override onlyRole(getRoleAdmin(role)) {
-        if (role == TSS_ROLE) revert Errors.ManagedRole(role);
-        super.revokeRole(role, account);
-    }
-
     /// @notice                Updates the CEAFactory address.
     /// @param newCEAFactory   New CEAFactory address.
     function setCEAFactory(address newCEAFactory) external onlyRole(DEFAULT_ADMIN_ROLE) {
