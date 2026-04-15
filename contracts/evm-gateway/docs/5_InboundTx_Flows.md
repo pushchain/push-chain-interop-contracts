@@ -80,7 +80,7 @@ hasNativeValue := nativeValue > 0   // msg.value or swapped ETH from token-gas p
 
 | System            | Applies To                   | Mechanism                                                                        |
 | ----------------- | ---------------------------- | -------------------------------------------------------------------------------- |
-| USD Caps (per-tx) | `GAS`, `GAS_AND_PAYLOAD`     | `_checkUSDCaps`: min/max USD per tx via Chainlink ETH/USD feed (line 718-722)    |
+| USD Caps (per-tx) | `GAS`, `GAS_AND_PAYLOAD`     | `checkUSDCaps`: min/max USD per tx via Chainlink ETH/USD feed (line 718-722)    |
 | Block USD Cap     | `GAS`, `GAS_AND_PAYLOAD`     | `_checkBlockUSDCap`: per-block rolling USD budget; resets each block (line 745)  |
 | Epoch Rate Limit  | `FUNDS`, `FUNDS_AND_PAYLOAD` | `_consumeRateLimit`: per-token quota; resets after `epochDurationSec` (line 770) |
 
@@ -92,7 +92,7 @@ USD caps apply **only when `nativeValue > 0`**. A `GAS_AND_PAYLOAD` tx with `msg
 | Function                                     | Caller           | CEA blocked? | Key extra step                              |
 | -------------------------------------------- | ---------------- | ------------ | ------------------------------------------- |
 | `sendUniversalTx(UniversalTxRequest)`        | Any EOA/contract | Yes          | None                                        |
-| `sendUniversalTx(UniversalTokenTxRequest)`   | Any EOA/contract | Yes          | Swap `gasToken` → native via `swapToNative` |
+| `sendUniversalTx(UniversalTokenTxRequest)`   | Any EOA/contract | Yes          | Swap `gasToken` → native via `_swapToNative` |
 | `sendUniversalTxFromCEA(UniversalTxRequest)` | CEA only         | N/A          | CEA identity check + anti-spoof check       |
 
 CEAs are blocked from calling `sendUniversalTx` directly (reverts `InvalidInput`,
@@ -146,7 +146,7 @@ sequenceDiagram
     BOB->>GW: sendUniversalTx{value: gasAmount + INBOUND_FEE}(req)
     GW->>GW: _fetchTxType → GAS
     GW->>GW: _collectProtocolFee → forward INBOUND_FEE to TSS
-    GW->>GW: _checkUSDCaps(gasAmount)
+    GW->>GW: checkUSDCaps(gasAmount)
     GW->>GW: _checkBlockUSDCap(gasAmount)
     GW->>TSS: forward gasAmount ETH
     GW-->>PC: emit UniversalTx(sender=BOB, recipient=0, txType=GAS)
@@ -164,7 +164,7 @@ first, then processes it identically to 2.1.
 `amountOutMinETH=Y` (slippage bound), `deadline=T`. The `amount` and `token` fields are 0/empty
 for a pure gas top-up.
 
-**Swap path** (`swapToNative`, `UniversalGateway.sol:802-853`):
+**Swap path** (`_swapToNative`, `UniversalGateway.sol:802-853`):
 1. If `gasToken == WETH`: pull WETH from BOB, unwrap to ETH (fast-path).
 2. Otherwise: scan `v3FeeOrder` fee tiers for a `gasToken/WETH` pool, pull `gasToken` from BOB,
    call `uniV3Router.exactInputSingle`, unwrap WETH to ETH.
@@ -190,7 +190,7 @@ sequenceDiagram
     BOB->>GW: sendUniversalTx(UniversalTokenTxRequest{gasToken=USDC, gasAmount=X})
     GW->>V3: safeTransferFrom(BOB, gateway, X USDC)
     GW->>V3: exactInputSingle(USDC→WETH) + WETH.withdraw → ethOut
-    GW->>GW: _checkUSDCaps(ethOut), _checkBlockUSDCap(ethOut)
+    GW->>GW: checkUSDCaps(ethOut), _checkBlockUSDCap(ethOut)
     GW->>TSS: forward ethOut ETH
     GW-->>PC: emit UniversalTx(sender=BOB, recipient=0, txType=GAS)
     Note over PC: Mints gas to BOB's UEA
@@ -369,7 +369,7 @@ sequenceDiagram
 
     BOB->>GW: sendUniversalTx{value: gasTopUp}(req{token=USDC, amount=1000e6})
     GW->>GW: _fetchTxType → FUNDS
-    GW->>GW: _checkUSDCaps(gasTopUp), _checkBlockUSDCap(gasTopUp)
+    GW->>GW: checkUSDCaps(gasTopUp), _checkBlockUSDCap(gasTopUp)
     GW->>TSS: forward gasTopUp ETH (gas leg)
     GW-->>PC: emit UniversalTx(txType=GAS, amount=gasTopUp) [gas leg]
     GW->>GW: _consumeRateLimit(USDC, 1000e6)
@@ -384,7 +384,7 @@ sequenceDiagram
 ### 4.4 ERC20 FUNDS via Token Swap
 
 Uses `sendUniversalTx(UniversalTokenTxRequest)`. The `gasToken` is swapped to native ETH
-(`ethOut`) via `swapToNative`. After protocol fee extraction, the remaining `nativeValue`
+(`ethOut`) via `_swapToNative`. After protocol fee extraction, the remaining `nativeValue`
 becomes a gas top-up (Section 4.3 pattern). The ERC20 `token`/`amount` fields identify the
 funds being bridged.
 
@@ -474,7 +474,7 @@ sequenceDiagram
     GW->>GW: _fetchTxType → FUNDS_AND_PAYLOAD (Case 2.2)
     GW->>GW: _collectProtocolFee → forward INBOUND_FEE to TSS
     GW->>GW: gasAmount = 1.1 - 1.0 = 0.1 ETH (post-fee nativeValue = 1.1)
-    GW->>GW: _checkUSDCaps(0.1 ETH), _checkBlockUSDCap(0.1 ETH)
+    GW->>GW: checkUSDCaps(0.1 ETH), _checkBlockUSDCap(0.1 ETH)
     GW->>TSS: forward 0.1 ETH (gas leg)
     GW-->>PC: emit UniversalTx(txType=GAS, amount=0.1ETH) [gas leg]
     GW->>GW: _consumeRateLimit(address(0), 1ETH)
@@ -517,7 +517,7 @@ sequenceDiagram
     BOB->>GW: sendUniversalTx{value: 0.01ETH + INBOUND_FEE}(req{token=USDC, amount=500e6, payload=calldata})
     GW->>GW: _fetchTxType → FUNDS_AND_PAYLOAD (Case 2.3)
     GW->>GW: _collectProtocolFee → forward INBOUND_FEE to TSS
-    GW->>GW: _checkUSDCaps(0.01ETH), _checkBlockUSDCap(0.01ETH)
+    GW->>GW: checkUSDCaps(0.01ETH), _checkBlockUSDCap(0.01ETH)
     GW->>TSS: forward 0.01 ETH (gas leg)
     GW-->>PC: emit UniversalTx(txType=GAS, amount=0.01ETH) [gas leg]
     GW->>GW: _consumeRateLimit(USDC, 500e6)
@@ -643,7 +643,7 @@ If `l2SequencerFeed` is set, `getEthUsdPrice` also checks:
 This gates all GAS/GAS_AND_PAYLOAD routes on sequencer liveness. Prevents USD cap exploitation
 during sequencer downtime recovery.
 
-### 8.3 `swapToNative` (`UniversalGateway.sol:802-853`)
+### 8.3 `_swapToNative` (`UniversalGateway.sol:802-853`)
 
 | Step | Action                                                                            |
 | ---- | --------------------------------------------------------------------------------- |

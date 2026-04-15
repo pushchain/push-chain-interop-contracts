@@ -146,7 +146,7 @@ contract OracleTest is BaseTest {
     }
 
     // ============================================================
-    // 3) _checkUSDCaps: enforce $1-$10 inclusive using live price
+    // 3) checkUSDCaps: enforce $1-$10 inclusive using live price
     // ============================================================
     function test_checkUSDCaps_BoundsAndOffByOne() public {
         console.log("\n=== TEST: USD Caps & ETH Bounds ===");
@@ -192,16 +192,16 @@ contract OracleTest is BaseTest {
         console.log("Max quotes to: $%d.%02d", maxUsdVerify / 1e18, (maxUsdVerify % 1e18) / 1e16);
 
         // Test the safe boundaries
-        gateway._checkUSDCaps(adjustedMinEth);
+        gateway.checkUSDCaps(adjustedMinEth);
         console.log("Safe min boundary check passed");
-        gateway._checkUSDCaps(maxEth);
+        gateway.checkUSDCaps(maxEth);
         console.log("Max boundary check passed");
 
         // Below-min should revert (if minEth > 0; if it were 0, caps would be nonsensical)
         if (minEth > 0) {
             console.log("\nTesting below-minimum (should revert)...");
             vm.expectRevert(Errors.InvalidAmount.selector);
-            gateway._checkUSDCaps(minEth - 1);
+            gateway.checkUSDCaps(minEth - 1);
             console.log("Below-min correctly reverted");
         }
 
@@ -210,7 +210,7 @@ contract OracleTest is BaseTest {
         uint256 overMaxEth = (maxEth * 11) / 10; // 110% of max should definitely be over $10
         console.log("Testing ETH amount 110%% of max: %d wei", overMaxEth);
         vm.expectRevert(Errors.InvalidAmount.selector);
-        gateway._checkUSDCaps(overMaxEth);
+        gateway.checkUSDCaps(overMaxEth);
         console.log("Above-max correctly reverted");
 
         console.log("\nAll USD caps tests passed!");

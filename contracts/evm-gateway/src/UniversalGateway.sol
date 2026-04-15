@@ -23,7 +23,7 @@ pragma solidity 0.8.26;
  *            non-zero and swap-related constraints.
  *
  * @dev    Rate-Limit Checks:
- *         - Instant route (GAS / GAS_AND_PAYLOAD): _checkUSDCaps + _checkBlockUSDCap
+ *         - Instant route (GAS / GAS_AND_PAYLOAD): checkUSDCaps + _checkBlockUSDCap
  *         - Standard route (FUNDS / FUNDS_AND_PAYLOAD): _consumeRateLimit (per-token epoch)
  *
  * @dev    Chainlink Oracle is used for ETH/USD price feed.
@@ -328,7 +328,7 @@ contract UniversalGateway is
 
         // Swap token to native
         uint256 nativeValue =
-            swapToNative(reqToken.gasToken, reqToken.gasAmount, reqToken.amountOutMinETH, reqToken.deadline);
+            _swapToNative(reqToken.gasToken, reqToken.gasAmount, reqToken.amountOutMinETH, reqToken.deadline);
 
         // Build UniversalTxRequest from token request
         UniversalTxRequest memory req = UniversalTxRequest({
@@ -386,7 +386,7 @@ contract UniversalGateway is
         bool _fromCEA
     ) private {
         if (_gasAmount > 0) {
-            _checkUSDCaps(_gasAmount);
+            checkUSDCaps(_gasAmount);
             _checkBlockUSDCap(_gasAmount);
             _handleDeposits(address(0), _gasAmount);
         }
@@ -418,7 +418,7 @@ contract UniversalGateway is
                 tokenForFunds = address(0);
             }
             // Case 1.2: Token to bridge is ERC20 Token -> _req.token
-            // Post-fee nativeValue is routed as a gas top-up (e.g. from swapToNative or batched native).
+            // Post-fee nativeValue is routed as a gas top-up (e.g. from _swapToNative or batched native).
             // If nativeValue == 0 (no gas), only the ERC20 bridge proceeds.
             else {
                 if (nativeValue > 0) {
@@ -741,7 +741,7 @@ contract UniversalGateway is
     /// @dev                    Check if the amount is within the USD cap range.
     ///                         Cap ranges are defined in the initializer or updated by the admin.
     /// @param amount           Amount to check
-    function _checkUSDCaps(uint256 amount) public view {
+    function checkUSDCaps(uint256 amount) public view {
         uint256 usdValue = quoteEthAmountInUsd1e18(amount);
         if (usdValue < MIN_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
         if (usdValue > MAX_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
@@ -825,7 +825,7 @@ contract UniversalGateway is
     /// @param amountOutMinETH  Min acceptable native (ETH) out (slippage bound)
     /// @param deadline         Swap deadline
     /// @return ethOut          Native ETH received
-    function swapToNative(address tokenIn, uint256 amountIn, uint256 amountOutMinETH, uint256 deadline)
+    function _swapToNative(address tokenIn, uint256 amountIn, uint256 amountOutMinETH, uint256 deadline)
         internal
         returns (uint256 ethOut)
     {

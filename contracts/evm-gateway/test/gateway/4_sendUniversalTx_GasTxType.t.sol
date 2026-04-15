@@ -13,7 +13,7 @@ import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/trans
  * @notice Comprehensive tests for _sendTxWithGas (instant route) via sendUniversalTx
  * @dev Tests GAS and GAS_AND_PAYLOAD transaction types with focus on:
  *      - Validation rules (_validateUniversalTxWithGas)
- *      - Per-tx USD caps (_checkUSDCaps)
+ *      - Per-tx USD caps (checkUSDCaps)
  *      - Per-block USD caps (_checkBlockUSDCap)
  *      - Native forwarding to TSS
  *      - Event emission correctness

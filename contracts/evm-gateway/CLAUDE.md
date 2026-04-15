@@ -333,7 +333,7 @@ When testing Vault operations:
 
    **A. Instant Transactions (Low Block Confirmation)**
    - Applies to: `TX_TYPE.GAS` and `TX_TYPE.GAS_AND_PAYLOAD`
-   - Per-transaction USD caps: `MIN_CAP_UNIVERSAL_TX_USD` to `MAX_CAP_UNIVERSAL_TX_USD` (enforced via `_checkUSDCaps`)
+   - Per-transaction USD caps: `MIN_CAP_UNIVERSAL_TX_USD` to `MAX_CAP_UNIVERSAL_TX_USD` (enforced via `checkUSDCaps`)
    - Per-block USD budget: `BLOCK_USD_CAP` (enforced via `_checkBlockUSDCap`)
    - Uses Chainlink ETH/USD oracle for USD valuation
 
@@ -352,7 +352,7 @@ When testing Vault operations:
    - `quoteEthAmountInUsd1e18(amountWei)` converts wei to USD(1e18)
 
 5. **Uniswap v3 Integration**
-   - `swapToNative(tokenIn, amountIn, amountOutMinETH, deadline)` for ERC-20 → native gas conversion
+   - `_swapToNative(tokenIn, amountIn, amountOutMinETH, deadline)` for ERC-20 → native gas conversion
    - Supports WETH unwrapping
    - Scans `v3FeeOrder` for optimal direct `tokenIn/WETH` pool
    - Uses `_findV3PoolWithNative(tokenIn)` to locate pools
@@ -410,7 +410,7 @@ Key foundry.toml profiles:
 ### Common Development Tasks
 
 When modifying rate limits:
-- Update `_checkUSDCaps` or `_checkBlockUSDCap` for instant routes
+- Update `checkUSDCaps` or `_checkBlockUSDCap` for instant routes
 - Update `_consumeRateLimit` for standard routes
 - Test both paths in `test/gateway/12_rateLimit_BlockBased.t.sol` and `13_rateLimit_EpochBased.t.sol`
 

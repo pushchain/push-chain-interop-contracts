@@ -20,7 +20,7 @@ import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/trans
  * @notice Comprehensive tests for sendUniversalTx(UniversalTokenTxRequest) - token-as-gas entrypoint
  * @dev Tests unique aspects of the token-as-gas function:
  *      - Parameter validation (gasToken, gasAmount, amountOutMinETH, deadline)
- *      - swapToNative integration (WETH fast-path and error cases)
+ *      - _swapToNative integration (WETH fast-path and error cases)
  *      - TX_TYPE inference when nativeValue comes from swap
  *      - msg.value semantics
  *      - Error paths (no pool, slippage, deadline, paused state)
@@ -278,7 +278,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
     // =========================
 
     /// @notice Test revert when Uniswap router/factory are not configured
-    /// @dev swapToNative checks if uniV3Router or uniV3Factory are zero and reverts
+    /// @dev _swapToNative checks if uniV3Router or uniV3Factory are zero and reverts
     function test_TokenGas_RevertOn_UniswapNotConfigured() public {
         // Create a new gateway without Uniswap configured
         UniversalGateway implementation2 = new UniversalGateway();
@@ -306,7 +306,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
     }
 
     /// @notice Test WETH fast-path when Uniswap is configured
-    /// @dev When gasToken == WETH, swapToNative uses fast-path: pull WETH, unwrap to native
+    /// @dev When gasToken == WETH, _swapToNative uses fast-path: pull WETH, unwrap to native
     function test_TokenGas_WETHFastPath_Success() public {
         // Arrange: User has WETH
         // Use smaller amount to stay within USD caps: 0.001 ETH = $2
@@ -552,7 +552,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
 
     /// @notice Test that msg.value > 0 is rejected by the token-as-gas entrypoint
     /// @dev Per audit fix F-2026-15683, the token-as-gas overload derives nativeValue exclusively
-    ///      from swapToNative(gasToken, ...). Accepting msg.value would silently trap ETH in the
+    ///      from _swapToNative(gasToken, ...). Accepting msg.value would silently trap ETH in the
     ///      gateway with no recovery path, so msg.value > 0 must revert with InvalidInput.
     function test_TokenGas_RevertOn_NonZeroMsgValue() public {
         // Arrange: Send msg.value along with a valid token-as-gas request
@@ -569,7 +569,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
         gatewayTemp.sendUniversalTx{ value: msgValue }(req);
     }
 
-    /// @notice Test that nativeValue comes exclusively from swapToNative when msg.value == 0
+    /// @notice Test that nativeValue comes exclusively from _swapToNative when msg.value == 0
     /// @dev Pairs with test_TokenGas_RevertOn_NonZeroMsgValue: confirms that the only valid call
     ///      shape (msg.value == 0) routes the swap output to TSS as the gas leg.
     function test_TokenGas_NativeValueComesFromSwap() public {
@@ -632,7 +632,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
 
         UniversalTokenTxRequest memory req = _buildMinimalTokenGasRequest(address(tokenA), gasAmount, 0.001 ether);
 
-        // Should revert when swapToNative tries to transfer tokens
+        // Should revert when _swapToNative tries to transfer tokens
         // Will revert with ERC20InsufficientBalance when transferFrom fails
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -651,7 +651,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
 
         UniversalTokenTxRequest memory req = _buildMinimalTokenGasRequest(address(tokenA), 1 ether, 0.001 ether);
 
-        // Should revert when swapToNative tries to transfer tokens
+        // Should revert when _swapToNative tries to transfer tokens
         // Will revert with ERC20InsufficientAllowance when transferFrom fails
         vm.expectRevert(
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(gatewayTemp), 0, 1 ether)
@@ -661,7 +661,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
     }
 
     /// @notice Test deadline = 0 uses default deadline
-    /// @dev When deadline is 0, swapToNative should use block.timestamp + defaultSwapDeadlineSec
+    /// @dev When deadline is 0, _swapToNative should use block.timestamp + defaultSwapDeadlineSec
     function test_TokenGas_ZeroDeadlineUsesDefault() public {
         // Arrange: Set deadline to 0
         uint256 gasAmount = 1 ether; // 1 tokenA = 0.001 ETH = $2, within caps
@@ -690,7 +690,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
     }
 
     /// @notice Test slippage protection when swap output is below amountOutMinETH
-    /// @dev swapToNative should revert with SlippageExceededOrExpired if ethOut < amountOutMinETH
+    /// @dev _swapToNative should revert with SlippageExceededOrExpired if ethOut < amountOutMinETH
     function test_TokenGas_RevertOn_SlippageExceeded() public {
         // Arrange: Set very high amountOutMinETH (higher than swap output)
         uint256 gasAmount = 1 ether; // 1 tokenA = 0.001 ETH = $2, within caps
@@ -768,7 +768,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
         UniversalTokenTxRequest memory req =
             _buildMinimalTokenGasRequest(address(tokenA), maxGasAmount, maxAmountOutMinETH);
 
-        // Should revert when swapToNative tries to transfer tokens
+        // Should revert when _swapToNative tries to transfer tokens
         // Will revert with ERC20InsufficientBalance (user doesn't have type(uint256).max tokens)
         vm.expectRevert(
             abi.encodeWithSelector(

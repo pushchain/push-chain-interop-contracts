@@ -117,7 +117,7 @@ interface IUniversalGateway {
     ///
     ///                          Rate-limit behavior:
     ///                          - GAS / GAS_AND_PAYLOAD: instant route via _sendTxWithGas
-    ///                            (_checkUSDCaps + _checkBlockUSDCap)
+    ///                            (checkUSDCaps + _checkBlockUSDCap)
     ///                          - FUNDS / FUNDS_AND_PAYLOAD: standard route via _sendTxWithFunds
     ///                            (_consumeRateLimit per-token epoch)
     /// @param req               UniversalTxRequest struct
