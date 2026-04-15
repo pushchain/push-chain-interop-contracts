@@ -613,8 +613,9 @@ contract GatewayAdminSettersTest is BaseTest {
         uint256 oldDuration = gateway.epochDurationSec();
 
         // Expect EpochDurationUpdated event
+        uint64 expectedEpochIndex = uint64(block.timestamp / oldDuration);
         vm.expectEmit(true, true, true, true);
-        emit IUniversalGateway.EpochDurationUpdated(oldDuration, newDuration);
+        emit IUniversalGateway.EpochDurationUpdated(oldDuration, newDuration, expectedEpochIndex);
 
         vm.prank(admin);
         gateway.updateEpochDuration(newDuration);

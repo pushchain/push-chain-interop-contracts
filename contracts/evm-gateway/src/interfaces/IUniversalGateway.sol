@@ -17,7 +17,11 @@ interface IUniversalGateway {
     /// @notice                  Epoch duration updated event
     /// @param oldDuration       Previous epoch duration
     /// @param newDuration       New epoch duration
-    event EpochDurationUpdated(uint256 oldDuration, uint256 newDuration);
+    /// @param epochIndexAtChange Epoch index at the time of the change — all per-token usage
+    ///                          counters whose stored epoch differs from this value will be treated
+    ///                          as reset on the next consumption. Off-chain monitors can use this
+    ///                          field to detect the implicit rate-limit reset.
+    event EpochDurationUpdated(uint256 oldDuration, uint256 newDuration, uint64 epochIndexAtChange);
 
     /// @notice                  Token limit threshold updated event
     /// @param token             Token address

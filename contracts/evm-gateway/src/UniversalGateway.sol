@@ -266,12 +266,21 @@ contract UniversalGateway is
     }
 
     /// @notice                Update the epoch duration (hard reset schedule)
+    /// @dev                   Changing the epoch duration shifts the epoch index globally
+    ///                        (`block.timestamp / epochDurationSec`). All per-token usage counters
+    ///                        whose stored epoch no longer matches the new index will be silently
+    ///                        reset to zero on the next rate-limit consumption — restoring full
+    ///                        throughput for every token. Admins must treat this as an implicit
+    ///                        rate-limit reset across the board. The emitted `epochIndexAtChange`
+    ///                        value records the old epoch index at the moment of the update so the
+    ///                        reset is auditable on-chain (audit finding F-2026-15643).
     /// @param newDurationSec  New epoch duration in seconds
     function updateEpochDuration(uint256 newDurationSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (newDurationSec == 0) revert Errors.InvalidInput();
         uint256 old = epochDurationSec;
+        uint64 epochIndexAtChange = uint64(block.timestamp / old);
         epochDurationSec = newDurationSec;
-        emit EpochDurationUpdated(old, newDurationSec);
+        emit EpochDurationUpdated(old, newDurationSec, epochIndexAtChange);
     }
 
     /// @notice                Allows the admin to set the fee order for the Uniswap V3 router
