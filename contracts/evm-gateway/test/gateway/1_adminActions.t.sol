@@ -389,6 +389,27 @@ contract GatewayAdminSettersTest is BaseTest {
         gateway.setChainlinkStalePeriod(2 hours);
     }
 
+    function testSetChainlinkStalePeriod_RevertsOnZero() public {
+        vm.prank(admin);
+        vm.expectRevert(Errors.InvalidInput.selector);
+        gateway.setChainlinkStalePeriod(0);
+    }
+
+    function testSetChainlinkStalePeriod_RevertsBelowMinimum() public {
+        uint256 min = gateway.MIN_CHAINLINK_STALE_PERIOD();
+        // Any value strictly less than the minimum must revert
+        vm.prank(admin);
+        vm.expectRevert(Errors.InvalidInput.selector);
+        gateway.setChainlinkStalePeriod(min - 1);
+    }
+
+    function testSetChainlinkStalePeriod_AcceptsMinimumExact() public {
+        uint256 min = gateway.MIN_CHAINLINK_STALE_PERIOD();
+        vm.prank(admin);
+        gateway.setChainlinkStalePeriod(min);
+        assertEq(gateway.chainlinkStalePeriod(), min);
+    }
+
     function testSetL2SequencerFeed() public {
         MockSequencerUptimeFeed seq = new MockSequencerUptimeFeed();
         vm.prank(admin);

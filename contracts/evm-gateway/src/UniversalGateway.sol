@@ -59,6 +59,11 @@ contract UniversalGateway is
     bytes32 public constant VAULT_ROLE = keccak256("VAULT_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
+    /// @notice Minimum permitted value for chainlinkStalePeriod. Prevents admin from disabling
+    ///         oracle freshness validation by setting the period to 0 or an absurdly small value.
+    ///         See audit finding F-2026-15645.
+    uint256 public constant MIN_CHAINLINK_STALE_PERIOD = 10 minutes;
+
     /// @notice MUTABLE — admin-updatable via setTSS.
     address public TSS_ADDRESS;
     /// @notice MUTABLE — admin-updatable via setVault.
@@ -288,9 +293,12 @@ contract UniversalGateway is
         chainlinkEthUsdDecimals = dec;
     }
 
-    /// @notice                Configure the maximum allowed data staleness for Chainlink reads
-    /// @param stalePeriodSec  If > 0, latestRoundData().updatedAt must be within this many seconds
+    /// @notice                Configure the maximum allowed data staleness for Chainlink reads.
+    /// @dev                   Must be >= MIN_CHAINLINK_STALE_PERIOD to prevent accidental or
+    ///                        intentional disabling of freshness validation (audit F-2026-15645).
+    /// @param stalePeriodSec  latestRoundData().updatedAt must be within this many seconds
     function setChainlinkStalePeriod(uint256 stalePeriodSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        if (stalePeriodSec < MIN_CHAINLINK_STALE_PERIOD) revert Errors.InvalidInput();
         chainlinkStalePeriod = stalePeriodSec;
     }
 
