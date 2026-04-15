@@ -1018,7 +1018,11 @@ contract UniversalGateway is
         else if (txType == TX_TYPE.FUNDS || txType == TX_TYPE.FUNDS_AND_PAYLOAD) {
             _sendTxWithFunds(req, nativeValue, txType, fromCEA);
         }
-        // Route 3: Invalid
+        // Route 3: Invalid.
+        // Defensive: unreachable under the current _fetchTxType logic (which either returns one of
+        // GAS / GAS_AND_PAYLOAD / FUNDS / FUNDS_AND_PAYLOAD, or reverts). Kept as an invariant guard
+        // against future TX_TYPE enum additions or _fetchTxType refactors that could silently drop
+        // a case.
         else {
             revert Errors.InvalidTxType();
         }
