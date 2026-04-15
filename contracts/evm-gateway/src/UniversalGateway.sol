@@ -324,7 +324,6 @@ contract UniversalGateway is
         if (reqToken.gasToken == address(0)) revert Errors.InvalidInput();
         if (reqToken.gasAmount == 0) revert Errors.InvalidAmount();
         if (reqToken.amountOutMinETH == 0) revert Errors.InvalidAmount();
-        if (reqToken.deadline != 0 && reqToken.deadline < block.timestamp) revert Errors.SlippageExceededOrExpired();
 
         // Swap token to native
         uint256 nativeValue =
