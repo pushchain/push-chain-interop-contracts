@@ -12,9 +12,15 @@ pragma solidity 0.8.26;
  *         3. FUNDS_TX: Move large-ticket funds to any recipient on Push Chain.
  *         4. FUNDS_AND_PAYLOAD_TX: Move funds + execute payloads.
  *
- * @dev    TSS-controlled functionalities:
- *         1. TSS-controlled withdraw (native or ERC20).
- *         2. Token Support List: allowlist for ERC20 used as gas inputs.
+ * @dev    Authorization model:
+ *         1. Revert / rescue paths (revertUniversalTx, rescueFunds) are gated by VAULT_ROLE,
+ *            not TSS_ROLE. TSS authorization is enforced upstream in the Vault contract, which
+ *            is the sole holder of VAULT_ROLE and the only caller into these gateway entry points.
+ *         2. The token support list (tokenToLimitThreshold) is managed by DEFAULT_ADMIN_ROLE and
+ *            is used for rate-limiting and bridge-support validation of ERC20 funds via
+ *            _consumeRateLimit and _handleDeposits. It is NOT used to validate gas tokens in
+ *            sendUniversalTx(UniversalTokenTxRequest); gas token validation is limited to
+ *            non-zero and swap-related constraints.
  *
  * @dev    Rate-Limit Checks:
  *         - Instant route (GAS / GAS_AND_PAYLOAD): _checkUSDCaps + _checkBlockUSDCap
