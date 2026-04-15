@@ -181,6 +181,12 @@ pub fn set_pyth_confidence_threshold(ctx: Context<AdminAction>, threshold: u64) 
     Ok(())
 }
 
+pub fn set_pyth_max_age_seconds(ctx: Context<AdminAction>, max_age_seconds: u64) -> Result<()> {
+    require!(max_age_seconds > 0, GatewayError::InvalidAmount);
+    ctx.accounts.config.pyth_max_age_seconds = max_age_seconds;
+    Ok(())
+}
+
 // =========================
 // RATE LIMITING ADMIN FUNCTIONS
 // =========================

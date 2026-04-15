@@ -22,6 +22,7 @@
     "config:caps-set": " ts-node app/config-cli.ts caps:set",
     "config:pyth-set-feed": " ts-node app/config-cli.ts pyth:set-feed",
     "config:pyth-set-conf": " ts-node app/config-cli.ts pyth:set-conf",
+    "config:pyth-set-max-age": " ts-node app/config-cli.ts pyth:set-max-age",
     "config:rate-set-block-usd-cap": " ts-node app/config-cli.ts rate:set-block-usd-cap",
     "config:rate-set-epoch": " ts-node app/config-cli.ts rate:set-epoch",
     "config:rate-set-token": " ts-node app/config-cli.ts rate:set-token",

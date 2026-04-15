@@ -78,12 +78,15 @@ pub struct Config {
     pub pyth_confidence_threshold: u64, // Confidence threshold for price validation
     pub pending_admin: Pubkey,
     pub pending_pauser: Pubkey,
+    /// Maximum allowed age for Pyth price updates (seconds). Admin-configurable.
+    /// Default: 60. Applies to inbound gas-route USD cap enforcement only.
+    pub pyth_max_age_seconds: u64,
 }
 
 impl Config {
     // discriminator + fields + padding
-    // 8 + 32 + 32 + 32 + 16 + 16 + 1 + 1 + 1 + 32 + 8 + 32 + 32 + 36
-    pub const LEN: usize = 8 + 32 + 32 + 32 + 16 + 16 + 1 + 1 + 1 + 32 + 8 + 32 + 32 + 36;
+    // 8 + 32 + 32 + 32 + 16 + 16 + 1 + 1 + 1 + 32 + 8 + 32 + 32 + 8 + 28
+    pub const LEN: usize = 8 + 32 + 32 + 32 + 16 + 16 + 1 + 1 + 1 + 32 + 8 + 32 + 32 + 8 + 28;
 }
 
 /// Fee vault: holds protocol fee lamports and the per-tx fee config.

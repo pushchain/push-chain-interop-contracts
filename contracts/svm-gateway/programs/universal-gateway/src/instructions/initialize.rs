@@ -75,6 +75,7 @@ pub fn initialize(
     config.vault_bump = ctx.bumps.vault;
     config.pyth_price_feed = pyth_price_feed;
     config.pyth_confidence_threshold = 1000000; // Default confidence threshold (1e6)
+    config.pyth_max_age_seconds = 60; // Default staleness window (60 seconds)
 
     msg!("Gateway initialized with admin: {}, TSS: {}", admin, tss);
     Ok(())

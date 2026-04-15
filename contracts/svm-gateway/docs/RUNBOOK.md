@@ -132,10 +132,15 @@ npm run config:pyth-set-feed -- --feed <pyth-price-feed-pubkey>
 
 # Optional: set confidence threshold
 npm run config:pyth-set-conf -- --threshold <u64>
+
+# Set price staleness window (seconds); default 60 at initialization
+npm run config:pyth-set-max-age -- --seconds 60
 ```
 
 The program does not enforce a fixed feed — the admin can update it at any time via `set_pyth_price_feed`.
-Inbound gas-route pricing enforces staleness (`get_price_no_older_than`) and optionally enforces confidence (`pyth_confidence_threshold > 0`).
+Inbound gas-route pricing enforces staleness (`get_price_no_older_than` using `config.pyth_max_age_seconds`) and optionally enforces confidence (`pyth_confidence_threshold > 0`).
+
+Recommended staleness window: 60–90 seconds. Values above a few minutes defeat the purpose of the freshness check. The `get_sol_price` view function is not enforcement — it always uses a 1-hour window for display.
 
 ---
 

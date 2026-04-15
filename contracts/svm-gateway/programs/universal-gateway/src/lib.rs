@@ -103,6 +103,11 @@ pub mod universal_gateway {
         instructions::admin::set_pyth_confidence_threshold(ctx, threshold)
     }
 
+    /// @notice Set Pyth price staleness window (seconds). Applies to inbound gas-route cap enforcement.
+    pub fn set_pyth_max_age_seconds(ctx: Context<AdminAction>, max_age_seconds: u64) -> Result<()> {
+        instructions::admin::set_pyth_max_age_seconds(ctx, max_age_seconds)
+    }
+
     // =========================
     //        RATE LIMITING
     // =========================

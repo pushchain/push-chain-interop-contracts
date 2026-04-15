@@ -482,6 +482,48 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 .rpc();
         });
 
+        it("Updates Pyth max age seconds", async () => {
+            const newMaxAge = new anchor.BN(90);
+
+            await program.methods
+                .setPythMaxAgeSeconds(newMaxAge)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            const config = await program.account.config.fetch(configPda);
+            expect(config.pythMaxAgeSeconds.toString()).to.equal(newMaxAge.toString());
+
+            // Reject zero
+            try {
+                await program.methods
+                    .setPythMaxAgeSeconds(new anchor.BN(0))
+                    .accountsPartial({
+                        admin: admin.publicKey,
+                        config: configPda,
+                    })
+                    .signers([admin])
+                    .rpc();
+                expect.fail("Zero max age should have been rejected");
+            } catch (error: any) {
+                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                expect(errorCode).to.equal("InvalidAmount");
+            }
+
+            // Restore to a working value for remaining tests
+            await program.methods
+                .setPythMaxAgeSeconds(new anchor.BN(3600))
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+        });
+
         it("Updates rate limiting configuration", async () => {
 
             const newBlockCap = new anchor.BN(1_000_000_000_000); // $10,000

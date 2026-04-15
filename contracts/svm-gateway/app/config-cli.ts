@@ -492,6 +492,36 @@ program_cli
     });
 
 program_cli
+    .command("pyth:set-max-age")
+    .description("Set Pyth price staleness window for inbound gas-route cap enforcement")
+    .requiredOption("--seconds <value>", "Max age in seconds (u64); recommended: 60–90")
+    .action(async (options) => {
+        try {
+            console.log("=== SETTING PYTH MAX AGE SECONDS ===\n");
+
+            const maxAge = BigInt(options.seconds);
+            const configPda = deriveConfigPda();
+
+            console.log(`Max Age: ${maxAge} seconds\n`);
+
+            const tx = await program.methods
+                .setPythMaxAgeSeconds(new anchor.BN(maxAge.toString()))
+                .accountsPartial({
+                    config: configPda,
+                    admin: adminKeypair.publicKey,
+                })
+                .signers([adminKeypair])
+                .rpc();
+
+            console.log(`✅ Pyth max age set successfully!`);
+            console.log(`   Transaction: ${tx}\n`);
+        } catch (error: any) {
+            console.error(`❌ Error setting Pyth max age: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program_cli
     .command("pyth:set-conf")
     .description("Set Pyth confidence threshold")
     .requiredOption("--threshold <value>", "Confidence threshold (u64)")

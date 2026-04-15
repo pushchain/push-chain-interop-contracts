@@ -97,8 +97,8 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 7. **Oracle account substitution / staleness**  
    Risk: bad price used for inbound gas-route caps.  
-   Control: `price_update.key() == config.pyth_price_feed` + feed-id check + positive price + staleness check (`get_price_no_older_than`) + confidence threshold (`config.pyth_confidence_threshold`).  
-   Residual: max-age is a code constant and should be tuned per deployment policy.
+   Control: `price_update.key() == config.pyth_price_feed` + feed-id check + positive price + staleness check (`get_price_no_older_than` using `config.pyth_max_age_seconds`) + confidence threshold (`config.pyth_confidence_threshold`).  
+   Residual: admin can set the staleness window too loose; recommended value is 60–90 seconds.
 
 8. **Inbound SPL account spoofing**  
    Risk: user supplies fake source/destination token accounts.  
@@ -137,6 +137,6 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 ## 6. Deferred / Non-Goals
 
-- Pyth max-age is a fixed code constant, not an admin-set runtime parameter.
+- Pyth max-age (`pyth_max_age_seconds`) is admin-configurable. Default is 60 seconds at initialization.
 - No user-driven timeout recovery path if off-chain relay never executes.
 - No automatic `FeeVault` replenishment; operational top-up is required.
