@@ -634,7 +634,14 @@ contract UniversalGateway is
     function _validateRevertParams(bytes32 subTxId, uint256 amount, address token, address revertRecipient) private {
         if (isExecuted[subTxId]) revert Errors.PayloadExecuted();
         if (revertRecipient == address(0)) revert Errors.InvalidRecipient();
-        if (amount == 0 || (token == address(0) && msg.value != amount)) revert Errors.InvalidAmount();
+        if (amount == 0) revert Errors.InvalidAmount();
+        // Validate msg.value for both paths: native requires msg.value == amount; ERC20 forbids
+        // native value entirely.
+        if (token == address(0)) {
+            if (msg.value != amount) revert Errors.InvalidAmount();
+        } else {
+            if (msg.value != 0) revert Errors.InvalidAmount();
+        }
 
         isExecuted[subTxId] = true;
     }
