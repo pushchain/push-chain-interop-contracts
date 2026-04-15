@@ -98,7 +98,7 @@ This path emits:
 
 | Account | SOL route | SPL route |
 |---------|-----------|-----------|
-| `vault_ata` | None | Required |
+| `vault_ata` | None | Required (canonical vault ATA for mint) |
 | `cea_ata` | None | Required (auto-created if missing) |
 | `mint` | None | Required |
 | `recipient_ata` | None | Required (withdraw mode) |

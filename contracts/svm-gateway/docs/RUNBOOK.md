@@ -244,4 +244,4 @@ Shows current values for:
 
 **Outbound replay attempt fails:** `sub_tx_id` has already been finalized. The `ExecutedSubTx` PDA for this ID already exists, so the transaction is rejected during account initialization.
 
-**SPL deposit fails with `InvalidAccount`:** `user_token_account` or `gateway_token_account` was passed as `null` on an SPL route. Both must be provided for SPL deposits.
+**SPL deposit fails with `InvalidAccount`:** on an SPL route, `user_token_account` and `gateway_token_account` must both be provided, and `gateway_token_account` must be the canonical vault ATA for the selected mint.

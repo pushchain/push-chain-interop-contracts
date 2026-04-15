@@ -51,7 +51,7 @@ Applies to `Funds` and `FundsAndPayload`.
 - Token must be whitelisted (`limit_threshold > 0`)
 - Epoch-based rate limit: `epoch_used + amount <= limit_threshold` (resets per epoch)
 - Native SOL: `User → Vault`
-- SPL: `User ATA → Vault ATA` — both `user_token_account` and `gateway_token_account` must be provided
+- SPL: `User ATA → Vault ATA` — both `user_token_account` and `gateway_token_account` must be provided, and `gateway_token_account` must be the canonical vault ATA for `req.token`
 - `Funds`: emits `UniversalTx` with `recipient = req.recipient` (user-specified destination)
 - `FundsAndPayload`: emits `UniversalTx` with `recipient = [0u8; 20]` (zero address — routes to UEA semantics on Push Chain)
 
@@ -79,7 +79,9 @@ For `FundsAndPayload`, if there is excess `native_amount` beyond `req.amount`, t
 
 `user_token_account` and `gateway_token_account` are optional accounts:
 - **Native SOL routes:** pass `null` for both
-- **SPL routes:** pass both — the gateway validates owner and mint before transferring
+- **SPL routes:** pass both
+  - `user_token_account` must be owned by `user` and match `req.token`
+  - `gateway_token_account` must be the canonical ATA for `(vault, req.token)`
 
 ---
 

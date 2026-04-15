@@ -17,7 +17,12 @@ import { Program } from "@coral-xyz/anchor";
 import { UniversalGateway } from "../target/types/universal_gateway";
 import { PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import {
+    TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+    createAssociatedTokenAccountInstruction,
+    getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
 import * as sharedState from "./shared-state";
 import {
     signTssMessage,
@@ -208,7 +213,28 @@ describe("Universal Gateway - Rescue Tests", () => {
             await mockUSDT.mintTo(user1UsdtAccount, 5_000 - currentBalance);
         }
 
-        vaultUsdtAccount = await mockUSDT.createTokenAccount(vaultPda, true);
+        vaultUsdtAccount = getAssociatedTokenAddressSync(
+            mockUSDT.mint.publicKey,
+            vaultPda,
+            true,
+            TOKEN_PROGRAM_ID,
+            ASSOCIATED_TOKEN_PROGRAM_ID
+        );
+        const vaultAtaInfo = await provider.connection.getAccountInfo(vaultUsdtAccount);
+        if (!vaultAtaInfo) {
+            const createVaultAtaIx = createAssociatedTokenAccountInstruction(
+                admin.publicKey,
+                vaultUsdtAccount,
+                vaultPda,
+                mockUSDT.mint.publicKey,
+                TOKEN_PROGRAM_ID,
+                ASSOCIATED_TOKEN_PROGRAM_ID
+            );
+            await provider.sendAndConfirm(
+                new anchor.web3.Transaction().add(createVaultAtaIx),
+                [admin]
+            );
+        }
         recipientUsdtAccount = await mockUSDT.createTokenAccount(recipient.publicKey);
 
         const splRateLimitPda = getTokenRateLimitPda(mockUSDT.mint.publicKey);

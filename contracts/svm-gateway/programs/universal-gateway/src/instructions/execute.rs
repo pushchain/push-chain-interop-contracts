@@ -78,7 +78,11 @@ pub struct FinalizeUniversalTx<'info> {
     pub recipient: Option<UncheckedAccount<'info>>,
 
     /// Vault ATA for this mint — always initialized (deposit path guarantees existence)
-    #[account(mut, token::authority = vault_sol)]
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = vault_sol,
+    )]
     pub vault_ata: Option<Account<'info, TokenAccount>>,
 
     /// CHECK: CEA ATA (created if missing via manual CPI)

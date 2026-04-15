@@ -3,6 +3,7 @@ use crate::state::*;
 use crate::utils::*;
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
+use anchor_spl::associated_token::spl_associated_token_account;
 use anchor_spl::token::{self, spl_token, Token, Transfer};
 use pyth_solana_receiver_sdk::price_update::PriceUpdateV2;
 // =========================
@@ -329,6 +330,12 @@ fn deposit_spl_to_vault(ctx: &Context<SendUniversalTx>, token: Pubkey, amount: u
     let parsed = parse_token_account(&gateway_token_account.to_account_info())?;
     require!(parsed.owner == ctx.accounts.vault.key(), GatewayError::InvalidOwner);
     require!(parsed.mint == token, GatewayError::InvalidMint);
+    let expected_gateway_ata =
+        spl_associated_token_account::get_associated_token_address(&ctx.accounts.vault.key(), &token);
+    require!(
+        gateway_token_account.key() == expected_gateway_ata,
+        GatewayError::InvalidAccount
+    );
 
     let cpi_ctx = CpiContext::new(
         ctx.accounts.token_program.to_account_info(),

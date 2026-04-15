@@ -486,10 +486,15 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       const userTokenAccount = await mockUSDT.createTokenAccount(
         user1.publicKey
       );
-      const gatewayTokenAccount = await mockUSDT.createTokenAccount(
-        vaultPda,
-        true
-      );
+      const gatewayTokenAccount = (
+        await spl.getOrCreateAssociatedTokenAccount(
+          provider.connection as any,
+          admin,
+          mockUSDT.mint.publicKey,
+          vaultPda,
+          true
+        )
+      ).address;
 
       // Mint tokens using mock token's mintTo method (uses correct mint authority)
       await mockUSDT.mintTo(userTokenAccount, 1000);
@@ -536,6 +541,56 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       expect(finalFeeVaultBalance - initialFeeVaultBalance).to.equal(DEFAULT_PROTOCOL_FEE_LAMPORTS);
     });
 
+    it("Should reject non-canonical vault-owned token account", async () => {
+      const userTokenAccount = await mockUSDT.createTokenAccount(
+        user1.publicKey
+      );
+      const nonCanonicalVaultAccount = await mockUSDT.createTokenAccount(
+        vaultPda,
+        true
+      );
+      await mockUSDT.mintTo(userTokenAccount, 250);
+
+      const tokenAmount = new anchor.BN(250 * 10 ** mockUSDT.config.decimals);
+      const usdtTokenRateLimitPda = getTokenRateLimitPda(
+        mockUSDT.mint.publicKey
+      );
+
+      const req = {
+        recipient: Array.from(Buffer.alloc(20, 0)),
+        token: mockUSDT.mint.publicKey,
+        amount: tokenAmount,
+        payload: Buffer.from([]),
+        revertRecipient: user1.publicKey,
+        signatureData: Buffer.from("non_canonical_vault_sig"),
+      };
+
+      try {
+        await program.methods
+          .sendUniversalTx(req, withProtocolFee(0))
+          .accountsPartial({
+            config: configPda,
+            vault: vaultPda,
+            feeVault: feeVaultPda,
+            userTokenAccount: userTokenAccount,
+            gatewayTokenAccount: nonCanonicalVaultAccount,
+            user: user1.publicKey,
+            priceUpdate: mockPriceFeed,
+            rateLimitConfig: rateLimitConfigPda,
+            tokenRateLimit: usdtTokenRateLimitPda,
+            tokenProgram: spl.TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([user1])
+          .rpc();
+        expect.fail("Should reject non-canonical vault-owned token account");
+      } catch (error: any) {
+        const errorCode =
+          error.error?.errorCode?.code || error.error?.errorCode || error.code;
+        expect(errorCode).to.equal("InvalidAccount");
+      }
+    });
+
     it("Should reject SPL deposit from token account not owned by signer (InvalidOwner)", async () => {
       // Create two users: victim owns the token account, attacker signs the tx.
       // This tests deposit_spl_to_vault line: parsed_user.owner == ctx.accounts.user.key()
@@ -543,7 +598,15 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       await provider.connection.requestAirdrop(victim.publicKey, 2 * anchor.web3.LAMPORTS_PER_SOL);
 
       const victimTokenAccount = await mockUSDT.createTokenAccount(victim.publicKey);
-      const gatewayTokenAccount = await mockUSDT.createTokenAccount(vaultPda, true);
+      const gatewayTokenAccount = (
+        await spl.getOrCreateAssociatedTokenAccount(
+          provider.connection as any,
+          admin,
+          mockUSDT.mint.publicKey,
+          vaultPda,
+          true
+        )
+      ).address;
       await mockUSDT.mintTo(victimTokenAccount, 1000);
 
       const tokenAmount = new anchor.BN(1000 * 10 ** mockUSDT.config.decimals);
@@ -750,10 +813,15 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       const userTokenAccount = await mockUSDC.createTokenAccount(
         user1.publicKey
       );
-      const gatewayTokenAccount = await mockUSDC.createTokenAccount(
-        vaultPda,
-        true
-      );
+      const gatewayTokenAccount = (
+        await spl.getOrCreateAssociatedTokenAccount(
+          provider.connection as any,
+          admin,
+          mockUSDC.mint.publicKey,
+          vaultPda,
+          true
+        )
+      ).address;
 
       // Mint tokens using mock token's mintTo method
       await mockUSDC.mintTo(userTokenAccount, 500);
@@ -810,10 +878,15 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       const userTokenAccount = await mockUSDC.createTokenAccount(
         user1.publicKey
       );
-      const gatewayTokenAccount = await mockUSDC.createTokenAccount(
-        vaultPda,
-        true
-      );
+      const gatewayTokenAccount = (
+        await spl.getOrCreateAssociatedTokenAccount(
+          provider.connection as any,
+          admin,
+          mockUSDC.mint.publicKey,
+          vaultPda,
+          true
+        )
+      ).address;
 
       // Mint tokens using mock token's mintTo method
       await mockUSDC.mintTo(userTokenAccount, 500);
@@ -1267,10 +1340,15 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
         const userTokenAccount = await mockUSDT.createTokenAccount(
           user1.publicKey
         );
-        const gatewayTokenAccount = await mockUSDT.createTokenAccount(
-          vaultPda,
-          true
-        );
+        const gatewayTokenAccount = (
+          await spl.getOrCreateAssociatedTokenAccount(
+            provider.connection as any,
+            admin,
+            mockUSDT.mint.publicKey,
+            vaultPda,
+            true
+          )
+        ).address;
         await mockUSDT.mintTo(userTokenAccount, 500);
         const tokenAmount = new anchor.BN(200 * 10 ** mockUSDT.config.decimals);
         const initialGatewayBalance = await mockUSDT.getBalance(

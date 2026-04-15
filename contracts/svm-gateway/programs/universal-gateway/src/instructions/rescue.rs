@@ -63,7 +63,11 @@ pub struct RescueFunds<'info> {
     // --- Optional SPL accounts (all None for SOL, all Some for SPL) ---
 
     /// Vault ATA for this mint — holds bridged SPL tokens.
-    #[account(mut)]
+    #[account(
+        mut,
+        associated_token::mint = token_mint,
+        associated_token::authority = vault,
+    )]
     pub token_vault: Option<Account<'info, TokenAccount>>,
 
     /// Recipient token account — must be owned by recipient and match token_mint.
@@ -105,7 +109,6 @@ pub fn rescue_funds(
         let recipient_ta = ctx.accounts.recipient_token_account.as_ref().ok_or(error!(GatewayError::InvalidAccount))?;
         let mint_key = ctx.accounts.token_mint.as_ref().unwrap().key(); // Safe: !is_native ⟹ token_mint.is_some()
         require!(token_vault.mint == mint_key, GatewayError::InvalidMint);
-        require!(token_vault.owner == ctx.accounts.vault.key(), GatewayError::InvalidAccount);
         require!(recipient_ta.mint == mint_key, GatewayError::InvalidMint);
         require!(recipient_ta.owner == recipient, GatewayError::InvalidRecipient);
     }

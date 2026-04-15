@@ -102,7 +102,7 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 8. **Inbound SPL account spoofing**  
    Risk: user supplies fake source/destination token accounts.  
-   Control: owner and mint checks on both `user_token_account` and `gateway_token_account`.
+   Control: `user_token_account` owner/mint checks plus canonical ATA enforcement on `gateway_token_account` for `(vault, token)`.
 
 9. **Fee vault depletion**  
    Risk: revert/rescue fail due to reimbursement shortfall.  

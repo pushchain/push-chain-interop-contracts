@@ -76,8 +76,8 @@ sub_tx_id[32] | universal_tx_id[32] | mint[32] | recipient[32] | gas_fee (8 BE)
 For SOL, pass `token_vault`, `recipient_token_account`, `token_mint`, `token_program` as `null`.
 
 **Cross-account constraints (SPL):**
+- `token_vault` must be the canonical ATA for `(vault, token_mint)`
 - `token_vault.mint == token_mint.key()`
-- `token_vault.owner == vault.key()`
 - `recipient_token_account.mint == token_mint.key()`
 - `recipient_token_account.owner == recipient.key()`
 

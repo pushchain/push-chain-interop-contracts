@@ -520,7 +520,15 @@ describe("Universal Gateway - Rate Limiting Tests", () => {
         it("Should enforce token rate limit for SPL tokens when enabled", async () => {
             // Create user token account and mint tokens
             const userTokenAccount = await mockUSDT.createTokenAccount(user1.publicKey);
-            const gatewayTokenAccount = await mockUSDT.createTokenAccount(vaultPda, true);
+            const gatewayTokenAccount = (
+                await spl.getOrCreateAssociatedTokenAccount(
+                    provider.connection as any,
+                    admin,
+                    mockUSDT.mint.publicKey,
+                    vaultPda,
+                    true
+                )
+            ).address;
             await mockUSDT.mintTo(userTokenAccount, 5000); // 5000 tokens
 
             // Set rate limit: 1000 tokens per epoch (1000 * 10^6 = 1_000_000_000)
