@@ -269,12 +269,14 @@ pub struct TokenRateLimitAction<'info> {
 }
 
 /// Set token-specific rate limit threshold (matching EVM setTokenToLimitThreshold)
-/// @param limit_threshold Max amount per epoch (token's natural units). Set to 0 to disable rate limiting for this token.
+/// @param limit_threshold Max amount per epoch (token's natural units).
+///        Set to 0 to remove support for this token — deposits will be rejected with NotSupported.
+///        To disable epoch consumption while keeping the token supported, set epoch_duration_sec to 0.
 pub fn set_token_rate_limit(
     ctx: Context<TokenRateLimitAction>,
     limit_threshold: u128,
 ) -> Result<()> {
-    // Allow limit_threshold = 0 to disable rate limiting (matching EVM behavior)
+    // limit_threshold == 0 means token is not supported; deposits are rejected with NotSupported.
     let token_rate_limit = &mut ctx.accounts.token_rate_limit;
     token_rate_limit.token_mint = ctx.accounts.token_mint.key();
     token_rate_limit.limit_threshold = limit_threshold;
