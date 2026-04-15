@@ -242,11 +242,7 @@ contract UniversalGateway is
     ///                        plural name implied multi-router support that does not exist.
     /// @param factory         New Uniswap V3 factory address
     /// @param router          New Uniswap V3 router address
-    function setUniswapV3Config(address factory, address router)
-        external
-        onlyRole(DEFAULT_ADMIN_ROLE)
-        whenNotPaused
-    {
+    function setUniswapV3Config(address factory, address router) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (factory == address(0) || router == address(0)) revert Errors.ZeroAddress();
         address oldFactory = address(uniV3Factory);
         address oldRouter = address(uniV3Router);
@@ -796,9 +792,15 @@ contract UniversalGateway is
             (bool ok,) = payable(TSS_ADDRESS).call{ value: amount }("");
             if (!ok) revert Errors.DepositFailed();
         } else {
-            // Handle ERC20 token deposit to Vault
+            // Handle ERC20 token deposit to Vault.
+            // Balance-before/after check rejects fee-on-transfer tokens: if the Vault receives
+            // fewer tokens than `amount`, accounting/rate-limiting upstream would be wrong and
+            // the revert/rescue paths would later break.
             if (tokenToLimitThreshold[token] == 0) revert Errors.NotSupported();
+            uint256 balBefore = IERC20(token).balanceOf(VAULT);
             IERC20(token).safeTransferFrom(_msgSender(), VAULT, amount);
+            uint256 received = IERC20(token).balanceOf(VAULT) - balBefore;
+            if (received != amount) revert Errors.InvalidAmount();
         }
     }
 
@@ -890,7 +892,12 @@ contract UniversalGateway is
         }
         (IUniswapV3Pool pool, uint24 fee) = _findV3PoolWithNative(tokenIn);
 
+        // Reject fee-on-transfer tokens: if the gateway receives fewer tokens than amountIn,
+        // the subsequent allowance/swap will operate on a mismatched amount and the router pull
+        // will fail. See audit finding F-2026-15737.
+        uint256 balBefore = IERC20(tokenIn).balanceOf(address(this));
         IERC20(tokenIn).safeTransferFrom(_msgSender(), address(this), amountIn);
+        if (IERC20(tokenIn).balanceOf(address(this)) - balBefore != amountIn) revert Errors.InvalidAmount();
         IERC20(tokenIn).safeIncreaseAllowance(address(uniV3Router), amountIn);
 
         ISwapRouterV3.ExactInputSingleParams memory params = ISwapRouterV3.ExactInputSingleParams({

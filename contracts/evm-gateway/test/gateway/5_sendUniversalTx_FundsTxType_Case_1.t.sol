@@ -8,6 +8,7 @@ import { UniversalPayload, UniversalTxRequest } from "../../src/libraries/TypesU
 import { Errors } from "../../src/libraries/Errors.sol";
 import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import { MockERC20 } from "../mocks/MockERC20.sol";
+import { MockFeeOnTransferERC20 } from "../mocks/MockFeeOnTransferERC20.sol";
 
 /**
  * @title GatewaySendUniversalTxWithFunds Test Suite
@@ -696,5 +697,49 @@ contract GatewaySendUniversalTxWithFundsTest is BaseTest {
         vm.prank(user1);
         vm.expectRevert(Errors.NotSupported.selector);
         gatewayTemp.sendUniversalTx(req);
+    }
+
+    // ============================================================
+    //  _handleDeposits — Fee-on-transfer token rejection
+    //  (audit finding F-2026-15737)
+    // ============================================================
+
+    /// @notice FUNDS deposit of a whitelisted fee-on-transfer ERC20 must revert InvalidAmount.
+    /// @dev    Without the balance-before/after check, the Vault would receive less than `amount`
+    ///         and the gateway's accounting/rate-limit/event emission would reference a phantom
+    ///         amount that the Vault does not actually hold. See audit finding F-2026-15737.
+    function test_SendTxWithFunds_FeeOnTransferERC20_Reverts() public {
+        // 2% fee-on-transfer token.
+        MockFeeOnTransferERC20 fotToken = new MockFeeOnTransferERC20("FeeOnTransfer", "FOT", 200);
+        fotToken.mint(user1, 1000 ether);
+        vm.prank(user1);
+        fotToken.approve(address(gatewayTemp), type(uint256).max);
+
+        // Whitelist the token so the threshold check passes; the fee-on-transfer guard is the
+        // actual gate we want to hit.
+        address[] memory tokens = new address[](1);
+        uint256[] memory thresholds = new uint256[](1);
+        tokens[0] = address(fotToken);
+        thresholds[0] = 1_000_000 ether;
+        vm.prank(admin);
+        gatewayTemp.setTokenLimitThresholds(tokens, thresholds);
+
+        UniversalTxRequest memory req = UniversalTxRequest({
+            recipient: address(0),
+            token: address(fotToken),
+            amount: 100 ether,
+            payload: bytes(""),
+            revertRecipient: address(0x456),
+            signatureData: bytes("")
+        });
+
+        uint256 vaultBalBefore = fotToken.balanceOf(address(this));
+
+        vm.prank(user1);
+        vm.expectRevert(Errors.InvalidAmount.selector);
+        gatewayTemp.sendUniversalTx(req);
+
+        // Vault balance must be unchanged — the revert unwinds the partial transfer.
+        assertEq(fotToken.balanceOf(address(this)), vaultBalBefore, "vault must hold zero fot tokens");
     }
 }
