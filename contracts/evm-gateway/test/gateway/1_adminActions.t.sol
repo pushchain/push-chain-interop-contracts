@@ -699,4 +699,49 @@ contract GatewayAdminSettersTest is BaseTest {
         gateway.setL2SequencerGracePeriod(0);
         assertEq(gateway.l2SequencerGracePeriodSec(), 0);
     }
+
+    // =========================
+    //   MANAGED ROLE GUARDS
+    // =========================
+
+    /// @dev F-2026-15642: grantRole(TSS_ROLE) must be blocked — use setTSS() instead.
+    function testDirectGrantTSSRoleReverts() public {
+        bytes32 tssRole = gateway.TSS_ROLE();
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ManagedRole.selector, tssRole));
+        gateway.grantRole(tssRole, attacker);
+    }
+
+    /// @dev F-2026-15642: revokeRole(TSS_ROLE) must be blocked — use setTSS() instead.
+    function testDirectRevokeTSSRoleReverts() public {
+        bytes32 tssRole = gateway.TSS_ROLE();
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ManagedRole.selector, tssRole));
+        gateway.revokeRole(tssRole, tss);
+    }
+
+    /// @dev F-2026-15642: grantRole(VAULT_ROLE) must be blocked — use setVault() instead.
+    function testDirectGrantVaultRoleReverts() public {
+        bytes32 vaultRole = gateway.VAULT_ROLE();
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ManagedRole.selector, vaultRole));
+        gateway.grantRole(vaultRole, attacker);
+    }
+
+    /// @dev F-2026-15642: revokeRole(VAULT_ROLE) must be blocked — use setVault() instead.
+    function testDirectRevokeVaultRoleReverts() public {
+        bytes32 vaultRole = gateway.VAULT_ROLE();
+        address currentVault = gateway.VAULT();
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ManagedRole.selector, vaultRole));
+        gateway.revokeRole(vaultRole, currentVault);
+    }
+
+    /// @dev Non-managed roles (e.g. PAUSER_ROLE) must still be grantable directly.
+    function testDirectGrantNonManagedRoleSucceeds() public {
+        bytes32 pauserRole = gateway.PAUSER_ROLE();
+        vm.prank(admin);
+        gateway.grantRole(pauserRole, attacker);
+        assertTrue(gateway.hasRole(pauserRole, attacker));
+    }
 }

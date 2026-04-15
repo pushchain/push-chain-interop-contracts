@@ -2188,19 +2188,16 @@ contract VaultTest is Test {
         vault.setCEAFactory(address(ceaFactory));
     }
 
-    function test_SetTSS_WhenOldTSSAlreadyRevokedRole() public {
-        // Revoke TSS_ROLE from old TSS via admin before calling setTSS
-        vm.startPrank(admin);
-        vault.revokeRole(vault.TSS_ROLE(), tss);
-        assertFalse(vault.hasRole(vault.TSS_ROLE(), tss));
-
-        // Call setTSS — the hasRole(TSS_ROLE, old) check returns false
+    /// @dev After F-2026-15642 direct revokeRole(TSS_ROLE) is blocked.
+    ///      setTSS() is now the only path — it internally calls _revokeRole and _grantRole.
+    function test_SetTSS_ViaSetterTransfersRole() public {
         address newTSS = makeAddr("newTSS2");
+        vm.prank(admin);
         vault.setTSS(newTSS);
-        vm.stopPrank();
 
         assertEq(vault.TSS_ADDRESS(), newTSS);
         assertTrue(vault.hasRole(vault.TSS_ROLE(), newTSS));
+        assertFalse(vault.hasRole(vault.TSS_ROLE(), tss));
     }
 
     // ============================================================================
@@ -2275,6 +2272,34 @@ contract VaultTest is Test {
             100e18,
             RevertInstructions(user1, "")
         );
+    }
+
+    // =========================
+    //   MANAGED ROLE GUARDS
+    // =========================
+
+    /// @dev F-2026-15642: grantRole(TSS_ROLE) must be blocked — use setTSS() instead.
+    function testDirectGrantTSSRoleReverts() public {
+        bytes32 tssRole = vault.TSS_ROLE();
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ManagedRole.selector, tssRole));
+        vault.grantRole(tssRole, user2);
+    }
+
+    /// @dev F-2026-15642: revokeRole(TSS_ROLE) must be blocked — use setTSS() instead.
+    function testDirectRevokeTSSRoleReverts() public {
+        bytes32 tssRole = vault.TSS_ROLE();
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ManagedRole.selector, tssRole));
+        vault.revokeRole(tssRole, tss);
+    }
+
+    /// @dev Non-managed roles (e.g. PAUSER_ROLE) must still be grantable directly.
+    function testDirectGrantNonManagedRoleSucceeds() public {
+        bytes32 pauserRole = vault.PAUSER_ROLE();
+        vm.prank(admin);
+        vault.grantRole(pauserRole, user2);
+        assertTrue(vault.hasRole(pauserRole, user2));
     }
 }
 

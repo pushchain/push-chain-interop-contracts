@@ -32,4 +32,7 @@ library Errors {
     error InsufficientBalance();
     error InsufficientProtocolFee();
     error TokenBurnFailed(address token, uint256 amount);
+    /// @notice Thrown when grantRole/revokeRole is called directly for a role that must be
+    ///         managed exclusively through a dedicated setter (e.g. setTSS, setVault).
+    error ManagedRole(bytes32 role);
 }
