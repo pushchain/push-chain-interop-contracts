@@ -464,17 +464,19 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
     }
 
     /// @notice Test that TX_TYPE.FUNDS is correctly inferred when using token-as-gas with funds
-    /// @dev When req has funds (amount > 0), should route to FUNDS regardless of nativeValue
+    /// @dev When req has ERC20 funds (amount > 0), should route to FUNDS using nativeValue from swap
+    ///      as the gas leg. Native funds bridging via the token-gas overload is not supported
+    ///      because the function rejects msg.value (see audit fix F-2026-15683).
     function test_TokenGas_InferFUNDS_Type() public {
-        // Arrange: Swap tokenA for gas, with funds (native)
+        // Arrange: Swap tokenA for gas, bridge USDC as funds
         uint256 gasAmount = 1 ether; // 1 tokenA = 0.001 ETH = $2, within caps
         uint256 expectedETH = (gasAmount * 1e15) / 1e18; // = 0.001 ETH
         uint256 amountOutMinETH = expectedETH - 1;
-        uint256 fundsAmount = 0.001 ether; // Native funds = $2, within caps
+        uint256 fundsAmount = 100e6; // 100 USDC bridge amount
 
         UniversalTokenTxRequest memory req = _buildTokenGasRequest(
             address(0),
-            address(0), // Native token
+            address(usdc), // ERC20 bridge token
             fundsAmount, // Has funds
             address(tokenA),
             gasAmount,
@@ -488,7 +490,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
         emit UniversalTx(
             user1,
             address(0),
-            address(0), // Native token
+            address(usdc), // ERC20 bridge token
             fundsAmount, // Funds amount, not gas amount
             bytes(""),
             req.revertRecipient,
@@ -498,24 +500,26 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
         );
 
         vm.prank(user1);
-        gatewayTemp.sendUniversalTx{ value: fundsAmount }(req); // Send funds with msg.value
+        gatewayTemp.sendUniversalTx(req);
     }
 
     /// @notice Test that TX_TYPE.FUNDS_AND_PAYLOAD is correctly inferred when using token-as-gas with funds and payload
-    /// @dev When req has both funds and payload, should route to FUNDS_AND_PAYLOAD
+    /// @dev When req has ERC20 funds and payload, should route to FUNDS_AND_PAYLOAD with the swap
+    ///      output used as the gas leg. Native funds bridging via this overload is not supported
+    ///      (see audit fix F-2026-15683).
     function test_TokenGas_InferFUNDS_AND_PAYLOAD_Type() public {
-        // Arrange: Swap tokenA for gas, with funds and payload
+        // Arrange: Swap tokenA for gas, bridge USDC with payload
         uint256 gasAmount = 1 ether; // 1 tokenA = 0.001 ETH = $2, within caps
         uint256 expectedETH = (gasAmount * 1e15) / 1e18; // = 0.001 ETH
         uint256 amountOutMinETH = expectedETH - 1;
-        uint256 fundsAmount = 0.001 ether; // Native funds = $2, within caps
+        uint256 fundsAmount = 100e6; // 100 USDC bridge amount
 
         UniversalPayload memory payload = buildDefaultPayload();
         bytes memory payloadBytes = abi.encode(payload);
 
         UniversalTokenTxRequest memory req = _buildTokenGasRequest(
             address(0),
-            address(0), // Native token
+            address(usdc), // ERC20 bridge token
             fundsAmount, // Has funds
             address(tokenA),
             gasAmount,
@@ -529,7 +533,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
         emit UniversalTx(
             user1,
             address(0),
-            address(0),
+            address(usdc),
             fundsAmount,
             payloadBytes,
             req.revertRecipient,
@@ -539,50 +543,37 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
         );
 
         vm.prank(user1);
-        gatewayTemp.sendUniversalTx{ value: fundsAmount }(req);
+        gatewayTemp.sendUniversalTx(req);
     }
 
     // =========================
     //      MSG.VALUE SEMANTICS TESTS
     // =========================
 
-    /// @notice Test that msg.value is accepted but ignored for token-as-gas entrypoint
-    /// @dev Currently, msg.value is not used in the token-as-gas path (nativeValue comes from swap)
-    ///      But the function is payable, so msg.value > 0 should not revert
-    function test_TokenGas_AcceptsMsgValue() public {
-        // Arrange: Send msg.value along with token-as-gas request
+    /// @notice Test that msg.value > 0 is rejected by the token-as-gas entrypoint
+    /// @dev Per audit fix F-2026-15683, the token-as-gas overload derives nativeValue exclusively
+    ///      from swapToNative(gasToken, ...). Accepting msg.value would silently trap ETH in the
+    ///      gateway with no recovery path, so msg.value > 0 must revert with InvalidInput.
+    function test_TokenGas_RevertOn_NonZeroMsgValue() public {
+        // Arrange: Send msg.value along with a valid token-as-gas request
         uint256 gasAmount = 1 ether; // 1 tokenA = 0.001 ETH = $2, within caps
         uint256 expectedETH = (gasAmount * 1e15) / 1e18; // = 0.001 ETH
         uint256 amountOutMinETH = expectedETH - 1;
-        uint256 msgValue = 0.1 ether; // Extra ETH sent
+        uint256 msgValue = 0.1 ether;
 
         UniversalTokenTxRequest memory req = _buildMinimalTokenGasRequest(address(tokenA), gasAmount, amountOutMinETH);
 
-        // Act: Should succeed even with msg.value
-        vm.expectEmit(true, true, false, true, address(gatewayTemp));
-        emit UniversalTx(
-            user1,
-            address(0),
-            address(0),
-            expectedETH, // nativeValue from swap, not msg.value
-            bytes(""),
-            req.revertRecipient,
-            TX_TYPE.GAS,
-            bytes(""),
-            false
-        );
-
+        // Act + Assert: Sending any non-zero msg.value must revert
+        vm.expectRevert(Errors.InvalidInput.selector);
         vm.prank(user1);
         gatewayTemp.sendUniversalTx{ value: msgValue }(req);
-
-        // Assert: msg.value was accepted but not used (gateway balance increased)
-        assertEq(address(gatewayTemp).balance, msgValue, "Gateway should receive msg.value");
     }
 
-    /// @notice Test that msg.value does not affect nativeValue calculation
-    /// @dev nativeValue comes from swapToNative, not msg.value
-    function test_TokenGas_MsgValueDoesNotAffectNativeValue() public {
-        // Arrange: Same swap with different msg.value amounts
+    /// @notice Test that nativeValue comes exclusively from swapToNative when msg.value == 0
+    /// @dev Pairs with test_TokenGas_RevertOn_NonZeroMsgValue: confirms that the only valid call
+    ///      shape (msg.value == 0) routes the swap output to TSS as the gas leg.
+    function test_TokenGas_NativeValueComesFromSwap() public {
+        // Arrange
         uint256 gasAmount = 1 ether; // 1 tokenA = 0.001 ETH = $2, within caps
         uint256 expectedETH = (gasAmount * 1e15) / 1e18; // = 0.001 ETH
         uint256 amountOutMinETH = expectedETH - 1;
@@ -591,26 +582,17 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
 
         uint256 tssBalanceBefore = tss.balance;
 
-        // Act: Send with msg.value = 0
+        // Act: Send with msg.value = 0 (the only valid shape post-fix)
         vm.prank(user1);
         gatewayTemp.sendUniversalTx(req);
 
-        uint256 tssBalanceAfterZero = tss.balance;
-        uint256 ethReceivedZero = tssBalanceAfterZero - tssBalanceBefore;
+        uint256 ethReceived = tss.balance - tssBalanceBefore;
 
-        // Reset and send with msg.value > 0
-        vm.roll(block.number + 1);
-        tssBalanceBefore = tss.balance;
+        // Assert: TSS received exactly the swap output
+        assertEq(ethReceived, expectedETH, "TSS should receive the swap output as nativeValue");
 
-        vm.prank(user1);
-        gatewayTemp.sendUniversalTx{ value: 1 ether }(req);
-
-        uint256 tssBalanceAfterNonZero = tss.balance;
-        uint256 ethReceivedNonZero = tssBalanceAfterNonZero - tssBalanceBefore;
-
-        // Assert: nativeValue (sent to TSS) is the same regardless of msg.value
-        assertEq(ethReceivedZero, ethReceivedNonZero, "nativeValue should be same regardless of msg.value");
-        assertEq(ethReceivedZero, expectedETH, "nativeValue should come from swap");
+        // Sanity: gateway holds no trapped ETH
+        assertEq(address(gatewayTemp).balance, 0, "Gateway must not retain any ETH");
     }
 
     // =========================

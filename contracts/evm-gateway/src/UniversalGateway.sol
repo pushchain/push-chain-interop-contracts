@@ -319,6 +319,7 @@ contract UniversalGateway is
     /// @inheritdoc IUniversalGateway
     function sendUniversalTx(UniversalTokenTxRequest calldata reqToken) external payable nonReentrant whenNotPaused {
         if (_isCallerCEA()) revert Errors.InvalidInput();
+        if (msg.value != 0) revert Errors.InvalidInput();
         // Validate token-as-gas parameters
         if (reqToken.gasToken == address(0)) revert Errors.InvalidInput();
         if (reqToken.gasAmount == 0) revert Errors.InvalidAmount();
