@@ -83,6 +83,17 @@ contract UniversalGatewayPC is
         emit VaultPCUpdated(oldVaultPC, vaultPC);
     }
 
+    /// @notice                Sets the UniversalCore address.
+    /// @dev                   Allows admin to re-point the UniversalCore dependency without
+    ///                        requiring a proxy upgrade. Mirrors setVaultPC. See audit F-2026-15657.
+    /// @param universalCore   Address of the new UniversalCore.
+    function setUniversalCore(address universalCore) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        if (universalCore == address(0)) revert Errors.ZeroAddress();
+        address oldUniversalCore = UNIVERSAL_CORE;
+        UNIVERSAL_CORE = universalCore;
+        emit UniversalCoreUpdated(oldUniversalCore, universalCore);
+    }
+
     // ==============================
     //    UGPC_2: OUTBOUND TX
     // ==============================

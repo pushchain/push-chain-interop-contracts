@@ -257,6 +257,45 @@ contract UniversalGatewayPCTest is Test {
         gateway.setVaultPC(newVaultPC);
     }
 
+    // ---- setUniversalCore (audit F-2026-15657) ----
+
+    function testSetUniversalCoreSuccess() public {
+        address oldUniversalCore = gateway.UNIVERSAL_CORE();
+        address newUniversalCore = address(0x888);
+
+        vm.prank(admin);
+        vm.expectEmit(true, true, false, false);
+        emit IUniversalGatewayPC.UniversalCoreUpdated(oldUniversalCore, newUniversalCore);
+        gateway.setUniversalCore(newUniversalCore);
+
+        assertEq(gateway.UNIVERSAL_CORE(), newUniversalCore);
+    }
+
+    function testSetUniversalCoreRevertNonAdmin() public {
+        address newUniversalCore = address(0x888);
+
+        vm.prank(attacker);
+        vm.expectRevert();
+        gateway.setUniversalCore(newUniversalCore);
+    }
+
+    function testSetUniversalCoreRevertZeroAddress() public {
+        vm.prank(admin);
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        gateway.setUniversalCore(address(0));
+    }
+
+    function testSetUniversalCoreRevertWhenPaused() public {
+        vm.prank(pauser);
+        gateway.pause();
+
+        address newUniversalCore = address(0x888);
+
+        vm.prank(admin);
+        vm.expectRevert();
+        gateway.setUniversalCore(newUniversalCore);
+    }
+
     function testPauseSuccess() public {
         assertFalse(gateway.paused());
 

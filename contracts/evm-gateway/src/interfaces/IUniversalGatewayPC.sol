@@ -52,6 +52,11 @@ interface IUniversalGatewayPC {
     /// @param newVaultPC        New VaultPC address
     event VaultPCUpdated(address indexed oldVaultPC, address indexed newVaultPC);
 
+    /// @notice                       Emitted when UniversalCore address is updated
+    /// @param oldUniversalCore       Previous UniversalCore address
+    /// @param newUniversalCore       New UniversalCore address
+    event UniversalCoreUpdated(address indexed oldUniversalCore, address indexed newUniversalCore);
+
     /// @notice                  Emitted when a user initiates a rescue-funds request on Push Chain.
     /// @param universalTxId     Universal transaction identifier of the stuck funds
     /// @param prc20             PRC20 token whose source-chain counterpart is locked
