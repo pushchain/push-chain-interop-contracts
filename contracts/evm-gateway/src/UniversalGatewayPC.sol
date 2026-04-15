@@ -36,14 +36,14 @@ contract UniversalGatewayPC is
 
     /// @notice MUTABLE — admin-updatable via setUniversalCore.
     address public UNIVERSAL_CORE;
+    /// @notice MUTABLE — admin-updatable via setVaultPC.
+    IVaultPC public VAULT_PC;
+    uint256 public nonce;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
-    /// @notice MUTABLE — admin-updatable via setVaultPC.
-    IVaultPC public VAULT_PC;
-    uint256 public nonce;
     // ==============================
     //    UGPC_1: ADMIN ACTIONS
     // ==============================
