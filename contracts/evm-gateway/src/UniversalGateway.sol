@@ -501,7 +501,9 @@ contract UniversalGateway is
                 tokenForFundsAndPayload = address(0);
             }
             // Case 2.3: Batching of Gas + Funds_and_Payload (nativeValue > 0): with token != native_token
-            else if (_req.token != address(0)) {
+            // _req.token != address(0) is implied by the prior branches (Case 2.1 handles
+            // nativeValue == 0; Case 2.2 handles nativeValue > 0 && _req.token == address(0)).
+            else {
                 uint256 gasAmount = nativeValue;
                 // Send Gas to caller's UEA via instant route
                 _sendTxWithGas(
