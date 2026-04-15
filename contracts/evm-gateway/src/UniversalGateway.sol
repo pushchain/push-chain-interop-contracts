@@ -64,6 +64,10 @@ contract UniversalGateway is
     ///         See audit finding F-2026-15645.
     uint256 public constant MIN_CHAINLINK_STALE_PERIOD = 10 minutes;
 
+    /// @notice Upper bound for INBOUND_FEE. Prevents admin from configuring an absurdly high flat
+    ///         protocol fee that would DoS or grief users. See audit finding F-2026-15641.
+    uint256 public constant MAX_INBOUND_FEE = 1 ether;
+
     /// @notice MUTABLE — admin-updatable via setTSS.
     address public TSS_ADDRESS;
     /// @notice MUTABLE — admin-updatable via setVault.
@@ -323,8 +327,11 @@ contract UniversalGateway is
     }
 
     /// @notice                Set the flat protocol fee (in wei). 0 disables.
+    /// @dev                   Must be <= MAX_INBOUND_FEE to prevent misconfiguration or governance
+    ///                        abuse (audit F-2026-15641).
     /// @param fee             New protocol fee in wei
     function setProtocolFee(uint256 fee) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (fee > MAX_INBOUND_FEE) revert Errors.InvalidInput();
         INBOUND_FEE = fee;
         emit ProtocolFeeUpdated(fee);
     }

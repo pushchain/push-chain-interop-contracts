@@ -410,6 +410,30 @@ contract GatewayAdminSettersTest is BaseTest {
         assertEq(gateway.chainlinkStalePeriod(), min);
     }
 
+    // =========================
+    //   SET PROTOCOL FEE TESTS
+    // =========================
+
+    function testSetProtocolFee_AcceptsZero() public {
+        vm.prank(admin);
+        gateway.setProtocolFee(0);
+        assertEq(gateway.INBOUND_FEE(), 0);
+    }
+
+    function testSetProtocolFee_AcceptsMaxExact() public {
+        uint256 max = gateway.MAX_INBOUND_FEE();
+        vm.prank(admin);
+        gateway.setProtocolFee(max);
+        assertEq(gateway.INBOUND_FEE(), max);
+    }
+
+    function testSetProtocolFee_RevertsAboveMax() public {
+        uint256 max = gateway.MAX_INBOUND_FEE();
+        vm.prank(admin);
+        vm.expectRevert(Errors.InvalidInput.selector);
+        gateway.setProtocolFee(max + 1);
+    }
+
     function testSetL2SequencerFeed() public {
         MockSequencerUptimeFeed seq = new MockSequencerUptimeFeed();
         vm.prank(admin);
