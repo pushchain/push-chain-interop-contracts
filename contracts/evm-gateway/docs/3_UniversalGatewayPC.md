@@ -10,7 +10,7 @@ Gas fees are paid in native PC, swapped to the origin chain's gas token PRC20 vi
 
 | Section                       | Description                                           |
 | ----------------------------- | ----------------------------------------------------- |
-| **UGPC_1: Admin Actions**     | `initialize`, `pause`/`unpause`, `setVaultPC`, `setRescueFundsGasLimit` |
+| **UGPC_1: Admin Actions**     | `initialize`, `pause`/`unpause`, `setVaultPC` |
 | **UGPC_2: Outbound TX**       | `sendUniversalTxOutbound`, `rescueFundsOnSourceChain`                    |
 | **UGPC_3: Internal Helpers**  | TX_TYPE inference, fee quoting, swap+burn, PRC20 burn |
 | **UGPC_3: View Functions** *(interface)* | `UNIVERSAL_CORE()` view accessor           |
@@ -135,10 +135,10 @@ The gateway never custodies withdrawn value — burning is the canonical on-chai
 - No PRC20 burn (tokens are stuck, not held by the user).
 - No protocol fee.
 - No nonce or subTxId.
-- Fixed gas limit via `RESCUE_FUNDS_GAS_LIMIT` (admin-configurable).
+- Gas limit (`rescueGasLimit`) and pricing are sourced from `UniversalCore.getRescueFundsGasLimit(prc20)` — not stored locally on UGPC.
 - Emits `TX_TYPE.RESCUE_FUNDS` (value 4).
 
-**Storage variable:** `RESCUE_FUNDS_GAS_LIMIT` — set via `setRescueFundsGasLimit(uint256)` (admin only, whenNotPaused).
+**Configuration source:** Rescue gas parameters live in `UniversalCore` and are managed there. UGPC has no local storage variable or setter for rescue gas limits.
 
 ---
 
@@ -146,7 +146,7 @@ The gateway never custodies withdrawn value — burning is the canonical on-chai
 
 | Role                 | Permissions                                             |
 | -------------------- | ------------------------------------------------------- |
-| `DEFAULT_ADMIN_ROLE` | `initialize`, `setVaultPC`, `setRescueFundsGasLimit`    |
+| `DEFAULT_ADMIN_ROLE` | `initialize`, `setVaultPC`                              |
 | `PAUSER_ROLE`        | `pause`, `unpause`                                      |
 
 ---
