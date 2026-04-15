@@ -692,6 +692,138 @@ describe("Universal Gateway - Rate Limiting Tests", () => {
             }
         });
 
+        it("Should preserve epoch usage when threshold is updated (F-2026-15699)", async () => {
+            // Enable epoch duration
+            await program.methods
+                .updateEpochDuration(new anchor.BN(3600))
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    rateLimitConfig: rateLimitConfigPda,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+
+            const nativeSolTokenRateLimitPda = getTokenRateLimitPda(PublicKey.default);
+
+            // Read current epoch usage so the test is correct regardless of prior state in this run.
+            // If the stored epoch is stale (different from the current epoch), the runtime will reset
+            // `used` to 0 on the next consume call — so treat priorUsed as 0 in that case.
+            const epochDurationSec = 3600;
+            const stateBefore = await program.account.tokenRateLimit.fetch(nativeSolTokenRateLimitPda);
+            const currentSlot = await provider.connection.getSlot();
+            const currentUnixTs = await provider.connection.getBlockTime(currentSlot);
+            if (currentUnixTs === null) {
+                throw new Error("Failed to read current block time");
+            }
+            const currentEpoch = Math.floor(currentUnixTs / epochDurationSec);
+            const priorUsed = stateBefore.epochUsage.epoch.toNumber() === currentEpoch
+                ? (stateBefore.epochUsage.used as anchor.BN)
+                : new anchor.BN(0);
+
+            // Threshold = prior + 1 SOL (deposit) + 0.5 SOL (remaining margin)
+            const deposit = new anchor.BN(LAMPORTS_PER_SOL);
+            const margin = new anchor.BN(0.5 * LAMPORTS_PER_SOL);
+            const threshold1 = priorUsed.add(deposit).add(margin);
+
+            await program.methods
+                .setTokenRateLimit(threshold1)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    tokenRateLimit: nativeSolTokenRateLimitPda,
+                    tokenMint: PublicKey.default,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+
+            // Consume 1 SOL — leaves 0.5 SOL remaining
+            await program.methods
+                .sendUniversalTx(
+                    {
+                        recipient: Array.from(Buffer.alloc(20, 0)),
+                        token: PublicKey.default,
+                        amount: deposit,
+                        payload: Buffer.from([]),
+                        revertRecipient: user1.publicKey,
+                        signatureData: Buffer.from("sig_15699_1"),
+                    },
+                    deposit
+                )
+                .accountsPartial({
+                    config: configPda,
+                    vault: vaultPda,
+                    feeVault: feeVaultPda,
+                    userTokenAccount: null,
+                    gatewayTokenAccount: null,
+                    user: user1.publicKey,
+                    priceUpdate: mockPriceFeed,
+                    rateLimitConfig: rateLimitConfigPda,
+                    tokenRateLimit: nativeSolTokenRateLimitPda,
+                    tokenProgram: spl.TOKEN_PROGRAM_ID,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([user1])
+                .rpc();
+
+            // Admin raises threshold by 0.1 SOL (routine cap adjustment).
+            // Remaining budget is now 0.6 SOL (usage preserved — not reset to 0).
+            const threshold2 = threshold1.add(new anchor.BN(0.1 * LAMPORTS_PER_SOL));
+            await program.methods
+                .setTokenRateLimit(threshold2)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    tokenRateLimit: nativeSolTokenRateLimitPda,
+                    tokenMint: PublicKey.default,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+
+            // A deposit of 0.7 SOL must fail: used = prior+1, remaining = 0.6 SOL < 0.7 SOL.
+            // If epoch_usage were reset, remaining would be 0.6 SOL from a zero base — and 0.7
+            // would exceed the new threshold too, so we need the right assertion.
+            // The key signal: the deposit that was within (new_threshold - 0) but outside
+            // (new_threshold - used) gets rejected.
+            const overRemaining = new anchor.BN(0.7 * LAMPORTS_PER_SOL);
+            try {
+                await program.methods
+                    .sendUniversalTx(
+                        {
+                            recipient: Array.from(Buffer.alloc(20, 0)),
+                            token: PublicKey.default,
+                            amount: overRemaining,
+                            payload: Buffer.from([]),
+                            revertRecipient: user1.publicKey,
+                            signatureData: Buffer.from("sig_15699_2"),
+                        },
+                        overRemaining
+                    )
+                    .accountsPartial({
+                        config: configPda,
+                        vault: vaultPda,
+                        feeVault: feeVaultPda,
+                        userTokenAccount: null,
+                        gatewayTokenAccount: null,
+                        user: user1.publicKey,
+                        priceUpdate: mockPriceFeed,
+                        rateLimitConfig: rateLimitConfigPda,
+                        tokenRateLimit: nativeSolTokenRateLimitPda,
+                        tokenProgram: spl.TOKEN_PROGRAM_ID,
+                        systemProgram: SystemProgram.programId,
+                    })
+                    .signers([user1])
+                    .rpc();
+                expect.fail("Should reject — epoch usage must survive a threshold update");
+            } catch (error: any) {
+                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code;
+                expect(errorCode).to.equal("RateLimitExceeded");
+            }
+        });
+
         it("Should skip token rate limit when epoch_duration is 0", async () => {
             // Disable epoch duration
             await program.methods
@@ -769,8 +901,26 @@ describe("Universal Gateway - Rate Limiting Tests", () => {
                 .signers([admin])
                 .rpc();
 
-            const limitThreshold = new anchor.BN(0.5 * LAMPORTS_PER_SOL);
             const nativeSolTokenRateLimitPda = getTokenRateLimitPda(PublicKey.default);
+
+            // Read current epoch usage — epoch_usage is now preserved across setTokenRateLimit
+            // calls (F-2026-15699), so we must set the threshold relative to current state.
+            // Normalize to 0 if the stored epoch is stale; the runtime resets `used` on the
+            // first consume of a new epoch, so over-counting stale usage would mis-provision the threshold.
+            const epochDurationSec = 3600;
+            const stateBefore = await program.account.tokenRateLimit.fetch(nativeSolTokenRateLimitPda);
+            const currentSlot = await provider.connection.getSlot();
+            const currentUnixTs = await provider.connection.getBlockTime(currentSlot);
+            if (currentUnixTs === null) {
+                throw new Error("Failed to read current block time");
+            }
+            const currentEpoch = Math.floor(currentUnixTs / epochDurationSec);
+            const priorUsed = stateBefore.epochUsage.epoch.toNumber() === currentEpoch
+                ? (stateBefore.epochUsage.used as anchor.BN)
+                : new anchor.BN(0);
+            const fundsAmount = 0.3 * LAMPORTS_PER_SOL;
+            // Allow prior_used + exactly one 0.3 SOL deposit; second 0.3 SOL deposit must fail.
+            const limitThreshold = priorUsed.add(new anchor.BN(fundsAmount)).add(new anchor.BN(0.1 * LAMPORTS_PER_SOL));
 
             await program.methods
                 .setTokenRateLimit(limitThreshold)
@@ -788,7 +938,6 @@ describe("Universal Gateway - Rate Limiting Tests", () => {
             // Gas amount must be within USD caps ($1-$10), so use $2.50 for gas
             const gasAmountUsd = 2.5;
             const gasAmount = calculateSolAmount(gasAmountUsd, solPrice);
-            const fundsAmount = 0.3 * LAMPORTS_PER_SOL;
             const totalAmount = fundsAmount + gasAmount;
 
             const req = {

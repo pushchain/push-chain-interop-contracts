@@ -278,6 +278,8 @@ pub struct TokenRateLimitAction<'info> {
 /// @param limit_threshold Max amount per epoch (token's natural units).
 ///        Set to 0 to remove support for this token — deposits will be rejected with NotSupported.
 ///        To disable epoch consumption while keeping the token supported, set epoch_duration_sec to 0.
+/// @dev  Epoch usage is intentionally preserved across threshold updates (EVM parity).
+///       New accounts are zero-initialized by the runtime, so no explicit reset is needed on first init.
 pub fn set_token_rate_limit(
     ctx: Context<TokenRateLimitAction>,
     limit_threshold: u128,
@@ -286,7 +288,8 @@ pub fn set_token_rate_limit(
     let token_rate_limit = &mut ctx.accounts.token_rate_limit;
     token_rate_limit.token_mint = ctx.accounts.token_mint.key();
     token_rate_limit.limit_threshold = limit_threshold;
-    token_rate_limit.epoch_usage = EpochUsage { epoch: 0, used: 0 };
+    // epoch_usage is NOT reset here — preserving accumulated usage prevents an admin
+    // threshold update from inadvertently clearing the current-epoch counter (EVM parity).
 
     // Emit event
     emit!(TokenRateLimitUpdated {
