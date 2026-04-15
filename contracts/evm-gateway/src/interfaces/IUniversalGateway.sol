@@ -46,24 +46,6 @@ interface IUniversalGateway {
         bool fromCEA
     );
 
-    /// @notice                  Universal tx execution event on external chains.
-    /// @param subTxId           Gateway transaction identifier
-    /// @param universalTxId     Universal transaction identifier
-    /// @param pushAccount       Push Chain account (UEA) this transaction is attributed to
-    /// @param target            Target contract address to execute call
-    /// @param token             Token address being sent
-    /// @param amount            Amount of token being sent
-    /// @param data              Calldata to be executed on target contract
-    event UniversalTxExecuted(
-        bytes32 indexed subTxId,
-        bytes32 indexed universalTxId,
-        address indexed pushAccount,
-        address target,
-        address token,
-        uint256 amount,
-        bytes data
-    );
-
     /// @notice                  Vault updated event
     /// @param oldVault          Previous Vault address
     /// @param newVault          New Vault address

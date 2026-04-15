@@ -1004,7 +1004,6 @@ upgraded), calls `CEA.executeUniversalTx{value: 0}(migrationPayload)`.
 3. `isMigration(payload)` → true.
 4. `_handleMigration()`: fetches `factory.CEA_MIGRATION_CONTRACT()`, `delegatecall`s `migrateCEA()`.
 5. The migration contract executes in the CEA's storage context, upgrading internal state.
-6. Emits `UniversalTxExecuted(txId, universalTxId, originCaller, address(CEA), payload)`.
 
 **Result**: BOB's CEA is upgraded to the new implementation. No tokens moved. No PRC20 burned.
 
@@ -1036,7 +1035,6 @@ sequenceDiagram
     CF-->>CEA: migrationContractAddress
     CEA->>MC: delegatecall migrateCEA() [runs in CEA's storage context]
     MC-->>CEA: success (CEA state upgraded)
-    CEA-->>V: emit UniversalTxExecuted
     V-->>TSS: emit UniversalTxFinalized
 ```
 
