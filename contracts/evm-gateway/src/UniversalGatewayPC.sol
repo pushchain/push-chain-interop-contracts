@@ -233,6 +233,12 @@ contract UniversalGatewayPC is
         (gasToken, gasFee, protocolFee, gasPrice, chainNamespace) =
             IUniversalCore(UNIVERSAL_CORE).getOutboundTxGasAndFees(token, gasLimitUsed);
 
+        // If gasLimitUsed is still 0 (BASE_GAS_LIMIT not initialised in proxy),
+        // fall back to the per-chain base gas limit so the event carries a non-zero value.
+        if (gasLimitUsed == 0) {
+            gasLimitUsed = IUniversalCore(UNIVERSAL_CORE).baseGasLimitByChainNamespace(chainNamespace);
+        }
+
         if (gasToken == address(0) || gasFee + protocolFee == 0) {
             revert Errors.InvalidData();
         }

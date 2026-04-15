@@ -9,6 +9,13 @@ interface IUniversalCore {
     function BASE_GAS_LIMIT() external view returns (uint256 baseGasLimit);
 
     /**
+     * @notice Get per-chain base gas limit by chain namespace
+     * @param chainNamespace Chain namespace string (e.g. "eip155:11155111")
+     * @return baseGasLimit Per-chain base gas limit (0 if not set)
+     */
+    function baseGasLimitByChainNamespace(string calldata chainNamespace) external view returns (uint256 baseGasLimit);
+
+    /**
      * @notice Get gas fee for a PRC20 token, split into gasFee and protocolFee.
      * @dev    When gasLimit is 0, falls back to BASE_GAS_LIMIT.
      * @param _prc20 PRC20 address

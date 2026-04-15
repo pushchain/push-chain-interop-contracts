@@ -55,17 +55,6 @@ remappings = [
 
 
 # etherscan configuration
-[etherscan]
-mainnet = { key = "${ETHERSCAN_API_KEY}" }
-sepolia = { key = "${ETHERSCAN_API_KEY}" }
-polygon = { key = "${POLYGON_SCAN_API_KEY}", url = "https://api.polygonscan.com/api" }
-polygon-testnet = { key = "${POLYGON_SCAN_API_KEY}", url = "https://api-amoy.polygonscan.com/api" }
-bsc = { key = "${BSC_SCAN_API_KEY}", url = "https://api.bscscan.com/api" }
-bsc-testnet = { key = "${BSC_SCAN_API_KEY}", url = "https://api-testnet.bscscan.com/api" }
-arbitrum = { key = "${ARB_SCAN_API_KEY}", url = "https://api.arbiscan.io/api" }
-arbitrum-testnet = { key = "${ARB_SCAN_API_KEY}", url = "https://api-sepolia.arbiscan.io/api" }
-base = { key = "${BASE_SCAN_API_KEY}", url = "https://api.basescan.org/api" }
-base-testnet = { key = "${BASE_SCAN_API_KEY}", url = "https://api-sepolia.basescan.org/api" }
 # FUZZ TESTING CONFIGURATION     fuzz testing configuration
 
 [fuzz]

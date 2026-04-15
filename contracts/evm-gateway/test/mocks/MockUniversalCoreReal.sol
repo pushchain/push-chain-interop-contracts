@@ -46,6 +46,9 @@ contract MockUniversalCoreReal is IUniversalCore {
     /// @notice Base gas limit for the cross-chain outbound transactions.
     uint256 public BASE_GAS_LIMIT = 500_000;
 
+    /// @notice Per-chain base gas limit (fallback when BASE_GAS_LIMIT is 0).
+    mapping(string => uint256) public baseGasLimitByChainNamespace;
+
     /// @notice Protocol fee per token in native PC
     mapping(address => uint256) public protocolFeeByToken;
 
