@@ -34,12 +34,14 @@ contract UniversalGatewayPC is
 {
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
+    /// @notice MUTABLE — admin-updatable via setUniversalCore.
     address public UNIVERSAL_CORE;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
+    /// @notice MUTABLE — admin-updatable via setVaultPC.
     IVaultPC public VAULT_PC;
     uint256 public nonce;
     // ==============================

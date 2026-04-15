@@ -39,6 +39,7 @@ contract Vault is
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     IUniversalGateway public gateway;
+    /// @notice MUTABLE — admin-updatable via setTSS.
     address public TSS_ADDRESS;
     ICEAFactory public CEAFactory;
 

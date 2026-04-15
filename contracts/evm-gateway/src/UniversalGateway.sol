@@ -63,20 +63,27 @@ contract UniversalGateway is
     bytes32 public constant VAULT_ROLE = keccak256("VAULT_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
+    /// @notice MUTABLE — admin-updatable via setTSS.
     address public TSS_ADDRESS;
+    /// @notice MUTABLE — admin-updatable via setVault.
     address public VAULT;
 
     /// @notice Rate-Limiting CAPS and States
+    /// @dev MUTABLE — admin-updatable via setBlockUsdCap.
     uint256 public BLOCK_USD_CAP;
     uint256 public epochDurationSec;
     uint256 private _lastBlockNumber;
     uint256 private _consumedUSDinBlock;
+    /// @dev MUTABLE — admin-updatable via setCapsUSD.
     uint256 public MIN_CAP_UNIVERSAL_TX_USD;
+    /// @dev MUTABLE — admin-updatable via setCapsUSD.
     uint256 public MAX_CAP_UNIVERSAL_TX_USD;
     mapping(address => uint256) public tokenToLimitThreshold;
     mapping(address => EpochUsage) private _usage;
 
     /// @notice Uniswap V3 factory & router (chain-specific)
+    /// @dev MUTABLE — set in initialize only.
+    ///      (No runtime setter currently, but the slot is storage and upgradable.)
     address public WETH;
     ISwapRouterV3 public uniV3Router;
     IUniswapV3Factory public uniV3Factory;
@@ -92,8 +99,10 @@ contract UniversalGateway is
 
     mapping(bytes32 => bool) public isExecuted;
 
+    /// @notice MUTABLE — admin-updatable via setCEAFactory.
     address public CEA_FACTORY;
 
+    /// @notice MUTABLE — admin-updatable via setProtocolFee.
     uint256 public INBOUND_FEE;
 
     uint256 public totalProtocolFeesCollected;
