@@ -468,9 +468,9 @@ abstract contract BaseTest is Test {
         gateway.setV3FeeOrder(a, b, c);
     }
 
-    function setRouters(address factory, address router) internal {
+    function setUniswapV3Config(address factory, address router) internal {
         vm.prank(admin);
-        gateway.setRouters(factory, router);
+        gateway.setUniswapV3Config(factory, router);
     }
 
     function setCaps(uint256 minUsd1e18, uint256 maxUsd1e18) internal {

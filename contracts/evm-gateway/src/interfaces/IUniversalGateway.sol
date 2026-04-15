@@ -51,6 +51,15 @@ interface IUniversalGateway {
     /// @param newVault          New Vault address
     event VaultUpdated(address indexed oldVault, address indexed newVault);
 
+    /// @notice                  Uniswap V3 factory / router updated event.
+    /// @param oldFactory        Previous Uniswap V3 factory address
+    /// @param newFactory        New Uniswap V3 factory address
+    /// @param oldRouter         Previous Uniswap V3 router address
+    /// @param newRouter         New Uniswap V3 router address
+    event UniswapV3ConfigUpdated(
+        address indexed oldFactory, address indexed newFactory, address oldRouter, address newRouter
+    );
+
     /// @notice                  Protocol fee updated event
     /// @param newFee            New protocol fee in wei
     event ProtocolFeeUpdated(uint256 newFee);

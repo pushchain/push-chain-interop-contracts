@@ -228,13 +228,22 @@ contract UniversalGateway is
         defaultSwapDeadlineSec = deadlineSec;
     }
 
-    /// @notice                Allows the admin to set the Uniswap V3 factory and router
+    /// @notice                Allows the admin to set the Uniswap V3 factory and router.
+    /// @dev                   Renamed from setRouters (audit finding F-2026-15682). The previous
+    ///                        plural name implied multi-router support that does not exist.
     /// @param factory         New Uniswap V3 factory address
     /// @param router          New Uniswap V3 router address
-    function setRouters(address factory, address router) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function setUniswapV3Config(address factory, address router)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+        whenNotPaused
+    {
         if (factory == address(0) || router == address(0)) revert Errors.ZeroAddress();
+        address oldFactory = address(uniV3Factory);
+        address oldRouter = address(uniV3Router);
         uniV3Factory = IUniswapV3Factory(factory);
         uniV3Router = ISwapRouterV3(router);
+        emit UniswapV3ConfigUpdated(oldFactory, factory, oldRouter, router);
     }
 
     /// @notice                Set limit thresholds for a batch of tokens (0 disables support)

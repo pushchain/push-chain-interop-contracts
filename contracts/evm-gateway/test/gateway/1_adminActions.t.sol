@@ -162,48 +162,48 @@ contract GatewayAdminSettersTest is BaseTest {
     }
 
     // =========================
-    //      ROUTERS TESTS
+    //   UNISWAP V3 CONFIG TESTS
     // =========================
 
-    function testSetRouters() public {
+    function testSetUniswapV3Config() public {
         address newFactory = address(0x456);
         address newRouter = address(0x789);
 
         vm.prank(admin);
-        gateway.setRouters(newFactory, newRouter);
+        gateway.setUniswapV3Config(newFactory, newRouter);
 
         assertEq(address(gateway.uniV3Factory()), newFactory);
         assertEq(address(gateway.uniV3Router()), newRouter);
     }
 
-    function testSetRoutersOnlyAdmin() public {
+    function testSetUniswapV3ConfigOnlyAdmin() public {
         address newFactory = address(0x456);
         address newRouter = address(0x789);
 
         // Non-admin should not be able to set routers
         vm.prank(user1);
         vm.expectRevert();
-        gateway.setRouters(newFactory, newRouter);
+        gateway.setUniswapV3Config(newFactory, newRouter);
 
         // Admin should be able to set routers
         vm.prank(admin);
-        gateway.setRouters(newFactory, newRouter);
+        gateway.setUniswapV3Config(newFactory, newRouter);
         assertEq(address(gateway.uniV3Factory()), newFactory);
     }
 
-    function testSetRoutersZeroAddress() public {
+    function testSetUniswapV3ConfigZeroAddress() public {
         // Zero factory
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        gateway.setRouters(address(0), address(0x789));
+        gateway.setUniswapV3Config(address(0), address(0x789));
 
         // Zero router
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        gateway.setRouters(address(0x456), address(0));
+        gateway.setUniswapV3Config(address(0x456), address(0));
     }
 
-    function testSetRoutersWhenPaused() public {
+    function testSetUniswapV3ConfigWhenPaused() public {
         // Pause the contract
         vm.prank(pauser);
         gateway.pause();
@@ -211,7 +211,7 @@ contract GatewayAdminSettersTest is BaseTest {
         // Should not be able to set routers when paused
         vm.prank(admin);
         vm.expectRevert();
-        gateway.setRouters(address(0x456), address(0x789));
+        gateway.setUniswapV3Config(address(0x456), address(0x789));
     }
 
     // =========================
@@ -470,7 +470,7 @@ contract GatewayAdminSettersTest is BaseTest {
 
         vm.prank(admin);
         vm.expectRevert();
-        gateway.setRouters(address(0x1), address(0x2));
+        gateway.setUniswapV3Config(address(0x1), address(0x2));
 
         vm.prank(admin);
         vm.expectRevert();

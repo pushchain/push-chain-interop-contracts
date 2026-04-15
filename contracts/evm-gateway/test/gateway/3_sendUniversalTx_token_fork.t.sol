@@ -98,7 +98,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
 
         // Override gateway configuration to use mainnet contracts
         vm.prank(admin);
-        gatewayFork.setRouters(MAINNET_UNISWAP_V3_FACTORY, MAINNET_UNISWAP_V3_ROUTER);
+        gatewayFork.setUniswapV3Config(MAINNET_UNISWAP_V3_FACTORY, MAINNET_UNISWAP_V3_ROUTER);
 
         // Initialize real mainnet token contracts
         mainnetWETH = IERC20(MAINNET_WETH);

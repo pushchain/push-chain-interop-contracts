@@ -69,7 +69,7 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 | Role | Constant | Assigned To | Protected Functions |
 |---|---|---|---|
-| `DEFAULT_ADMIN_ROLE` | OZ default | Admin multisig | `pause()`, `unpause()`, `setTSS()`, `setVault()` (whenPaused), `setCapsUSD()`, `setBlockUsdCap()`, `setRouters()`, `setTokenLimitThresholds()`, `setEthUsdFeed()`, `setChainlinkStalePeriod()`, `setL2SequencerFeed()`, `setL2SequencerGracePeriodSec()`, `setCEAFactory()`, `setProtocolFee()`, `updateEpochDuration()`, `setDefaultSwapDeadline()`, `setV3FeeOrder()` |
+| `DEFAULT_ADMIN_ROLE` | OZ default | Admin multisig | `pause()`, `unpause()`, `setTSS()`, `setVault()` (whenPaused), `setCapsUSD()`, `setBlockUsdCap()`, `setUniswapV3Config()`, `setTokenLimitThresholds()`, `setEthUsdFeed()`, `setChainlinkStalePeriod()`, `setL2SequencerFeed()`, `setL2SequencerGracePeriodSec()`, `setCEAFactory()`, `setProtocolFee()`, `updateEpochDuration()`, `setDefaultSwapDeadline()`, `setV3FeeOrder()` |
 | `TSS_ROLE` | `keccak256("TSS_ROLE")` | TSS address | Receives native ETH via `_handleDeposits()` (direct transfer target) |
 | `VAULT_ROLE` | `keccak256("VAULT_ROLE")` | Vault contract | `revertUniversalTx()`, `rescueFunds()` |
 | CEA identity check | via CEAFactory | CEA contracts only | `sendUniversalTxFromCEA()` |

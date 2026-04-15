@@ -77,7 +77,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
 
         // Update gateway with mock Uniswap addresses
         vm.prank(admin);
-        gatewayTemp.setRouters(address(mockFactory), address(mockRouter));
+        gatewayTemp.setUniswapV3Config(address(mockFactory), address(mockRouter));
 
         // Explicitly set fee order to ensure it's initialized (default should be [500, 3000, 10000])
         vm.prank(admin);
