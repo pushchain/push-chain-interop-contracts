@@ -146,7 +146,10 @@ contract UniversalGateway is
         MAX_CAP_UNIVERSAL_TX_USD = maxCapUsd;
 
         WETH = wethAddress;
-        if (factory != address(0) && router != address(0)) {
+        if ((factory == address(0)) != (router == address(0))) {
+            revert Errors.ZeroAddress();
+        }
+        if (factory != address(0)) {
             uniV3Factory = IUniswapV3Factory(factory);
             uniV3Router = ISwapRouterV3(router);
         }
