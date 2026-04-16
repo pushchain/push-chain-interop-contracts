@@ -32,4 +32,5 @@ library Errors {
     error InsufficientBalance();
     error InsufficientProtocolFee();
     error TokenBurnFailed(address token, uint256 amount);
+    error TokenTransferFailed(address token, uint256 amount);
 }

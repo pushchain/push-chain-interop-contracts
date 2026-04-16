@@ -107,6 +107,8 @@ contract UniversalGatewayPC is
     {
         _validateParams(req.token, req.revertRecipient);
 
+        if (!IUniversalCore(UNIVERSAL_CORE).isSupportedToken(req.token)) revert Errors.NotSupported();
+
         TX_TYPE txType = _fetchTxType(req);
 
         (
@@ -265,7 +267,8 @@ contract UniversalGatewayPC is
     /// @param token            PRC20 token address.
     /// @param amount           Amount to burn.
     function _burnPRC20(address from, address token, uint256 amount) internal {
-        IPRC20(token).transferFrom(from, address(this), amount);
+        bool transferred = IPRC20(token).transferFrom(from, address(this), amount);
+        if (!transferred) revert Errors.TokenTransferFailed(token, amount);
         bool ok = IPRC20(token).burn(amount);
         if (!ok) revert Errors.TokenBurnFailed(token, amount);
     }
