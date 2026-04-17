@@ -20,13 +20,11 @@ import { TX_TYPE } from "./libraries/Types.sol";
 import { UniversalOutboundTxRequest } from "./libraries/TypesUGPC.sol";
 
 
-import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import { AccessControlUpgradeable } from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 contract UniversalGatewayPC is
-    Initializable,
     AccessControlUpgradeable,
     ReentrancyGuardUpgradeable,
     PausableUpgradeable,
@@ -34,14 +32,16 @@ contract UniversalGatewayPC is
 {
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
+    /// @notice MUTABLE — admin-updatable via setUniversalCore.
     address public UNIVERSAL_CORE;
+    /// @notice MUTABLE — admin-updatable via setVaultPC.
+    IVaultPC public VAULT_PC;
+    uint256 public nonce;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
-    IVaultPC public VAULT_PC;
-    uint256 public nonce;
     // ==============================
     //    UGPC_1: ADMIN ACTIONS
     // ==============================
@@ -83,6 +83,17 @@ contract UniversalGatewayPC is
         emit VaultPCUpdated(oldVaultPC, vaultPC);
     }
 
+    /// @notice                Sets the UniversalCore address.
+    /// @dev                   Allows admin to re-point the UniversalCore dependency without
+    ///                        requiring a proxy upgrade. Mirrors setVaultPC. See audit F-2026-15657.
+    /// @param universalCore   Address of the new UniversalCore.
+    function setUniversalCore(address universalCore) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        if (universalCore == address(0)) revert Errors.ZeroAddress();
+        address oldUniversalCore = UNIVERSAL_CORE;
+        UNIVERSAL_CORE = universalCore;
+        emit UniversalCoreUpdated(oldUniversalCore, universalCore);
+    }
+
     // ==============================
     //    UGPC_2: OUTBOUND TX
     // ==============================
@@ -95,6 +106,8 @@ contract UniversalGatewayPC is
         nonReentrant
     {
         _validateParams(req.token, req.revertRecipient);
+
+        if (!IUniversalCore(UNIVERSAL_CORE).isSupportedToken(req.token)) revert Errors.NotSupported();
 
         TX_TYPE txType = _fetchTxType(req);
 
@@ -254,7 +267,8 @@ contract UniversalGatewayPC is
     /// @param token            PRC20 token address.
     /// @param amount           Amount to burn.
     function _burnPRC20(address from, address token, uint256 amount) internal {
-        IPRC20(token).transferFrom(from, address(this), amount);
+        bool transferred = IPRC20(token).transferFrom(from, address(this), amount);
+        if (!transferred) revert Errors.TokenTransferFailed(token, amount);
         bool ok = IPRC20(token).burn(amount);
         if (!ok) revert Errors.TokenBurnFailed(token, amount);
     }

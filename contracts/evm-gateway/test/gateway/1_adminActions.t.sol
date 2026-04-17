@@ -162,48 +162,48 @@ contract GatewayAdminSettersTest is BaseTest {
     }
 
     // =========================
-    //      ROUTERS TESTS
+    //   UNISWAP V3 CONFIG TESTS
     // =========================
 
-    function testSetRouters() public {
+    function testSetUniswapV3Config() public {
         address newFactory = address(0x456);
         address newRouter = address(0x789);
 
         vm.prank(admin);
-        gateway.setRouters(newFactory, newRouter);
+        gateway.setUniswapV3Config(newFactory, newRouter);
 
         assertEq(address(gateway.uniV3Factory()), newFactory);
         assertEq(address(gateway.uniV3Router()), newRouter);
     }
 
-    function testSetRoutersOnlyAdmin() public {
+    function testSetUniswapV3ConfigOnlyAdmin() public {
         address newFactory = address(0x456);
         address newRouter = address(0x789);
 
         // Non-admin should not be able to set routers
         vm.prank(user1);
         vm.expectRevert();
-        gateway.setRouters(newFactory, newRouter);
+        gateway.setUniswapV3Config(newFactory, newRouter);
 
         // Admin should be able to set routers
         vm.prank(admin);
-        gateway.setRouters(newFactory, newRouter);
+        gateway.setUniswapV3Config(newFactory, newRouter);
         assertEq(address(gateway.uniV3Factory()), newFactory);
     }
 
-    function testSetRoutersZeroAddress() public {
+    function testSetUniswapV3ConfigZeroAddress() public {
         // Zero factory
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        gateway.setRouters(address(0), address(0x789));
+        gateway.setUniswapV3Config(address(0), address(0x789));
 
         // Zero router
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        gateway.setRouters(address(0x456), address(0));
+        gateway.setUniswapV3Config(address(0x456), address(0));
     }
 
-    function testSetRoutersWhenPaused() public {
+    function testSetUniswapV3ConfigWhenPaused() public {
         // Pause the contract
         vm.prank(pauser);
         gateway.pause();
@@ -211,7 +211,7 @@ contract GatewayAdminSettersTest is BaseTest {
         // Should not be able to set routers when paused
         vm.prank(admin);
         vm.expectRevert();
-        gateway.setRouters(address(0x456), address(0x789));
+        gateway.setUniswapV3Config(address(0x456), address(0x789));
     }
 
     // =========================
@@ -389,6 +389,51 @@ contract GatewayAdminSettersTest is BaseTest {
         gateway.setChainlinkStalePeriod(2 hours);
     }
 
+    function testSetChainlinkStalePeriod_RevertsOnZero() public {
+        vm.prank(admin);
+        vm.expectRevert(Errors.InvalidInput.selector);
+        gateway.setChainlinkStalePeriod(0);
+    }
+
+    function testSetChainlinkStalePeriod_RevertsBelowMinimum() public {
+        uint256 min = gateway.MIN_CHAINLINK_STALE_PERIOD();
+        // Any value strictly less than the minimum must revert
+        vm.prank(admin);
+        vm.expectRevert(Errors.InvalidInput.selector);
+        gateway.setChainlinkStalePeriod(min - 1);
+    }
+
+    function testSetChainlinkStalePeriod_AcceptsMinimumExact() public {
+        uint256 min = gateway.MIN_CHAINLINK_STALE_PERIOD();
+        vm.prank(admin);
+        gateway.setChainlinkStalePeriod(min);
+        assertEq(gateway.chainlinkStalePeriod(), min);
+    }
+
+    // =========================
+    //   SET PROTOCOL FEE TESTS
+    // =========================
+
+    function testSetProtocolFee_AcceptsZero() public {
+        vm.prank(admin);
+        gateway.setProtocolFee(0);
+        assertEq(gateway.INBOUND_FEE(), 0);
+    }
+
+    function testSetProtocolFee_AcceptsMaxExact() public {
+        uint256 max = gateway.MAX_INBOUND_FEE();
+        vm.prank(admin);
+        gateway.setProtocolFee(max);
+        assertEq(gateway.INBOUND_FEE(), max);
+    }
+
+    function testSetProtocolFee_RevertsAboveMax() public {
+        uint256 max = gateway.MAX_INBOUND_FEE();
+        vm.prank(admin);
+        vm.expectRevert(Errors.InvalidInput.selector);
+        gateway.setProtocolFee(max + 1);
+    }
+
     function testSetL2SequencerFeed() public {
         MockSequencerUptimeFeed seq = new MockSequencerUptimeFeed();
         vm.prank(admin);
@@ -470,7 +515,7 @@ contract GatewayAdminSettersTest is BaseTest {
 
         vm.prank(admin);
         vm.expectRevert();
-        gateway.setRouters(address(0x1), address(0x2));
+        gateway.setUniswapV3Config(address(0x1), address(0x2));
 
         vm.prank(admin);
         vm.expectRevert();
@@ -568,8 +613,9 @@ contract GatewayAdminSettersTest is BaseTest {
         uint256 oldDuration = gateway.epochDurationSec();
 
         // Expect EpochDurationUpdated event
+        uint64 expectedEpochIndex = uint64(block.timestamp / oldDuration);
         vm.expectEmit(true, true, true, true);
-        emit IUniversalGateway.EpochDurationUpdated(oldDuration, newDuration);
+        emit IUniversalGateway.EpochDurationUpdated(oldDuration, newDuration, expectedEpochIndex);
 
         vm.prank(admin);
         gateway.updateEpochDuration(newDuration);

@@ -69,11 +69,11 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 | Role | Constant | Assigned To | Protected Functions |
 |---|---|---|---|
-| `DEFAULT_ADMIN_ROLE` | OZ default | Admin multisig | `pause()`, `unpause()`, `setTSS()`, `setVault()` (whenPaused), `setCapsUSD()`, `setBlockUsdCap()`, `setRouters()`, `setTokenLimitThresholds()`, `setEthUsdFeed()`, `setChainlinkStalePeriod()`, `setL2SequencerFeed()`, `setL2SequencerGracePeriodSec()`, `setCEAFactory()`, `setProtocolFee()`, `updateEpochDuration()`, `setDefaultSwapDeadline()`, `setV3FeeOrder()` |
+| `DEFAULT_ADMIN_ROLE` | OZ default | Admin multisig | `pause()`, `unpause()`, `setTSS()`, `setVault()` (whenPaused), `setCapsUSD()`, `setBlockUsdCap()`, `setUniswapV3Config()`, `setTokenLimitThresholds()`, `setEthUsdFeed()`, `setChainlinkStalePeriod()`, `setL2SequencerFeed()`, `setL2SequencerGracePeriodSec()`, `setCEAFactory()`, `setProtocolFee()`, `updateEpochDuration()`, `setDefaultSwapDeadline()`, `setV3FeeOrder()` |
 | `TSS_ROLE` | `keccak256("TSS_ROLE")` | TSS address | Receives native ETH via `_handleDeposits()` (direct transfer target) |
 | `VAULT_ROLE` | `keccak256("VAULT_ROLE")` | Vault contract | `revertUniversalTx()`, `rescueFunds()` |
 | CEA identity check | via CEAFactory | CEA contracts only | `sendUniversalTxFromCEA()` |
-| *(none)* | — | Public | `sendUniversalTx()`, `sendUniversalTx(token,...)`, `swapToNative()`, `getEthUsdPrice()`, `isSupportedToken()`, `currentTokenUsage()` |
+| *(none)* | — | Public | `sendUniversalTx()`, `sendUniversalTx(token,...)`, `checkUSDCaps()`, `getEthUsdPrice()`, `isSupportedToken()`, `currentTokenUsage()` |
 
 ### External Dependencies
 
@@ -101,7 +101,7 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 6. **Admin role compromise** — A compromised admin key updates TSS address, oracle feeds, Uniswap router, Vault address, or CEAFactory within a single transaction, redirecting all fund flows. Mitigated by: `setVault()` requires `whenPaused`; `setTSS()` atomically revokes the old TSS role. Residual risk: no timelock on most admin setter functions; single-key admin is critical. Recommend multisig + timelock.
 
-7. **Uniswap sandwich attack on `swapToNative`** — When `deadline == 0`, the gateway defaults to `block.timestamp + defaultSwapDeadlineSec` at execution time. A transaction held in the mempool always receives a fresh deadline, making sandwich attacks viable during the hold period. Mitigated by: `amountOutMinETH` slippage bound enforced by caller; callers should pass an explicit deadline.
+7. **Uniswap sandwich attack on `_swapToNative`** — When `deadline == 0`, the gateway defaults to `block.timestamp + defaultSwapDeadlineSec` at execution time. A transaction held in the mempool always receives a fresh deadline, making sandwich attacks viable during the hold period. Mitigated by: `amountOutMinETH` slippage bound enforced by caller; callers should pass an explicit deadline.
 
 8. **Non-standard ERC-20 transfer semantics** — Supported tokens with fee-on-transfer behaviour cause revert/rescue flows to receive less than the expected `amount`, potentially locking funds in the gateway. Tokens that revert on zero-transfer can deadlock protocol fee collection. See `docs/SECURITY_ANALYSIS_v1.md` for full analysis.
 

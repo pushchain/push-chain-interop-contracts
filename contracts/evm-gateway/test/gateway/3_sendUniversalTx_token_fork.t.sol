@@ -26,7 +26,7 @@ interface TetherToken {
  * @notice Fork-based tests for sendUniversalTx(UniversalTokenTxRequest) - token-as-gas entrypoint
  * @dev Tests using mainnet fork with real Uniswap contracts and real tokens:
  *      - Parameter validation (gasToken, gasAmount, amountOutMinETH, deadline)
- *      - swapToNative integration with real Uniswap swaps (WETH fast-path and ERC20 swaps)
+ *      - _swapToNative integration with real Uniswap swaps (WETH fast-path and ERC20 swaps)
  *      - TX_TYPE inference when nativeValue comes from swap
  *      - msg.value semantics
  *      - Error paths (no pool, slippage, deadline, paused state)
@@ -98,7 +98,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
 
         // Override gateway configuration to use mainnet contracts
         vm.prank(admin);
-        gatewayFork.setRouters(MAINNET_UNISWAP_V3_FACTORY, MAINNET_UNISWAP_V3_ROUTER);
+        gatewayFork.setUniswapV3Config(MAINNET_UNISWAP_V3_FACTORY, MAINNET_UNISWAP_V3_ROUTER);
 
         // Initialize real mainnet token contracts
         mainnetWETH = IERC20(MAINNET_WETH);
@@ -393,7 +393,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
     }
 
     /// @notice Test WETH fast-path when Uniswap is configured
-    /// @dev When gasToken == WETH, swapToNative uses fast-path: pull WETH, unwrap to native
+    /// @dev When gasToken == WETH, _swapToNative uses fast-path: pull WETH, unwrap to native
     function test_TokenGas_WETHFastPath_Success() public {
         // Arrange: User has WETH
         uint256 gasAmount = 0.001 ether; // 0.001 ETH = $2, within caps
@@ -527,23 +527,14 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
         gatewayFork.sendUniversalTx(req);
     }
 
-    /// @notice Test that TX_TYPE.FUNDS is correctly inferred when using token-as-gas with funds
-    /// @dev Note: When using token-as-gas with native funds, the swap happens first.
-    ///      However, _fetchTxType sees hasFunds=true and fundsIsNative=true, so it routes to FUNDS.
-    ///      But _sendTxWithFunds checks if nativeValue (from swap) == req.amount (fundsAmount),
-    ///      which will fail. This test documents that token-as-gas with native funds is not a valid combination.
-    ///      Instead, users should either:
-    ///      - Use native funds without token-as-gas (sendUniversalTx with UniversalTxRequest)
-    ///      - Use ERC20 funds with token-as-gas (token != address(0))
-    function test_TokenGas_InferFUNDS_Type() public {
-        // Arrange: Swap USDC for gas, with funds (native)
-        // NOTE: This combination will actually revert because:
-        // - Swap produces nativeValue from token
-        // - _sendTxWithFunds checks: if (fundsIsNative && hasNativeValue) { if (_req.amount != nativeValue) revert }
-        // - Since nativeValue != fundsAmount, it reverts
+    /// @notice Test that token-as-gas with native funds is rejected at the entrypoint
+    /// @dev Per audit fix F-2026-15683, the token-as-gas overload rejects msg.value > 0. Native
+    ///      funds bridging is therefore not supported via this overload; users must use the
+    ///      UniversalTxRequest overload for native funds. This test documents the new revert path.
+    function test_TokenGas_InferFUNDS_Type_RevertsOnMsgValue() public {
         uint256 gasAmount = 100e6; // 100 USDC
         uint256 amountOutMinETH = 0.0003 ether;
-        uint256 fundsAmount = 0.001 ether; // Native funds = $2, within caps
+        uint256 fundsAmount = 0.001 ether;
 
         fundUserWithMainnetTokens(user1, MAINNET_USDC, gasAmount);
         vm.prank(user1);
@@ -560,19 +551,19 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
             block.timestamp + 1 hours
         );
 
-        // Act & Assert: This combination will revert because nativeValue from swap != fundsAmount
-        // The swap happens first, producing nativeValue, but then _sendTxWithFunds expects nativeValue == fundsAmount
-        vm.expectRevert(Errors.InvalidAmount.selector);
+        // Sending msg.value with the token-as-gas overload reverts at the entrypoint check.
+        vm.expectRevert(Errors.InvalidInput.selector);
         vm.prank(user1);
-        gatewayFork.sendUniversalTx{ value: fundsAmount }(req); // Send funds with msg.value
+        gatewayFork.sendUniversalTx{ value: fundsAmount }(req);
     }
 
-    /// @notice Test that TX_TYPE.FUNDS_AND_PAYLOAD is correctly inferred when using token-as-gas with funds and payload
-    function test_TokenGas_InferFUNDS_AND_PAYLOAD_Type() public {
-        // Arrange: Swap USDC for gas, with funds and payload
-        uint256 gasAmount = 5e6; // 5 USDC (swaps to ~$5 worth of ETH, within $1-$10 caps)
+    /// @notice Test that token-as-gas with native funds + payload is rejected at the entrypoint
+    /// @dev Per audit fix F-2026-15683, msg.value > 0 reverts. Native funds via this overload is
+    ///      not supported; users must use the UniversalTxRequest overload for native funds.
+    function test_TokenGas_InferFUNDS_AND_PAYLOAD_Type_RevertsOnMsgValue() public {
+        uint256 gasAmount = 5e6; // 5 USDC
         uint256 amountOutMinETH = 0.0001 ether;
-        uint256 fundsAmount = 0.001 ether; // Native funds = $2, within caps
+        uint256 fundsAmount = 0.001 ether;
 
         fundUserWithMainnetTokens(user1, MAINNET_USDC, gasAmount);
         vm.prank(user1);
@@ -592,7 +583,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
             block.timestamp + 1 hours
         );
 
-        // Act: Call sendUniversalTx (don't check event as amount is unpredictable from real swap)
+        vm.expectRevert(Errors.InvalidInput.selector);
         vm.prank(user1);
         gatewayFork.sendUniversalTx{ value: fundsAmount }(req);
     }
@@ -601,13 +592,11 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
     //      MSG.VALUE SEMANTICS TESTS
     // =========================
 
-    /// @notice Test that msg.value is accepted but ignored for token-as-gas entrypoint
-    function test_TokenGas_AcceptsMsgValue() public {
-        // Arrange: Send msg.value along with token-as-gas request
-        // Use amount that swaps to between $1-$10 worth of ETH
-        uint256 gasAmount = 5e6; // 5 USDC (swaps to ~$5 worth of ETH, within $1-$10 caps)
+    /// @notice Test that msg.value > 0 is rejected by the token-as-gas entrypoint (audit F-2026-15683)
+    function test_TokenGas_RevertOn_NonZeroMsgValue() public {
+        uint256 gasAmount = 5e6; // 5 USDC
         uint256 amountOutMinETH = 0.0001 ether;
-        uint256 msgValue = 0.1 ether; // Extra ETH sent
+        uint256 msgValue = 0.1 ether;
 
         fundUserWithMainnetTokens(user1, MAINNET_USDC, gasAmount);
         vm.prank(user1);
@@ -615,53 +604,34 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
 
         UniversalTokenTxRequest memory req = _buildMinimalTokenGasRequest(MAINNET_USDC, gasAmount, amountOutMinETH);
 
-        uint256 gatewayBalanceBefore = address(gatewayFork).balance;
-
-        // Act: Should succeed even with msg.value (don't check event as amount is unpredictable)
+        vm.expectRevert(Errors.InvalidInput.selector);
         vm.prank(user1);
         gatewayFork.sendUniversalTx{ value: msgValue }(req);
-
-        // Assert: msg.value was accepted but not used (gateway balance increased)
-        assertEq(address(gatewayFork).balance, gatewayBalanceBefore + msgValue, "Gateway should receive msg.value");
     }
 
-    /// @notice Test that msg.value does not affect nativeValue calculation
-    function test_TokenGas_MsgValueDoesNotAffectNativeValue() public {
-        // Arrange: Same swap with different msg.value amounts
-        // Use amount that swaps to between $1-$10 worth of ETH
-        uint256 gasAmount = 5e6; // 5 USDC (swaps to ~$5 worth of ETH, within $1-$10 caps)
+    /// @notice Test that nativeValue comes from _swapToNative when msg.value == 0
+    /// @dev Pairs with test_TokenGas_RevertOn_NonZeroMsgValue: confirms the only valid call shape
+    ///      (msg.value == 0) routes the swap output to TSS.
+    function test_TokenGas_NativeValueComesFromSwap() public {
+        uint256 gasAmount = 5e6; // 5 USDC
         uint256 amountOutMinETH = 0.0001 ether;
 
-        fundUserWithMainnetTokens(user1, MAINNET_USDC, gasAmount * 2); // Fund for two swaps
+        fundUserWithMainnetTokens(user1, MAINNET_USDC, gasAmount);
         vm.prank(user1);
-        mainnetUSDC.approve(address(gatewayFork), gasAmount * 2);
+        mainnetUSDC.approve(address(gatewayFork), gasAmount);
 
         UniversalTokenTxRequest memory req = _buildMinimalTokenGasRequest(MAINNET_USDC, gasAmount, amountOutMinETH);
 
         uint256 tssBalanceBefore = tss.balance;
+        uint256 gatewayBalanceBefore = address(gatewayFork).balance;
 
-        // Act: Send with msg.value = 0
         vm.prank(user1);
         gatewayFork.sendUniversalTx(req);
 
-        uint256 tssBalanceAfterZero = tss.balance;
-        uint256 ethReceivedZero = tssBalanceAfterZero - tssBalanceBefore;
-
-        // Reset and send with msg.value > 0
-        vm.roll(block.number + 1);
-        tssBalanceBefore = tss.balance;
-
-        vm.prank(user1);
-        gatewayFork.sendUniversalTx{ value: 1 ether }(req);
-
-        uint256 tssBalanceAfterNonZero = tss.balance;
-        uint256 ethReceivedNonZero = tssBalanceAfterNonZero - tssBalanceBefore;
-
-        // Assert: nativeValue (sent to TSS) is approximately the same regardless of msg.value
-        // Allow small tolerance due to real market conditions
-        assertApproxEqAbs(
-            ethReceivedZero, ethReceivedNonZero, 1e15, "nativeValue should be same regardless of msg.value"
-        );
+        // TSS received at least the slippage-bounded amount from the real swap
+        assertGe(tss.balance, tssBalanceBefore + amountOutMinETH, "TSS should receive swapped ETH");
+        // Gateway holds no trapped ETH from this call
+        assertEq(address(gatewayFork).balance, gatewayBalanceBefore, "Gateway must not retain any ETH");
     }
 
     // =========================
@@ -679,7 +649,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
 
         UniversalTokenTxRequest memory req = _buildMinimalTokenGasRequest(MAINNET_USDC, gasAmount, 0.0003 ether);
 
-        // Should revert when swapToNative tries to transfer tokens
+        // Should revert when _swapToNative tries to transfer tokens
         // USDC uses old-style string errors, so we check for any revert
         vm.expectRevert();
         vm.prank(user1);
@@ -698,7 +668,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
 
         UniversalTokenTxRequest memory req = _buildMinimalTokenGasRequest(MAINNET_USDC, gasAmount, 0.0003 ether);
 
-        // Should revert when swapToNative tries to transfer tokens
+        // Should revert when _swapToNative tries to transfer tokens
         // USDC uses old-style string errors, so we check for any revert
         vm.expectRevert();
         vm.prank(user1);
@@ -805,7 +775,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
         UniversalTokenTxRequest memory req =
             _buildMinimalTokenGasRequest(MAINNET_USDC, maxGasAmount, maxAmountOutMinETH);
 
-        // Should revert when swapToNative tries to transfer tokens
+        // Should revert when _swapToNative tries to transfer tokens
         // USDC uses old-style string errors, so we check for any revert
         vm.expectRevert();
         vm.prank(user1);
@@ -816,7 +786,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
     //      REAL SWAP TESTS WITH VARIOUS TOKENS
     // =========================
 
-    /// @notice Test swapToNative with USDC
+    /// @notice Test _swapToNative with USDC
     function test_TokenGas_SwapUSDC_Success() public {
         uint256 gasAmount = 5e6; // 5 USDC (swaps to ~$5 worth of ETH, within $1-$10 caps)
         uint256 amountOutMinETH = 0.0001 ether; // Min output (conservative to allow slippage)
@@ -841,7 +811,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
         assertGe(tss.balance, tssBalanceBefore + amountOutMinETH, "TSS should receive at least min ETH");
     }
 
-    /// @notice Test swapToNative with USDT
+    /// @notice Test _swapToNative with USDT
     function test_TokenGas_SwapUSDT_Success() public {
         uint256 gasAmount = 5e6; // 5 USDT (swaps to ~$5 worth of ETH, within $1-$10 caps)
         uint256 amountOutMinETH = 0.0001 ether; // Min output (conservative to allow slippage)
@@ -866,7 +836,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
         assertGt(tss.balance, tssBalanceBefore, "TSS should receive ETH from token swap");
     }
 
-    /// @notice Test swapToNative with DAI
+    /// @notice Test _swapToNative with DAI
     function test_TokenGas_SwapDAI_Success() public {
         uint256 gasAmount = 5e18; // 5 DAI (swaps to ~$5 worth of ETH, within $1-$10 caps)
         uint256 amountOutMinETH = 0.0001 ether; // Min output (conservative to allow slippage)

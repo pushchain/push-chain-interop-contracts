@@ -17,7 +17,11 @@ interface IUniversalGateway {
     /// @notice                  Epoch duration updated event
     /// @param oldDuration       Previous epoch duration
     /// @param newDuration       New epoch duration
-    event EpochDurationUpdated(uint256 oldDuration, uint256 newDuration);
+    /// @param epochIndexAtChange Epoch index at the time of the change — all per-token usage
+    ///                          counters whose stored epoch differs from this value will be treated
+    ///                          as reset on the next consumption. Off-chain monitors can use this
+    ///                          field to detect the implicit rate-limit reset.
+    event EpochDurationUpdated(uint256 oldDuration, uint256 newDuration, uint64 epochIndexAtChange);
 
     /// @notice                  Token limit threshold updated event
     /// @param token             Token address
@@ -46,28 +50,19 @@ interface IUniversalGateway {
         bool fromCEA
     );
 
-    /// @notice                  Universal tx execution event on external chains.
-    /// @param subTxId           Gateway transaction identifier
-    /// @param universalTxId     Universal transaction identifier
-    /// @param pushAccount       Push Chain account (UEA) this transaction is attributed to
-    /// @param target            Target contract address to execute call
-    /// @param token             Token address being sent
-    /// @param amount            Amount of token being sent
-    /// @param data              Calldata to be executed on target contract
-    event UniversalTxExecuted(
-        bytes32 indexed subTxId,
-        bytes32 indexed universalTxId,
-        address indexed pushAccount,
-        address target,
-        address token,
-        uint256 amount,
-        bytes data
-    );
-
     /// @notice                  Vault updated event
     /// @param oldVault          Previous Vault address
     /// @param newVault          New Vault address
     event VaultUpdated(address indexed oldVault, address indexed newVault);
+
+    /// @notice                  Uniswap V3 factory / router updated event.
+    /// @param oldFactory        Previous Uniswap V3 factory address
+    /// @param newFactory        New Uniswap V3 factory address
+    /// @param oldRouter         Previous Uniswap V3 router address
+    /// @param newRouter         New Uniswap V3 router address
+    event UniswapV3ConfigUpdated(
+        address indexed oldFactory, address indexed newFactory, address oldRouter, address newRouter
+    );
 
     /// @notice                  Protocol fee updated event
     /// @param newFee            New protocol fee in wei
@@ -135,7 +130,7 @@ interface IUniversalGateway {
     ///
     ///                          Rate-limit behavior:
     ///                          - GAS / GAS_AND_PAYLOAD: instant route via _sendTxWithGas
-    ///                            (_checkUSDCaps + _checkBlockUSDCap)
+    ///                            (checkUSDCaps + _checkBlockUSDCap)
     ///                          - FUNDS / FUNDS_AND_PAYLOAD: standard route via _sendTxWithFunds
     ///                            (_consumeRateLimit per-token epoch)
     /// @param req               UniversalTxRequest struct

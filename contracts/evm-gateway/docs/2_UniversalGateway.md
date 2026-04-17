@@ -58,7 +58,7 @@ The primary entry point for any EOA or contract on the source chain. Accepts nat
 
 Variant that accepts gas payment in an ERC-20 token (e.g. USDC). Also blocked for CEAs.
 
-Extra step before routing: calls `swapToNative(gasToken, gasAmount, amountOutMinETH, deadline)` — swaps the ERC-20 to ETH via Uniswap v3 (or WETH fast-path). The resulting `ethOut` becomes `nativeValue` passed into `_fetchTxType` and routing. After that, processing is identical to 2.1.
+Extra step before routing: calls `_swapToNative(gasToken, gasAmount, amountOutMinETH, deadline)` — swaps the ERC-20 to ETH via Uniswap v3 (or WETH fast-path). The resulting `ethOut` becomes `nativeValue` passed into `_fetchTxType` and routing. After that, processing is identical to 2.1.
 
 Key validations: `gasToken != address(0)`, `gasAmount > 0`, `amountOutMinETH > 0`.
 
@@ -91,7 +91,7 @@ UniversalGateway enforces two distinct rate-limit systems, aligned with differen
 
 ### 3.2 Instant Route — Per-Transaction USD Caps
 
-**Function**: `_checkUSDCaps(amount)` (`UniversalGateway.sol:722-726`)
+**Function**: `checkUSDCaps(amount)` (`UniversalGateway.sol:722-726`)
 
 Converts the native amount to USD using the Chainlink ETH/USD oracle, then enforces:
 - `usdValue >= MIN_CAP_UNIVERSAL_TX_USD` — floor to prevent dust spam.

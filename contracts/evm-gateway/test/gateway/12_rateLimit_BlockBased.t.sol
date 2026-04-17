@@ -61,7 +61,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
         gateway.setTokenLimitThresholds(tokens, thresholds);
 
         // Configure gateway with mock WETH and dummy routers
-        gateway.setRouters(address(0x1), address(0x2));
+        gateway.setUniswapV3Config(address(0x1), address(0x2));
         vm.stopPrank();
     }
 

@@ -15,15 +15,11 @@ import { IVaultPC } from "./interfaces/IVaultPC.sol";
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import { ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import { AccessControlUpgradeable } from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 contract VaultPC is
-    Initializable,
-    ContextUpgradeable,
     PausableUpgradeable,
     ReentrancyGuardUpgradeable,
     AccessControlUpgradeable,
@@ -84,7 +80,7 @@ contract VaultPC is
         (bool success,) = payable(to).call{ value: amount }("");
         if (!success) revert Errors.WithdrawFailed();
 
-        emit FeesWithdrawn(msg.sender, address(0), amount);
+        emit FeesWithdrawn(msg.sender, to, address(0), amount);
     }
 
     /// @inheritdoc IVaultPC
@@ -103,7 +99,7 @@ contract VaultPC is
         }
 
         IERC20(token).safeTransfer(to, amount);
-        emit FeesWithdrawn(msg.sender, token, amount);
+        emit FeesWithdrawn(msg.sender, to, token, amount);
     }
 
     /// @notice Allow contract to receive native PC tokens

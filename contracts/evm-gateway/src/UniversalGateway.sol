@@ -12,12 +12,18 @@ pragma solidity 0.8.26;
  *         3. FUNDS_TX: Move large-ticket funds to any recipient on Push Chain.
  *         4. FUNDS_AND_PAYLOAD_TX: Move funds + execute payloads.
  *
- * @dev    TSS-controlled functionalities:
- *         1. TSS-controlled withdraw (native or ERC20).
- *         2. Token Support List: allowlist for ERC20 used as gas inputs.
+ * @dev    Authorization model:
+ *         1. Revert / rescue paths (revertUniversalTx, rescueFunds) are gated by VAULT_ROLE,
+ *            not TSS_ROLE. TSS authorization is enforced upstream in the Vault contract, which
+ *            is the sole holder of VAULT_ROLE and the only caller into these gateway entry points.
+ *         2. The token support list (tokenToLimitThreshold) is managed by DEFAULT_ADMIN_ROLE and
+ *            is used for rate-limiting and bridge-support validation of ERC20 funds via
+ *            _consumeRateLimit and _handleDeposits. It is NOT used to validate gas tokens in
+ *            sendUniversalTx(UniversalTokenTxRequest); gas token validation is limited to
+ *            non-zero and swap-related constraints.
  *
  * @dev    Rate-Limit Checks:
- *         - Instant route (GAS / GAS_AND_PAYLOAD): _checkUSDCaps + _checkBlockUSDCap
+ *         - Instant route (GAS / GAS_AND_PAYLOAD): checkUSDCaps + _checkBlockUSDCap
  *         - Standard route (FUNDS / FUNDS_AND_PAYLOAD): _consumeRateLimit (per-token epoch)
  *
  * @dev    Chainlink Oracle is used for ETH/USD price feed.
@@ -38,14 +44,10 @@ import { ISwapRouter as ISwapRouterV3 } from "@uniswap/v3-periphery/contracts/in
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { AccessControlUpgradeable } from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import { ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 contract UniversalGateway is
-    Initializable,
-    ContextUpgradeable,
     PausableUpgradeable,
     ReentrancyGuardUpgradeable,
     AccessControlUpgradeable,
@@ -57,20 +59,36 @@ contract UniversalGateway is
     bytes32 public constant VAULT_ROLE = keccak256("VAULT_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
+    /// @notice Minimum permitted value for chainlinkStalePeriod. Prevents admin from disabling
+    ///         oracle freshness validation by setting the period to 0 or an absurdly small value.
+    ///         See audit finding F-2026-15645.
+    uint256 public constant MIN_CHAINLINK_STALE_PERIOD = 10 minutes;
+
+    /// @notice Upper bound for INBOUND_FEE. Prevents admin from configuring an absurdly high flat
+    ///         protocol fee that would DoS or grief users. See audit finding F-2026-15641.
+    uint256 public constant MAX_INBOUND_FEE = 1 ether;
+
+    /// @notice MUTABLE — admin-updatable via setTSS.
     address public TSS_ADDRESS;
+    /// @notice MUTABLE — admin-updatable via setVault.
     address public VAULT;
 
     /// @notice Rate-Limiting CAPS and States
+    /// @dev MUTABLE — admin-updatable via setBlockUsdCap.
     uint256 public BLOCK_USD_CAP;
     uint256 public epochDurationSec;
     uint256 private _lastBlockNumber;
     uint256 private _consumedUSDinBlock;
+    /// @dev MUTABLE — admin-updatable via setCapsUSD.
     uint256 public MIN_CAP_UNIVERSAL_TX_USD;
+    /// @dev MUTABLE — admin-updatable via setCapsUSD.
     uint256 public MAX_CAP_UNIVERSAL_TX_USD;
     mapping(address => uint256) public tokenToLimitThreshold;
     mapping(address => EpochUsage) private _usage;
 
     /// @notice Uniswap V3 factory & router (chain-specific)
+    /// @dev MUTABLE — set in initialize only.
+    ///      (No runtime setter currently, but the slot is storage and upgradable.)
     address public WETH;
     ISwapRouterV3 public uniV3Router;
     IUniswapV3Factory public uniV3Factory;
@@ -86,8 +104,10 @@ contract UniversalGateway is
 
     mapping(bytes32 => bool) public isExecuted;
 
+    /// @notice MUTABLE — admin-updatable via setCEAFactory.
     address public CEA_FACTORY;
 
+    /// @notice MUTABLE — admin-updatable via setProtocolFee.
     uint256 public INBOUND_FEE;
 
     uint256 public totalProtocolFeesCollected;
@@ -140,7 +160,10 @@ contract UniversalGateway is
         MAX_CAP_UNIVERSAL_TX_USD = maxCapUsd;
 
         WETH = wethAddress;
-        if (factory != address(0) && router != address(0)) {
+        if ((factory == address(0)) != (router == address(0))) {
+            revert Errors.ZeroAddress();
+        }
+        if (factory != address(0)) {
             uniV3Factory = IUniswapV3Factory(factory);
             uniV3Router = ISwapRouterV3(router);
         }
@@ -214,13 +237,18 @@ contract UniversalGateway is
         defaultSwapDeadlineSec = deadlineSec;
     }
 
-    /// @notice                Allows the admin to set the Uniswap V3 factory and router
+    /// @notice                Allows the admin to set the Uniswap V3 factory and router.
+    /// @dev                   Renamed from setRouters (audit finding F-2026-15682). The previous
+    ///                        plural name implied multi-router support that does not exist.
     /// @param factory         New Uniswap V3 factory address
     /// @param router          New Uniswap V3 router address
-    function setRouters(address factory, address router) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function setUniswapV3Config(address factory, address router) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (factory == address(0) || router == address(0)) revert Errors.ZeroAddress();
+        address oldFactory = address(uniV3Factory);
+        address oldRouter = address(uniV3Router);
         uniV3Factory = IUniswapV3Factory(factory);
         uniV3Router = ISwapRouterV3(router);
+        emit UniswapV3ConfigUpdated(oldFactory, factory, oldRouter, router);
     }
 
     /// @notice                Set limit thresholds for a batch of tokens (0 disables support)
@@ -238,12 +266,21 @@ contract UniversalGateway is
     }
 
     /// @notice                Update the epoch duration (hard reset schedule)
+    /// @dev                   Changing the epoch duration shifts the epoch index globally
+    ///                        (`block.timestamp / epochDurationSec`). All per-token usage counters
+    ///                        whose stored epoch no longer matches the new index will be silently
+    ///                        reset to zero on the next rate-limit consumption — restoring full
+    ///                        throughput for every token. Admins must treat this as an implicit
+    ///                        rate-limit reset across the board. The emitted `epochIndexAtChange`
+    ///                        value records the old epoch index at the moment of the update so the
+    ///                        reset is auditable on-chain (audit finding F-2026-15643).
     /// @param newDurationSec  New epoch duration in seconds
     function updateEpochDuration(uint256 newDurationSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (newDurationSec == 0) revert Errors.InvalidInput();
         uint256 old = epochDurationSec;
+        uint64 epochIndexAtChange = uint64(block.timestamp / old);
         epochDurationSec = newDurationSec;
-        emit EpochDurationUpdated(old, newDurationSec);
+        emit EpochDurationUpdated(old, newDurationSec, epochIndexAtChange);
     }
 
     /// @notice                Allows the admin to set the fee order for the Uniswap V3 router
@@ -265,9 +302,12 @@ contract UniversalGateway is
         chainlinkEthUsdDecimals = dec;
     }
 
-    /// @notice                Configure the maximum allowed data staleness for Chainlink reads
-    /// @param stalePeriodSec  If > 0, latestRoundData().updatedAt must be within this many seconds
+    /// @notice                Configure the maximum allowed data staleness for Chainlink reads.
+    /// @dev                   Must be >= MIN_CHAINLINK_STALE_PERIOD to prevent accidental or
+    ///                        intentional disabling of freshness validation (audit F-2026-15645).
+    /// @param stalePeriodSec  latestRoundData().updatedAt must be within this many seconds
     function setChainlinkStalePeriod(uint256 stalePeriodSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        if (stalePeriodSec < MIN_CHAINLINK_STALE_PERIOD) revert Errors.InvalidInput();
         chainlinkStalePeriod = stalePeriodSec;
     }
 
@@ -292,8 +332,11 @@ contract UniversalGateway is
     }
 
     /// @notice                Set the flat protocol fee (in wei). 0 disables.
+    /// @dev                   Must be <= MAX_INBOUND_FEE to prevent misconfiguration or governance
+    ///                        abuse (audit F-2026-15641).
     /// @param fee             New protocol fee in wei
     function setProtocolFee(uint256 fee) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (fee > MAX_INBOUND_FEE) revert Errors.InvalidInput();
         INBOUND_FEE = fee;
         emit ProtocolFeeUpdated(fee);
     }
@@ -313,15 +356,15 @@ contract UniversalGateway is
     /// @inheritdoc IUniversalGateway
     function sendUniversalTx(UniversalTokenTxRequest calldata reqToken) external payable nonReentrant whenNotPaused {
         if (_isCallerCEA()) revert Errors.InvalidInput();
+        if (msg.value != 0) revert Errors.InvalidInput();
         // Validate token-as-gas parameters
         if (reqToken.gasToken == address(0)) revert Errors.InvalidInput();
         if (reqToken.gasAmount == 0) revert Errors.InvalidAmount();
         if (reqToken.amountOutMinETH == 0) revert Errors.InvalidAmount();
-        if (reqToken.deadline != 0 && reqToken.deadline < block.timestamp) revert Errors.SlippageExceededOrExpired();
 
         // Swap token to native
         uint256 nativeValue =
-            swapToNative(reqToken.gasToken, reqToken.gasAmount, reqToken.amountOutMinETH, reqToken.deadline);
+            _swapToNative(reqToken.gasToken, reqToken.gasAmount, reqToken.amountOutMinETH, reqToken.deadline);
 
         // Build UniversalTxRequest from token request
         UniversalTxRequest memory req = UniversalTxRequest({
@@ -379,7 +422,7 @@ contract UniversalGateway is
         bool _fromCEA
     ) private {
         if (_gasAmount > 0) {
-            _checkUSDCaps(_gasAmount);
+            checkUSDCaps(_gasAmount);
             _checkBlockUSDCap(_gasAmount);
             _handleDeposits(address(0), _gasAmount);
         }
@@ -411,7 +454,7 @@ contract UniversalGateway is
                 tokenForFunds = address(0);
             }
             // Case 1.2: Token to bridge is ERC20 Token -> _req.token
-            // Post-fee nativeValue is routed as a gas top-up (e.g. from swapToNative or batched native).
+            // Post-fee nativeValue is routed as a gas top-up (e.g. from _swapToNative or batched native).
             // If nativeValue == 0 (no gas), only the ERC20 bridge proceeds.
             else {
                 if (nativeValue > 0) {
@@ -494,7 +537,9 @@ contract UniversalGateway is
                 tokenForFundsAndPayload = address(0);
             }
             // Case 2.3: Batching of Gas + Funds_and_Payload (nativeValue > 0): with token != native_token
-            else if (_req.token != address(0)) {
+            // _req.token != address(0) is implied by the prior branches (Case 2.1 handles
+            // nativeValue == 0; Case 2.2 handles nativeValue > 0 && _req.token == address(0)).
+            else {
                 uint256 gasAmount = nativeValue;
                 // Send Gas to caller's UEA via instant route
                 _sendTxWithGas(
@@ -614,7 +659,14 @@ contract UniversalGateway is
     function _validateRevertParams(bytes32 subTxId, uint256 amount, address token, address revertRecipient) private {
         if (isExecuted[subTxId]) revert Errors.PayloadExecuted();
         if (revertRecipient == address(0)) revert Errors.InvalidRecipient();
-        if (amount == 0 || (token == address(0) && msg.value != amount)) revert Errors.InvalidAmount();
+        if (amount == 0) revert Errors.InvalidAmount();
+        // Validate msg.value for both paths: native requires msg.value == amount; ERC20 forbids
+        // native value entirely.
+        if (token == address(0)) {
+            if (msg.value != amount) revert Errors.InvalidAmount();
+        } else {
+            if (msg.value != 0) revert Errors.InvalidAmount();
+        }
 
         isExecuted[subTxId] = true;
     }
@@ -732,7 +784,7 @@ contract UniversalGateway is
     /// @dev                    Check if the amount is within the USD cap range.
     ///                         Cap ranges are defined in the initializer or updated by the admin.
     /// @param amount           Amount to check
-    function _checkUSDCaps(uint256 amount) public view {
+    function checkUSDCaps(uint256 amount) public view {
         uint256 usdValue = quoteEthAmountInUsd1e18(amount);
         if (usdValue < MIN_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
         if (usdValue > MAX_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
@@ -749,9 +801,15 @@ contract UniversalGateway is
             (bool ok,) = payable(TSS_ADDRESS).call{ value: amount }("");
             if (!ok) revert Errors.DepositFailed();
         } else {
-            // Handle ERC20 token deposit to Vault
+            // Handle ERC20 token deposit to Vault.
+            // Balance-before/after check rejects fee-on-transfer tokens: if the Vault receives
+            // fewer tokens than `amount`, accounting/rate-limiting upstream would be wrong and
+            // the revert/rescue paths would later break.
             if (tokenToLimitThreshold[token] == 0) revert Errors.NotSupported();
+            uint256 balBefore = IERC20(token).balanceOf(VAULT);
             IERC20(token).safeTransferFrom(_msgSender(), VAULT, amount);
+            uint256 received = IERC20(token).balanceOf(VAULT) - balBefore;
+            if (received != amount) revert Errors.InvalidAmount();
         }
     }
 
@@ -816,7 +874,7 @@ contract UniversalGateway is
     /// @param amountOutMinETH  Min acceptable native (ETH) out (slippage bound)
     /// @param deadline         Swap deadline
     /// @return ethOut          Native ETH received
-    function swapToNative(address tokenIn, uint256 amountIn, uint256 amountOutMinETH, uint256 deadline)
+    function _swapToNative(address tokenIn, uint256 amountIn, uint256 amountOutMinETH, uint256 deadline)
         internal
         returns (uint256 ethOut)
     {
@@ -843,7 +901,12 @@ contract UniversalGateway is
         }
         (IUniswapV3Pool pool, uint24 fee) = _findV3PoolWithNative(tokenIn);
 
+        // Reject fee-on-transfer tokens: if the gateway receives fewer tokens than amountIn,
+        // the subsequent allowance/swap will operate on a mismatched amount and the router pull
+        // will fail. See audit finding F-2026-15737.
+        uint256 balBefore = IERC20(tokenIn).balanceOf(address(this));
         IERC20(tokenIn).safeTransferFrom(_msgSender(), address(this), amountIn);
+        if (IERC20(tokenIn).balanceOf(address(this)) - balBefore != amountIn) revert Errors.InvalidAmount();
         IERC20(tokenIn).safeIncreaseAllowance(address(uniV3Router), amountIn);
 
         ISwapRouterV3.ExactInputSingleParams memory params = ISwapRouterV3.ExactInputSingleParams({
@@ -876,10 +939,6 @@ contract UniversalGateway is
     /// @return fee             The fee tier of the pool
     function _findV3PoolWithNative(address tokenIn) internal view returns (IUniswapV3Pool pool, uint24 fee) {
         if (tokenIn == address(0) || WETH == address(0)) revert Errors.ZeroAddress();
-        if (tokenIn == WETH) {
-            // Caller should handle the WETH fast-path; we return zeroed pool/fee here.
-            return (IUniswapV3Pool(address(0)), 0);
-        }
 
         // Try fee tiers in the configured order
         for (uint256 i = 0; i < v3FeeOrder.length; i++) {
@@ -1009,7 +1068,11 @@ contract UniversalGateway is
         else if (txType == TX_TYPE.FUNDS || txType == TX_TYPE.FUNDS_AND_PAYLOAD) {
             _sendTxWithFunds(req, nativeValue, txType, fromCEA);
         }
-        // Route 3: Invalid
+        // Route 3: Invalid.
+        // Defensive: unreachable under the current _fetchTxType logic (which either returns one of
+        // GAS / GAS_AND_PAYLOAD / FUNDS / FUNDS_AND_PAYLOAD, or reverts). Kept as an invariant guard
+        // against future TX_TYPE enum additions or _fetchTxType refactors that could silently drop
+        // a case.
         else {
             revert Errors.InvalidTxType();
         }
