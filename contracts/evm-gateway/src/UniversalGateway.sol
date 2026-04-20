@@ -78,7 +78,11 @@ contract UniversalGateway is
     uint256 public BLOCK_USD_CAP;
     uint256 public epochDurationSec;
     uint256 private _lastBlockNumber;
-    uint256 private _consumedUSDinBlock;
+    /// @dev Storage slot preserved from previous `_consumedUSDinBlock` (pre-converted USD total).
+    ///      Semantic changed to raw native-wei consumed in the current block; USD is computed
+    ///      at check time against the current oracle price to avoid mixed-price accounting
+    ///      across intra-block oracle updates. See F-2026-15693.
+    uint256 private _consumedWeiInBlock;
     /// @dev MUTABLE — admin-updatable via setCapsUSD.
     uint256 public MIN_CAP_UNIVERSAL_TX_USD;
     /// @dev MUTABLE — admin-updatable via setCapsUSD.
@@ -813,9 +817,13 @@ contract UniversalGateway is
         }
     }
 
-    /// @dev                    Enforce per-block USD budget for GAS routes using two-scalar accounting.
+    /// @dev                    Enforce per-block USD budget for GAS routes.
     ///                         BLOCK_USD_CAP is denominated in USD(1e18). When 0, the feature is disabled.
     ///                         Resets the window when a new block is observed.
+    /// @dev                    F-2026-15693: accumulates raw native wei per block and converts the
+    ///                         running total to USD at the current oracle price on each check.
+    ///                         This avoids summing USD values computed from different oracle rounds
+    ///                         within the same block (mixed-price accounting).
     /// @param amountWei        Native amount (in wei) to account against the current block's USD budget
     function _checkBlockUSDCap(uint256 amountWei) private {
         uint256 cap = BLOCK_USD_CAP;
@@ -823,18 +831,14 @@ contract UniversalGateway is
 
         if (block.number != _lastBlockNumber) {
             _lastBlockNumber = block.number;
-            _consumedUSDinBlock = 0;
+            _consumedWeiInBlock = 0;
         }
 
-        uint256 usd1e18 = quoteEthAmountInUsd1e18(amountWei);
+        uint256 newWei = _consumedWeiInBlock + amountWei;
+        uint256 usdTotal = quoteEthAmountInUsd1e18(newWei);
+        if (usdTotal > cap) revert Errors.BlockCapLimitExceeded();
 
-        if (usd1e18 > cap) revert Errors.BlockCapLimitExceeded();
-
-        unchecked {
-            uint256 newUsed = _consumedUSDinBlock + usd1e18;
-            if (newUsed > cap) revert Errors.BlockCapLimitExceeded();
-            _consumedUSDinBlock = newUsed;
-        }
+        _consumedWeiInBlock = newWei;
     }
 
     /// @dev                    Enforce and consume the per-token epoch rate limit.
