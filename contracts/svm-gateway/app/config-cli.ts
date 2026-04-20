@@ -22,6 +22,7 @@ const VAULT_SEED = "vault";
 const FEE_VAULT_SEED = "fee_vault";
 const RATE_LIMIT_CONFIG_SEED = "rate_limit_config";
 const RATE_LIMIT_SEED = "rate_limit";
+const MAX_PROTOCOL_FEE_LAMPORTS = 2_000_000n;
 
 // Load keypairs (same style as token-cli.ts)
 function loadKeypair(path: string): Keypair {
@@ -386,6 +387,9 @@ program_cli
             console.log("=== INITIALIZING FEE VAULT ===\n");
 
             const feeLamports = BigInt(options.fee);
+            if (feeLamports > MAX_PROTOCOL_FEE_LAMPORTS) {
+                throw new Error(`Protocol fee must be <= ${MAX_PROTOCOL_FEE_LAMPORTS.toString()} lamports`);
+            }
             const configPda = deriveConfigPda();
             const feeVaultPda = deriveFeeVaultPda();
 

@@ -37,6 +37,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
   let mockUSDT: any;
   let mockUSDC: any;
   const DEFAULT_PROTOCOL_FEE_LAMPORTS = 50_000;
+  const MAX_PROTOCOL_FEE_LAMPORTS = 2_000_000;
 
   // Helper to create payload (EVM-style: to address, value, calldata, gas params).
   const createPayload = (
@@ -1230,6 +1231,32 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
         const errorCode =
           error.error?.errorCode?.code || error.error?.errorCode || error.code;
         expect(errorCode).to.equal("Unauthorized");
+      }
+    });
+
+    it("Should accept zero and exact max protocol fee", async () => {
+      await setProtocolFee(0);
+      let feeVault = await program.account.feeVault.fetch(feeVaultPda);
+      expect(feeVault.protocolFeeLamports.toNumber()).to.equal(0);
+
+      await setProtocolFee(MAX_PROTOCOL_FEE_LAMPORTS);
+      feeVault = await program.account.feeVault.fetch(feeVaultPda);
+      expect(feeVault.protocolFeeLamports.toNumber()).to.equal(
+        MAX_PROTOCOL_FEE_LAMPORTS
+      );
+
+      await setProtocolFee(DEFAULT_PROTOCOL_FEE_LAMPORTS);
+    });
+
+    it("Should reject protocol fee above hard max", async () => {
+      try {
+        await setProtocolFee(MAX_PROTOCOL_FEE_LAMPORTS + 1);
+        expect.fail("setProtocolFee above max should have failed");
+      } catch (error: any) {
+        expect(error).to.exist;
+        const errorCode =
+          error.error?.errorCode?.code || error.error?.errorCode || error.code;
+        expect(errorCode).to.equal("InvalidInput");
       }
     });
 

@@ -9,6 +9,7 @@ pub const RATE_LIMIT_CONFIG_SEED: &[u8] = b"rate_limit_config";
 pub const RATE_LIMIT_SEED: &[u8] = b"rate_limit";
 pub const EXECUTED_SUB_TX_SEED: &[u8] = b"executed_sub_tx";
 pub const CEA_SEED: &[u8] = b"push_identity";
+pub const MAX_PROTOCOL_FEE_LAMPORTS: u64 = 2_000_000;
 
 // Price feed ID (Pyth SOL/USD), same as locker for now
 pub const FEED_ID: &str = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";

@@ -88,6 +88,7 @@ pub mod universal_gateway {
     }
 
     /// @notice Set flat protocol fee (lamports) for inbound send_universal_tx.
+    /// Must be <= `MAX_PROTOCOL_FEE_LAMPORTS`.
     /// Not gated by `!config.paused` so the admin can disable fees during an emergency pause.
     pub fn set_protocol_fee(ctx: Context<FeeVaultAdminAction>, fee_lamports: u64) -> Result<()> {
         instructions::admin::set_protocol_fee(ctx, fee_lamports)

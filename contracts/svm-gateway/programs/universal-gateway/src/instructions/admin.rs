@@ -159,6 +159,7 @@ pub struct FeeVaultAdminAction<'info> {
 }
 
 pub fn set_protocol_fee(ctx: Context<FeeVaultAdminAction>, fee_lamports: u64) -> Result<()> {
+    require!(fee_lamports <= MAX_PROTOCOL_FEE_LAMPORTS, GatewayError::InvalidInput);
     // Keep bump persisted so seeded constraints continue to validate consistently.
     ctx.accounts.fee_vault.bump = ctx.bumps.fee_vault;
     ctx.accounts.fee_vault.protocol_fee_lamports = fee_lamports;

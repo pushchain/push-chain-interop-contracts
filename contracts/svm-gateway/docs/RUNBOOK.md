@@ -118,6 +118,7 @@ npm run config:fee-init -- --fee 0
 ```
 
 The protocol fee is deducted from `native_amount` before routing. It goes to `FeeVault`, not `Vault`, preserving the 1:1 bridge invariant.
+The fee is capped on-chain at `2_000_000` lamports (`0.002 SOL`). This bound is sized for revert/rescue reimbursement, not revenue extraction.
 
 There is currently no dedicated `collect_protocol_fees` instruction or CLI command in this program.
 

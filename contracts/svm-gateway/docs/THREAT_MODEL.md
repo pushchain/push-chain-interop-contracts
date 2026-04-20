@@ -31,7 +31,7 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 | Actor | Trust Level | Capability |
 |---|---|---|
-| `Config.admin` | High | Update config, oracle feed, rate limits, authorities, protocol fee |
+| `Config.admin` | High | Update config, oracle feed, rate limits, authorities, bounded protocol fee |
 | `Config.pauser` | Medium | Pause/unpause gateway |
 | TSS | High | Authorize all outbound releases with signatures |
 | UV | Untrusted for content | Submit txs and pay gas only |
@@ -107,6 +107,10 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 9. **Fee vault depletion**  
    Risk: revert/rescue fail due to reimbursement shortfall.  
    Control: reimbursement checks available lamports above rent and fails safely (`InsufficientFeePool`).
+
+12. **Protocol fee misconfiguration**  
+   Risk: admin sets an excessive inbound fee and griefs users.  
+   Control: `set_protocol_fee` is hard-capped at `2_000_000` lamports (`0.002 SOL`).
 
 10. **Pause griefing**  
    Risk: pauser halts flows.  
