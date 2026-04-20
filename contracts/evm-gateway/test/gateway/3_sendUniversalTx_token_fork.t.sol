@@ -528,7 +528,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
     }
 
     /// @notice Test that token-as-gas with native funds is rejected at the entrypoint
-    /// @dev Per audit fix F-2026-15683, the token-as-gas overload rejects msg.value > 0. Native
+    /// @dev The token-as-gas overload rejects msg.value > 0. Native
     ///      funds bridging is therefore not supported via this overload; users must use the
     ///      UniversalTxRequest overload for native funds. This test documents the new revert path.
     function test_TokenGas_InferFUNDS_Type_RevertsOnMsgValue() public {
@@ -558,7 +558,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
     }
 
     /// @notice Test that token-as-gas with native funds + payload is rejected at the entrypoint
-    /// @dev Per audit fix F-2026-15683, msg.value > 0 reverts. Native funds via this overload is
+    /// @dev msg.value > 0 reverts. Native funds via this overload is
     ///      not supported; users must use the UniversalTxRequest overload for native funds.
     function test_TokenGas_InferFUNDS_AND_PAYLOAD_Type_RevertsOnMsgValue() public {
         uint256 gasAmount = 5e6; // 5 USDC
@@ -592,7 +592,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
     //      MSG.VALUE SEMANTICS TESTS
     // =========================
 
-    /// @notice Test that msg.value > 0 is rejected by the token-as-gas entrypoint (audit F-2026-15683)
+    /// @notice Test that msg.value > 0 is rejected by the token-as-gas entrypoint.
     function test_TokenGas_RevertOn_NonZeroMsgValue() public {
         uint256 gasAmount = 5e6; // 5 USDC
         uint256 amountOutMinETH = 0.0001 ether;

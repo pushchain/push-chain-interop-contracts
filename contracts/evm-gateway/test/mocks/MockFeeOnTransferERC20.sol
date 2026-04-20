@@ -6,7 +6,7 @@ import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 /**
  * @title  MockFeeOnTransferERC20
  * @notice Minimal ERC20 that charges a fixed-bps fee on every transfer/transferFrom.
- *         Used to verify that UniversalGateway rejects fee-on-transfer tokens (audit F-2026-15737).
+ *         Used to verify that UniversalGateway rejects fee-on-transfer tokens.
  * @dev    feeBps is expressed in basis points: 100 = 1%, 10_000 = 100%.
  *         The fee is subtracted from the amount sent to the recipient; for simplicity it is burned
  *         rather than redirected to a fee wallet — the invariant "recipient receives less than
