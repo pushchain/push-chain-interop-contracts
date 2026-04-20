@@ -135,7 +135,8 @@ contract VerifyDeployment is Script {
         bytes32 tssRole = keccak256("TSS_ROLE");
 
         failures += _check(gateway.hasRole(vaultRole, gwVault), "Gateway: VAULT_ROLE granted to Vault");
-        failures += _check(gateway.hasRole(tssRole, gwTss), "Gateway: TSS_ROLE granted to TSS");
+        // UG no longer manages TSS_ROLE; verify TSS_ADDRESS directly.
+        failures += _check(gateway.TSS_ADDRESS() == gwTss, "Gateway: TSS_ADDRESS set to TSS");
         failures += _check(vault.hasRole(tssRole, vTss), "Vault: TSS_ROLE granted to TSS");
 
         // ProxyAdmin owners

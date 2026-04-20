@@ -79,9 +79,8 @@ contract GatewayAdminSettersTest is BaseTest {
         vm.prank(admin);
         gateway.setTSS(newTSS);
 
+        // UG no longer manages TSS_ROLE — only TSS_ADDRESS is updated.
         assertEq(gateway.TSS_ADDRESS(), newTSS);
-        assertTrue(gateway.hasRole(gateway.TSS_ROLE(), newTSS));
-        assertFalse(gateway.hasRole(gateway.TSS_ROLE(), tss));
     }
 
     function testSetTSSAddressOnlyAdmin() public {
