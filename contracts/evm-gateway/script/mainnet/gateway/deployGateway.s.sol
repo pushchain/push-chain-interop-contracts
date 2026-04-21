@@ -216,7 +216,8 @@ contract DeployGateway is Script, GatewayConfig {
         // Verify roles
         require(gateway.hasRole(gateway.DEFAULT_ADMIN_ROLE(), admin), "Admin role not set");
         require(gateway.hasRole(gateway.PAUSER_ROLE(), pauser), "Pauser role not set");
-        require(gateway.hasRole(gateway.TSS_ROLE(), tss), "TSS role not set");
+        // UG no longer manages TSS_ROLE; TSS_ADDRESS is the authority signal here.
+        require(gateway.TSS_ADDRESS() == tss, "TSS_ADDRESS not set");
 
         // Verify CEA Factory if set
         if (cfg.ceaFactory != address(0)) {

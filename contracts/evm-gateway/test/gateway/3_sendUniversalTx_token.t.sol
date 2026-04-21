@@ -466,7 +466,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
     /// @notice Test that TX_TYPE.FUNDS is correctly inferred when using token-as-gas with funds
     /// @dev When req has ERC20 funds (amount > 0), should route to FUNDS using nativeValue from swap
     ///      as the gas leg. Native funds bridging via the token-gas overload is not supported
-    ///      because the function rejects msg.value (see audit fix F-2026-15683).
+    ///      because the function rejects msg.value.
     function test_TokenGas_InferFUNDS_Type() public {
         // Arrange: Swap tokenA for gas, bridge USDC as funds
         uint256 gasAmount = 1 ether; // 1 tokenA = 0.001 ETH = $2, within caps
@@ -506,7 +506,6 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
     /// @notice Test that TX_TYPE.FUNDS_AND_PAYLOAD is correctly inferred when using token-as-gas with funds and payload
     /// @dev When req has ERC20 funds and payload, should route to FUNDS_AND_PAYLOAD with the swap
     ///      output used as the gas leg. Native funds bridging via this overload is not supported
-    ///      (see audit fix F-2026-15683).
     function test_TokenGas_InferFUNDS_AND_PAYLOAD_Type() public {
         // Arrange: Swap tokenA for gas, bridge USDC with payload
         uint256 gasAmount = 1 ether; // 1 tokenA = 0.001 ETH = $2, within caps
@@ -551,7 +550,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
     // =========================
 
     /// @notice Test that msg.value > 0 is rejected by the token-as-gas entrypoint
-    /// @dev Per audit fix F-2026-15683, the token-as-gas overload derives nativeValue exclusively
+    /// @dev The token-as-gas overload derives nativeValue exclusively
     ///      from _swapToNative(gasToken, ...). Accepting msg.value would silently trap ETH in the
     ///      gateway with no recovery path, so msg.value > 0 must revert with InvalidInput.
     function test_TokenGas_RevertOn_NonZeroMsgValue() public {

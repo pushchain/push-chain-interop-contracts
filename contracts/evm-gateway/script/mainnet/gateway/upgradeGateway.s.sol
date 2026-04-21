@@ -176,7 +176,8 @@ contract UpgradeGateway is Script, GatewayConfig {
 
         // Verify roles preserved
         require(gateway.hasRole(gateway.VAULT_ROLE(), vault), "VAULT_ROLE lost after upgrade");
-        require(gateway.hasRole(gateway.TSS_ROLE(), tssAddr), "TSS_ROLE lost after upgrade");
+        // UG no longer manages TSS_ROLE; verify TSS_ADDRESS instead.
+        require(gateway.TSS_ADDRESS() == tssAddr, "TSS_ADDRESS lost after upgrade");
 
         console.log("OK: Implementation updated successfully");
         console.log("OK: VAULT:", vault);

@@ -258,7 +258,7 @@ contract UniversalGatewayPCTest is Test {
         gateway.setVaultPC(newVaultPC);
     }
 
-    // ---- setUniversalCore (audit F-2026-15657) ----
+    // ---- setUniversalCore ----
 
     function testSetUniversalCoreSuccess() public {
         address oldUniversalCore = gateway.UNIVERSAL_CORE();
@@ -1393,7 +1393,7 @@ contract UniversalGatewayPCTest is Test {
         vm.prank(user2);
         prc20Token.approve(address(gateway), type(uint256).max);
 
-        // Mark prc20Token as supported in UniversalCore mock (required after F-2026-15656 fix)
+        // Mark prc20Token as supported in UniversalCore mock (required by isSupportedToken gate in sendUniversalTxOutbound)
         vm.prank(address(this));
         universalCore.setSupportedToken(address(prc20Token), true);
     }
@@ -2571,10 +2571,10 @@ contract UniversalGatewayPCTest is Test {
     }
 
     // =========================
-    //   F-2026-15656 REGRESSION TESTS
+    //   SUPPORTED-TOKEN + TRANSFERFROM-RETURN REGRESSION TESTS
     // =========================
 
-    /// @notice F-2026-15656 sub-issue 1: sendUniversalTxOutbound must revert when token is not supported.
+    /// @notice sendUniversalTxOutbound must revert when token is not supported.
     ///         Before the fix, an unsupported (fake) token could emit a UniversalTxOutbound event
     ///         without holding any real funds.
     function test_SendUniversalTxOutbound_UnsupportedToken_Reverts() public {
@@ -2611,7 +2611,7 @@ contract UniversalGatewayPCTest is Test {
         gateway.sendUniversalTxOutbound{ value: pcFee }(req);
     }
 
-    /// @notice F-2026-15656 sub-issue 2: _burnPRC20 must revert when transferFrom returns false.
+    /// @notice _burnPRC20 must revert when transferFrom returns false.
     ///         Before the fix, a token returning false on transferFrom was silently ignored —
     ///         the gateway would proceed to burn without actually holding the tokens.
     function test_SendUniversalTxOutbound_TransferFromReturnsFalse_Reverts() public {

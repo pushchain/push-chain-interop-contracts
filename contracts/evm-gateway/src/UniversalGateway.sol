@@ -13,9 +13,11 @@ pragma solidity 0.8.26;
  *         4. FUNDS_AND_PAYLOAD_TX: Move funds + execute payloads.
  *
  * @dev    Authorization model:
- *         1. Revert / rescue paths (revertUniversalTx, rescueFunds) are gated by VAULT_ROLE,
- *            not TSS_ROLE. TSS authorization is enforced upstream in the Vault contract, which
- *            is the sole holder of VAULT_ROLE and the only caller into these gateway entry points.
+ *         1. Revert / rescue paths (revertUniversalTx, rescueFunds) are gated by VAULT_ROLE.
+ *            TSS authorization is enforced upstream in the Vault contract (Vault holds the
+ *            TSS_ROLE and is the sole holder of VAULT_ROLE here). UniversalGateway itself
+ *            does not manage a TSS_ROLE; it only tracks TSS_ADDRESS as the native-fee /
+ *            deposit recipient.
  *         2. The token support list (tokenToLimitThreshold) is managed by DEFAULT_ADMIN_ROLE and
  *            is used for rate-limiting and bridge-support validation of ERC20 funds via
  *            _consumeRateLimit and _handleDeposits. It is NOT used to validate gas tokens in
@@ -55,17 +57,15 @@ contract UniversalGateway is
 {
     using SafeERC20 for IERC20;
 
-    bytes32 public constant TSS_ROLE = keccak256("TSS_ROLE");
     bytes32 public constant VAULT_ROLE = keccak256("VAULT_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     /// @notice Minimum permitted value for chainlinkStalePeriod. Prevents admin from disabling
     ///         oracle freshness validation by setting the period to 0 or an absurdly small value.
-    ///         See audit finding F-2026-15645.
     uint256 public constant MIN_CHAINLINK_STALE_PERIOD = 10 minutes;
 
     /// @notice Upper bound for INBOUND_FEE. Prevents admin from configuring an absurdly high flat
-    ///         protocol fee that would DoS or grief users. See audit finding F-2026-15641.
+    ///         protocol fee that would DoS or grief users.
     uint256 public constant MAX_INBOUND_FEE = 1 ether;
 
     /// @notice MUTABLE — admin-updatable via setTSS.
@@ -78,7 +78,11 @@ contract UniversalGateway is
     uint256 public BLOCK_USD_CAP;
     uint256 public epochDurationSec;
     uint256 private _lastBlockNumber;
-    uint256 private _consumedUSDinBlock;
+    /// @dev Storage slot preserved from previous `_consumedUSDinBlock` (pre-converted USD total).
+    ///      Semantic changed to raw native-wei consumed in the current block; USD is computed
+    ///      at check time against the current oracle price to avoid mixed-price accounting
+    ///      across intra-block oracle updates.
+    uint256 private _consumedWeiInBlock;
     /// @dev MUTABLE — admin-updatable via setCapsUSD.
     uint256 public MIN_CAP_UNIVERSAL_TX_USD;
     /// @dev MUTABLE — admin-updatable via setCapsUSD.
@@ -151,7 +155,6 @@ contract UniversalGateway is
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(PAUSER_ROLE, pauser);
-        _grantRole(TSS_ROLE, tss);
         _grantRole(VAULT_ROLE, vaultAddress);
 
         TSS_ADDRESS = tss;
@@ -186,16 +189,14 @@ contract UniversalGateway is
         _unpause();
     }
 
-    /// @notice                Allows the admin to set the TSS address
-    /// @param newTSS          New TSS address
+    /// @notice                Allows the admin to set the TSS address.
+    /// @dev                   TSS authorization in UG is enforced via the
+    ///                        `TSS_ADDRESS` state variable (used as the native-fee / deposit
+    ///                        recipient). No `TSS_ROLE` role is managed here; TSS role
+    ///                        enforcement for outbound operations lives in the Vault contract.
+    /// @param newTSS          New TSS address.
     function setTSS(address newTSS) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newTSS == address(0)) revert Errors.ZeroAddress();
-        address old = TSS_ADDRESS;
-
-        // transfer role
-        if (hasRole(TSS_ROLE, old)) _revokeRole(TSS_ROLE, old);
-        _grantRole(TSS_ROLE, newTSS);
-
         TSS_ADDRESS = newTSS;
     }
 
@@ -238,7 +239,7 @@ contract UniversalGateway is
     }
 
     /// @notice                Allows the admin to set the Uniswap V3 factory and router.
-    /// @dev                   Renamed from setRouters (audit finding F-2026-15682). The previous
+    /// @dev                   Renamed from setRouters. The previous
     ///                        plural name implied multi-router support that does not exist.
     /// @param factory         New Uniswap V3 factory address
     /// @param router          New Uniswap V3 router address
@@ -273,7 +274,7 @@ contract UniversalGateway is
     ///                        throughput for every token. Admins must treat this as an implicit
     ///                        rate-limit reset across the board. The emitted `epochIndexAtChange`
     ///                        value records the old epoch index at the moment of the update so the
-    ///                        reset is auditable on-chain (audit finding F-2026-15643).
+    ///                        reset is auditable on-chain.
     /// @param newDurationSec  New epoch duration in seconds
     function updateEpochDuration(uint256 newDurationSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (newDurationSec == 0) revert Errors.InvalidInput();
@@ -304,7 +305,7 @@ contract UniversalGateway is
 
     /// @notice                Configure the maximum allowed data staleness for Chainlink reads.
     /// @dev                   Must be >= MIN_CHAINLINK_STALE_PERIOD to prevent accidental or
-    ///                        intentional disabling of freshness validation (audit F-2026-15645).
+    ///                        intentional disabling of freshness validation.
     /// @param stalePeriodSec  latestRoundData().updatedAt must be within this many seconds
     function setChainlinkStalePeriod(uint256 stalePeriodSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (stalePeriodSec < MIN_CHAINLINK_STALE_PERIOD) revert Errors.InvalidInput();
@@ -333,7 +334,7 @@ contract UniversalGateway is
 
     /// @notice                Set the flat protocol fee (in wei). 0 disables.
     /// @dev                   Must be <= MAX_INBOUND_FEE to prevent misconfiguration or governance
-    ///                        abuse (audit F-2026-15641).
+    ///                        abuse.
     /// @param fee             New protocol fee in wei
     function setProtocolFee(uint256 fee) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (fee > MAX_INBOUND_FEE) revert Errors.InvalidInput();
@@ -813,9 +814,13 @@ contract UniversalGateway is
         }
     }
 
-    /// @dev                    Enforce per-block USD budget for GAS routes using two-scalar accounting.
+    /// @dev                    Enforce per-block USD budget for GAS routes.
     ///                         BLOCK_USD_CAP is denominated in USD(1e18). When 0, the feature is disabled.
     ///                         Resets the window when a new block is observed.
+    /// @dev                    Accumulates raw native wei per block and converts the
+    ///                         running total to USD at the current oracle price on each check.
+    ///                         This avoids summing USD values computed from different oracle rounds
+    ///                         within the same block (mixed-price accounting).
     /// @param amountWei        Native amount (in wei) to account against the current block's USD budget
     function _checkBlockUSDCap(uint256 amountWei) private {
         uint256 cap = BLOCK_USD_CAP;
@@ -823,18 +828,14 @@ contract UniversalGateway is
 
         if (block.number != _lastBlockNumber) {
             _lastBlockNumber = block.number;
-            _consumedUSDinBlock = 0;
+            _consumedWeiInBlock = 0;
         }
 
-        uint256 usd1e18 = quoteEthAmountInUsd1e18(amountWei);
+        uint256 newWei = _consumedWeiInBlock + amountWei;
+        uint256 usdTotal = quoteEthAmountInUsd1e18(newWei);
+        if (usdTotal > cap) revert Errors.BlockCapLimitExceeded();
 
-        if (usd1e18 > cap) revert Errors.BlockCapLimitExceeded();
-
-        unchecked {
-            uint256 newUsed = _consumedUSDinBlock + usd1e18;
-            if (newUsed > cap) revert Errors.BlockCapLimitExceeded();
-            _consumedUSDinBlock = newUsed;
-        }
+        _consumedWeiInBlock = newWei;
     }
 
     /// @dev                    Enforce and consume the per-token epoch rate limit.
@@ -903,7 +904,7 @@ contract UniversalGateway is
 
         // Reject fee-on-transfer tokens: if the gateway receives fewer tokens than amountIn,
         // the subsequent allowance/swap will operate on a mismatched amount and the router pull
-        // will fail. See audit finding F-2026-15737.
+        // will fail.
         uint256 balBefore = IERC20(tokenIn).balanceOf(address(this));
         IERC20(tokenIn).safeTransferFrom(_msgSender(), address(this), amountIn);
         if (IERC20(tokenIn).balanceOf(address(this)) - balBefore != amountIn) revert Errors.InvalidAmount();

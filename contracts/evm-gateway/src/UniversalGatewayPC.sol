@@ -85,7 +85,7 @@ contract UniversalGatewayPC is
 
     /// @notice                Sets the UniversalCore address.
     /// @dev                   Allows admin to re-point the UniversalCore dependency without
-    ///                        requiring a proxy upgrade. Mirrors setVaultPC. See audit F-2026-15657.
+    ///                        requiring a proxy upgrade. Mirrors setVaultPC.
     /// @param universalCore   Address of the new UniversalCore.
     function setUniversalCore(address universalCore) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
         if (universalCore == address(0)) revert Errors.ZeroAddress();

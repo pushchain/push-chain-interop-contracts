@@ -701,13 +701,12 @@ contract GatewaySendUniversalTxWithFundsTest is BaseTest {
 
     // ============================================================
     //  _handleDeposits — Fee-on-transfer token rejection
-    //  (audit finding F-2026-15737)
     // ============================================================
 
     /// @notice FUNDS deposit of a whitelisted fee-on-transfer ERC20 must revert InvalidAmount.
     /// @dev    Without the balance-before/after check, the Vault would receive less than `amount`
     ///         and the gateway's accounting/rate-limit/event emission would reference a phantom
-    ///         amount that the Vault does not actually hold. See audit finding F-2026-15737.
+    ///         amount that the Vault does not actually hold.
     function test_SendTxWithFunds_FeeOnTransferERC20_Reverts() public {
         // 2% fee-on-transfer token.
         MockFeeOnTransferERC20 fotToken = new MockFeeOnTransferERC20("FeeOnTransfer", "FOT", 200);

@@ -1619,8 +1619,7 @@ contract GatewayGlobalRateLimitTest is BaseTest {
         assertEq(remaining, 0, "Remaining amount for zero threshold should be 0");
     }
 
-    /// @dev Regression test for audit finding F-2026-15643.
-    ///      Changing epochDuration shifts the epoch index, causing all per-token usage counters
+    /// @dev Regression test: changing epochDuration shifts the epoch index, causing all per-token usage counters
     ///      to silently reset on the next consumption — full throughput is restored immediately.
     ///      The reset only happens when the old and new epoch indices differ; we warp to 7 hours
     ///      so the 6h epoch index (1) != the 12h epoch index (0).
