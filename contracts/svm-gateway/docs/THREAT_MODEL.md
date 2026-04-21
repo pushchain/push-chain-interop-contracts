@@ -114,7 +114,7 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 10. **Pause griefing**  
    Risk: pauser halts flows.  
-   Control: admin can unpause directly; keep admin/pauser as separate keys.
+   Control: admin can unpause directly and can still update configuration/rate-limit parameters while paused; keep admin/pauser as separate keys.
 
 11. **Wrong `token_rate_limit` account passed**  
    Risk: bypass token caps using another token's state account.  

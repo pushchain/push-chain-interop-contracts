@@ -46,7 +46,7 @@ The program uses PDAs for all protocol state. No external signers or owner keys 
 | `revert_universal_tx` | Outbound | TSS signature | Return funds to original depositor (id=3) |
 | `rescue_funds` | Outbound | TSS signature | Emergency release to any recipient (id=4) |
 | `initialize` | Admin | Upgrade authority signature | One-time program setup |
-| `set_*` | Admin | Admin/pauser signature | Config updates (TSS address, caps, pause) |
+| `set_*` | Admin | Admin signature | Config, oracle, and rate-limit updates (allowed even while paused) |
 | `propose_authorities` | Admin | Admin signature | Propose new admin and/or pauser (two-step handover) |
 | `accept_admin` | Admin | Pending admin signature | Accept a proposed admin handover |
 | `accept_pauser` | Admin | Pending pauser signature | Accept a proposed pauser handover |
@@ -144,7 +144,7 @@ See `5-RESCUE.md`.
 
 **Outbound (all):** TSS ECDSA secp256k1 signature. The program reconstructs the message, hashes it with keccak256, recovers the Ethereum address from the signature, and compares it to `TssPda.tss_eth_address`. No `onlyRole` or key-based auth — the signature is the only gate.
 
-**Admin:** config changes require the current admin or pauser pubkey to sign. Authority handover is two-step: the current admin proposes a new admin/pauser, and the proposed key must accept. These are Solana `Pubkey` fields stored in `Config`, not Ethereum addresses.
+**Admin:** config changes require the current admin pubkey to sign. `pause` / `unpause` can be called by either the configured pauser or the admin. Authority handover is two-step: the current admin proposes a new admin/pauser, and the proposed key must accept. These are Solana `Pubkey` fields stored in `Config`, not Ethereum addresses.
 
 ---
 

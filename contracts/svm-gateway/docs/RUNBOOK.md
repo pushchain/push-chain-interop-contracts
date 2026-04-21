@@ -191,6 +191,7 @@ npm run config:unpause
 ```
 
 Either the configured `pauser` or the current `admin` can call these. Admin and pauser can be the same or different keypairs.
+While paused, inbound and outbound user flows stay blocked, but the admin can still update configuration and rate-limit parameters to remediate an incident before unpausing.
 
 ---
 

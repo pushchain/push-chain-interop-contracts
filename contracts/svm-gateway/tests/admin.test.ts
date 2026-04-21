@@ -556,6 +556,187 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             expect(rateLimitConfig.epochDurationSec.toString()).to.equal(newEpochDuration.toString());
 
         });
+
+        it("Allows admin config setters while paused", async () => {
+            const originalConfig = await program.account.config.fetch(configPda);
+            const pausedMinCap = new anchor.BN(250_000_000);
+            const pausedMaxCap = new anchor.BN(2_500_000_000);
+            const pausedPriceFeed = Keypair.generate().publicKey;
+            const pausedConfidenceThreshold = new anchor.BN(3_000_000);
+            const pausedMaxAge = new anchor.BN(120);
+
+            await program.methods
+                .pause()
+                .accountsPartial({
+                    pauser: pauser.publicKey,
+                    config: configPda,
+                })
+                .signers([pauser])
+                .rpc();
+
+            await program.methods
+                .setCapsUsd(pausedMinCap, pausedMaxCap)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .setPythPriceFeed(pausedPriceFeed)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .setPythConfidenceThreshold(pausedConfidenceThreshold)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .setPythMaxAgeSeconds(pausedMaxAge)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .unpause()
+                .accountsPartial({
+                    pauser: pauser.publicKey,
+                    config: configPda,
+                })
+                .signers([pauser])
+                .rpc();
+
+            const pausedConfig = await program.account.config.fetch(configPda);
+            expect(pausedConfig.minCapUniversalTxUsd.toString()).to.equal(pausedMinCap.toString());
+            expect(pausedConfig.maxCapUniversalTxUsd.toString()).to.equal(pausedMaxCap.toString());
+            expect(pausedConfig.pythPriceFeed.toString()).to.equal(pausedPriceFeed.toString());
+            expect(pausedConfig.pythConfidenceThreshold.toString()).to.equal(pausedConfidenceThreshold.toString());
+            expect(pausedConfig.pythMaxAgeSeconds.toString()).to.equal(pausedMaxAge.toString());
+
+            await program.methods
+                .setCapsUsd(
+                    new anchor.BN(originalConfig.minCapUniversalTxUsd.toString()),
+                    new anchor.BN(originalConfig.maxCapUniversalTxUsd.toString())
+                )
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .setPythPriceFeed(originalConfig.pythPriceFeed)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .setPythConfidenceThreshold(new anchor.BN(originalConfig.pythConfidenceThreshold.toString()))
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .setPythMaxAgeSeconds(new anchor.BN(originalConfig.pythMaxAgeSeconds.toString()))
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+        });
+
+        it("Allows rate limit config setters while paused", async () => {
+            const originalRateLimitConfig = await program.account.rateLimitConfig.fetch(rateLimitConfigPda);
+            const pausedBlockCap = new anchor.BN(2_000_000_000_000);
+            const pausedEpochDuration = new anchor.BN(3600);
+
+            await program.methods
+                .pause()
+                .accountsPartial({
+                    pauser: pauser.publicKey,
+                    config: configPda,
+                })
+                .signers([pauser])
+                .rpc();
+
+            await program.methods
+                .setBlockUsdCap(pausedBlockCap)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    rateLimitConfig: rateLimitConfigPda,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .updateEpochDuration(pausedEpochDuration)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    rateLimitConfig: rateLimitConfigPda,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .unpause()
+                .accountsPartial({
+                    pauser: pauser.publicKey,
+                    config: configPda,
+                })
+                .signers([pauser])
+                .rpc();
+
+            const pausedRateLimitConfig = await program.account.rateLimitConfig.fetch(rateLimitConfigPda);
+            expect(pausedRateLimitConfig.blockUsdCap.toString()).to.equal(pausedBlockCap.toString());
+            expect(pausedRateLimitConfig.epochDurationSec.toString()).to.equal(pausedEpochDuration.toString());
+
+            await program.methods
+                .setBlockUsdCap(new anchor.BN(originalRateLimitConfig.blockUsdCap.toString()))
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    rateLimitConfig: rateLimitConfigPda,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .updateEpochDuration(new anchor.BN(originalRateLimitConfig.epochDurationSec.toString()))
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    rateLimitConfig: rateLimitConfigPda,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+        });
     });
 
     describe("Token Rate Limits", () => {
@@ -584,6 +765,60 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             expect(tokenRateLimit.tokenMint.toString()).to.equal(mockUSDT.mint.publicKey.toString());
             expect(tokenRateLimit.limitThreshold.toString()).to.equal(limitThreshold.toString());
 
+        });
+
+        it("Allows token rate limit updates while paused", async () => {
+            const [tokenRateLimitPda] = PublicKey.findProgramAddressSync(
+                [Buffer.from("rate_limit"), mockUSDT.mint.publicKey.toBuffer()],
+                program.programId
+            );
+            const originalTokenRateLimit = await program.account.tokenRateLimit.fetch(tokenRateLimitPda);
+            const pausedThreshold = new anchor.BN(3000 * Math.pow(10, 6));
+
+            await program.methods
+                .pause()
+                .accountsPartial({
+                    pauser: pauser.publicKey,
+                    config: configPda,
+                })
+                .signers([pauser])
+                .rpc();
+
+            await program.methods
+                .setTokenRateLimit(pausedThreshold)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    tokenRateLimit: tokenRateLimitPda,
+                    tokenMint: mockUSDT.mint.publicKey,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .unpause()
+                .accountsPartial({
+                    pauser: pauser.publicKey,
+                    config: configPda,
+                })
+                .signers([pauser])
+                .rpc();
+
+            const pausedTokenRateLimit = await program.account.tokenRateLimit.fetch(tokenRateLimitPda);
+            expect(pausedTokenRateLimit.limitThreshold.toString()).to.equal(pausedThreshold.toString());
+
+            await program.methods
+                .setTokenRateLimit(new anchor.BN(originalTokenRateLimit.limitThreshold.toString()))
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    tokenRateLimit: tokenRateLimitPda,
+                    tokenMint: mockUSDT.mint.publicKey,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
         });
     });
 
