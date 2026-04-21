@@ -248,3 +248,33 @@ export function buildRescueAdditionalData(
   }
   return [subTxId, universalTxId, recipient.toBuffer(), gasFeeBuf];
 }
+
+// =========================
+// REVERT MESSAGE HELPERS
+// =========================
+
+export function buildRevertAdditionalData(
+  subTxId: BytesLike,
+  universalTxId: BytesLike,
+  recipient: PublicKey,
+  revertMsg: Uint8Array,
+  gasFee: bigint = BigInt(0),
+  tokenMint?: PublicKey
+): BytesLike[] {
+  const gasFeeBuf = Buffer.alloc(8);
+  gasFeeBuf.writeBigUInt64BE(gasFee, 0);
+  const revertMsgHash = Buffer.from(keccak_256.arrayBuffer(Buffer.from(revertMsg)));
+
+  if (tokenMint) {
+    return [
+      subTxId,
+      universalTxId,
+      tokenMint.toBuffer(),
+      recipient.toBuffer(),
+      gasFeeBuf,
+      revertMsgHash,
+    ];
+  }
+
+  return [subTxId, universalTxId, recipient.toBuffer(), gasFeeBuf, revertMsgHash];
+}

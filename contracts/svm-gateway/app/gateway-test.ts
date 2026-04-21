@@ -29,6 +29,7 @@ import {
 import {
   signTssMessage,
   buildExecuteAdditionalData,
+  buildRevertAdditionalData,
   buildWithdrawAdditionalData,
   TssInstruction,
   generateUniversalTxId,
@@ -3543,7 +3544,6 @@ async function run() {
     const instructionId = 3;
     const amount = 1000000; // 0.001 SOL
     const revertGasFee = 1000000; // 0.001 SOL gas fee for revert
-    const recipientBytes = admin.toBytes();
     const chainIdString = tssAccount.chainId; // String: Solana cluster pubkey
 
     // Generate universal_tx_id for revert
@@ -3556,9 +3556,14 @@ async function run() {
     const chainIdBytes = Buffer.from(chainIdString, "utf8"); // UTF-8 bytes of cluster pubkey string
     const amountBE = Buffer.alloc(8);
     amountBE.writeBigUInt64BE(BigInt(amount));
-    const recipientBytesBE = admin.toBuffer();
-    const gasFeeBE = Buffer.alloc(8);
-    gasFeeBE.writeBigUInt64BE(BigInt(revertGasFee));
+    const revertMsg = Buffer.from("test_revert");
+    const revertAdditional = buildRevertAdditionalData(
+      new Uint8Array(txIdRevert),
+      new Uint8Array(universalTxIdRevert),
+      admin,
+      revertMsg,
+      BigInt(revertGasFee)
+    );
 
     // Order matches revert_universal_tx.rs
     const messageData = Buffer.concat([
@@ -3566,10 +3571,7 @@ async function run() {
       instructionIdBE,
       chainIdBytes, // UTF-8 bytes of chain_id string
       amountBE,
-      Buffer.from(txIdRevert), // sub_tx_id (32 bytes) - MUST be first in additional_data
-      Buffer.from(universalTxIdRevert), // universal_tx_id (32 bytes)
-      recipientBytesBE, // recipient (32 bytes)
-      gasFeeBE, // gas_fee (8 bytes, u64 BE)
+      ...revertAdditional.map((item) => Buffer.from(item)),
     ]);
 
     // Hash with keccak (same as program)
@@ -3601,7 +3603,7 @@ async function run() {
         new anchor.BN(amount),
         {
           revertRecipient: admin,
-          revertMsg: Buffer.from("test_revert"),
+          revertMsg,
         },
         new anchor.BN(revertGasFee),
         Array.from(signature),

@@ -10,7 +10,7 @@ import {
     getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import * as sharedState from "./shared-state";
-import { signTssMessage, TssInstruction, generateUniversalTxId, buildWithdrawAdditionalData } from "./helpers/tss";
+import { signTssMessage, TssInstruction, generateUniversalTxId, buildRevertAdditionalData, buildWithdrawAdditionalData } from "./helpers/tss";
 import { ensureTestSetup } from "./helpers/test-setup";
 import {
     USDT_DECIMALS, TOKEN_MULTIPLIER,
@@ -688,7 +688,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: BigInt(revertAmount),
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(recipient.publicKey), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    recipient.publicKey,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE
+                ),
             });
 
             const initialRecipient = await provider.connection.getBalance(recipient.publicKey);
@@ -749,10 +755,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
                 instruction: TssInstruction.Revert,
                 amount: BigInt(revertAmount),
                 additional: [
-                    new Uint8Array(subTxId),
-                    new Uint8Array(universalTxId),
-                    toBytes(recipient.publicKey),
-                    buildGasFeeBuf(tooLargeGasFee),
+                    ...buildRevertAdditionalData(
+                        new Uint8Array(subTxId),
+                        new Uint8Array(universalTxId),
+                        recipient.publicKey,
+                        revertInstruction.revertMsg,
+                        tooLargeGasFee
+                    ),
                 ],
             });
 
@@ -808,7 +817,14 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: revertRaw,
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(mockUSDT.mint.publicKey), toBytes(revertInstruction.revertRecipient), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    revertInstruction.revertRecipient,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE,
+                    mockUSDT.mint.publicKey
+                ),
             });
             const initialRecipientBalance = await mockUSDT.getBalance(recipientRevertAccount);
             const callerBalanceBefore = await provider.connection.getBalance(relayer.publicKey);
@@ -1215,7 +1231,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
                 const signature = await signTssMessageWithChainId({
                     instruction: TssInstruction.Revert,
                     amount: BigInt(revertAmount),
-                    additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(recipient.publicKey), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                    additional: buildRevertAdditionalData(
+                        new Uint8Array(subTxId),
+                        new Uint8Array(universalTxId),
+                        recipient.publicKey,
+                        revertInstruction.revertMsg,
+                        DEFAULT_GAS_FEE
+                    ),
                 });
 
                 await expectRejection(
@@ -1270,7 +1292,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: BigInt(0),
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(recipient.publicKey), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    recipient.publicKey,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE
+                ),
             });
 
             await expectRejection(
@@ -1319,7 +1347,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: BigInt(revertAmount),
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(PublicKey.default), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    PublicKey.default,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE
+                ),
             });
 
             // Our program validates revertRecipient != Pubkey::default()
@@ -1388,7 +1422,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: BigInt(revertAmount),
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(recipient.publicKey), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    recipient.publicKey,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE
+                ),
             });
 
             // First revert should succeed
@@ -1430,7 +1470,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature2 = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: BigInt(revertAmount),
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(recipient.publicKey), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    recipient.publicKey,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE
+                ),
             });
 
             try {
@@ -1495,7 +1541,14 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: BigInt(0),
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(mockUSDT.mint.publicKey), toBytes(revertInstruction.revertRecipient), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    revertInstruction.revertRecipient,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE,
+                    mockUSDT.mint.publicKey
+                ),
             });
 
             await expectRejection(
@@ -1547,7 +1600,14 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: revertRaw,
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(mockUSDT.mint.publicKey), toBytes(PublicKey.default), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    PublicKey.default,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE,
+                    mockUSDT.mint.publicKey
+                ),
             });
 
             await expectRejection(
@@ -1600,7 +1660,14 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: revertRaw,
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(mockUSDT.mint.publicKey), toBytes(revertInstruction.revertRecipient), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    revertInstruction.revertRecipient,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE,
+                    mockUSDT.mint.publicKey
+                ),
             });
 
             // First revert should succeed
@@ -1642,7 +1709,14 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature2 = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: revertRaw,
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(mockUSDT.mint.publicKey), toBytes(revertInstruction.revertRecipient), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    revertInstruction.revertRecipient,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE,
+                    mockUSDT.mint.publicKey
+                ),
             });
 
             try {

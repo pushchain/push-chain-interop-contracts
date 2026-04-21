@@ -2,6 +2,7 @@ use crate::instructions::tss::validate_message;
 use crate::utils::{encode_u64_be, pda_spl_transfer, pda_system_transfer, reimburse_relayer_from_fee_vault};
 use crate::{errors::*, state::*};
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::keccak::hash;
 use anchor_spl::token::{Mint, Token, TokenAccount};
 
 // =========================
@@ -10,8 +11,8 @@ use anchor_spl::token::{Mint, Token, TokenAccount};
 // Single entrypoint handles both SOL (token_mint = None) and SPL (token_mint = Some).
 //
 // TSS message format (instruction_id = 3 for both modes):
-//   SOL: amount || [sub_tx_id, universal_tx_id, recipient, gas_fee]
-//   SPL: amount || [sub_tx_id, universal_tx_id, mint, recipient, gas_fee]
+//   SOL: amount || [sub_tx_id, universal_tx_id, recipient, gas_fee, revert_msg_hash]
+//   SPL: amount || [sub_tx_id, universal_tx_id, mint, recipient, gas_fee, revert_msg_hash]
 
 #[derive(Accounts)]
 #[instruction(sub_tx_id: [u8; 32])]
@@ -90,6 +91,7 @@ pub fn revert_universal_tx(
     let recipient = ctx.accounts.recipient.key();
     require!(revert_instruction.revert_recipient != Pubkey::default(), GatewayError::InvalidRecipient);
     require!(recipient == revert_instruction.revert_recipient, GatewayError::InvalidRecipient);
+    let revert_msg_hash = hash(revert_instruction.revert_msg.as_slice()).to_bytes();
 
     let is_native = ctx.accounts.token_mint.is_none();
 
@@ -110,15 +112,15 @@ pub fn revert_universal_tx(
         require!(recipient_ta.owner == recipient, GatewayError::InvalidRecipient);
     }
 
-    // TSS message: instruction_id=3 || amount || [sub_tx_id, universal_tx_id, (mint,) recipient, gas_fee]
+    // TSS message: instruction_id=3 || amount || [sub_tx_id, universal_tx_id, (mint,) recipient, gas_fee, revert_msg_hash]
     let recipient_bytes = recipient.to_bytes();
     let gas_fee_buf = encode_u64_be(gas_fee);
     if is_native {
-        let additional: [&[u8]; 4] = [&sub_tx_id, &universal_tx_id, &recipient_bytes, &gas_fee_buf];
+        let additional: [&[u8]; 5] = [&sub_tx_id, &universal_tx_id, &recipient_bytes, &gas_fee_buf, &revert_msg_hash];
         validate_message(&mut ctx.accounts.tss_pda, 3, Some(amount), &additional, &message_hash, &signature, recovery_id)?;
     } else {
         let mint_bytes = ctx.accounts.token_mint.as_ref().unwrap().key().to_bytes();
-        let additional: [&[u8]; 5] = [&sub_tx_id, &universal_tx_id, &mint_bytes, &recipient_bytes, &gas_fee_buf];
+        let additional: [&[u8]; 6] = [&sub_tx_id, &universal_tx_id, &mint_bytes, &recipient_bytes, &gas_fee_buf, &revert_msg_hash];
         validate_message(&mut ctx.accounts.tss_pda, 3, Some(amount), &additional, &message_hash, &signature, recovery_id)?;
     }
 
