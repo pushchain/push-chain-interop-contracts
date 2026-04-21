@@ -176,7 +176,11 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       mockUSDC.mint.publicKey,
     ]) {
       await program.methods
-        .setTokenRateLimit(veryLargeThreshold)
+        .setTokenRateLimit(
+          veryLargeThreshold,
+          tokenMint.equals(PublicKey.default) ? false : true,
+          tokenMint.equals(PublicKey.default) ? false : true
+        )
         .accountsPartial({
           admin: admin.publicKey,
           config: configPda,
@@ -1459,7 +1463,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
         PublicKey.default
       );
       await program.methods
-        .setTokenRateLimit(veryLargeThreshold)
+        .setTokenRateLimit(veryLargeThreshold, false, false)
         .accountsPartial({
           admin: admin.publicKey,
           config: configPda,

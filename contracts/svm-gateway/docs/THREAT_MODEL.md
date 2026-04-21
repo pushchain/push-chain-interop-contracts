@@ -120,6 +120,10 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Risk: bypass token caps using another token's state account.  
    Control: account must be program-owned `TokenRateLimit` and internal `token_mint` must match expected mint.
 
+13. **Whitelisting a centralized SPL mint without explicit acknowledgment**  
+   Risk: issuer retains `mint_authority` and/or `freeze_authority`, affecting collateral assumptions or freezing vault flows.  
+   Control: `set_token_rate_limit` requires explicit acknowledgment flags for retained mint and freeze authorities before a non-zero threshold can be set.
+
 ---
 
 ## 5. Cross-Program / Operational Risks

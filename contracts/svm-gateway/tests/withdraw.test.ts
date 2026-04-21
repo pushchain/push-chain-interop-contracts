@@ -193,7 +193,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
         // Force a known non-zero threshold even if another suite previously set 0.
         const veryLargeThreshold = new anchor.BN("1000000000000000000000"); // Effectively unlimited
         await program.methods
-            .setTokenRateLimit(veryLargeThreshold)
+            .setTokenRateLimit(veryLargeThreshold, false, false)
             .accountsPartial({
                 config: configPda,
                 tokenRateLimit: nativeSolTokenRateLimitPda,
@@ -270,7 +270,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
 
         // Force a known non-zero threshold even if another suite previously set 0.
         await program.methods
-            .setTokenRateLimit(veryLargeThreshold)
+            .setTokenRateLimit(veryLargeThreshold, true, true)
             .accountsPartial({
                 config: configPda,
                 tokenRateLimit: splTokenRateLimitPda,

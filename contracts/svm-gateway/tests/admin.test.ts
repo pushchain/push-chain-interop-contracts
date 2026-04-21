@@ -750,7 +750,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             );
 
             await program.methods
-                .setTokenRateLimit(limitThreshold)
+                .setTokenRateLimit(limitThreshold, true, true)
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,
@@ -765,6 +765,63 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             expect(tokenRateLimit.tokenMint.toString()).to.equal(mockUSDT.mint.publicKey.toString());
             expect(tokenRateLimit.limitThreshold.toString()).to.equal(limitThreshold.toString());
 
+        });
+
+        it("Allows native SOL rate limit updates without authority acknowledgments", async () => {
+            const limitThreshold = new anchor.BN(500 * 10 ** 9);
+            const [tokenRateLimitPda] = PublicKey.findProgramAddressSync(
+                [Buffer.from("rate_limit"), PublicKey.default.toBuffer()],
+                program.programId
+            );
+
+            await program.methods
+                .setTokenRateLimit(limitThreshold, false, false)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    tokenRateLimit: tokenRateLimitPda,
+                    tokenMint: PublicKey.default,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+
+            const tokenRateLimit = await program.account.tokenRateLimit.fetch(tokenRateLimitPda);
+            expect(tokenRateLimit.tokenMint.toString()).to.equal(PublicKey.default.toString());
+            expect(tokenRateLimit.limitThreshold.toString()).to.equal(limitThreshold.toString());
+        });
+
+        it("Rejects SPL mint authorities unless explicitly acknowledged", async () => {
+            const limitThreshold = new anchor.BN(2000 * Math.pow(10, 6));
+            const [tokenRateLimitPda] = PublicKey.findProgramAddressSync(
+                [Buffer.from("rate_limit"), mockUSDT.mint.publicKey.toBuffer()],
+                program.programId
+            );
+
+            for (const [trustedMintAuthority, trustedFreezeAuthority] of [
+                [false, false],
+                [true, false],
+                [false, true],
+            ] as const) {
+                try {
+                    await program.methods
+                        .setTokenRateLimit(limitThreshold, trustedMintAuthority, trustedFreezeAuthority)
+                        .accountsPartial({
+                            admin: admin.publicKey,
+                            config: configPda,
+                            tokenRateLimit: tokenRateLimitPda,
+                            tokenMint: mockUSDT.mint.publicKey,
+                            systemProgram: SystemProgram.programId,
+                        })
+                        .signers([admin])
+                        .rpc();
+
+                    expect.fail("Missing authority acknowledgment should have failed");
+                } catch (error: any) {
+                    const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                    expect(errorCode).to.equal("InvalidMint");
+                }
+            }
         });
 
         it("Allows token rate limit updates while paused", async () => {
@@ -785,7 +842,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 .rpc();
 
             await program.methods
-                .setTokenRateLimit(pausedThreshold)
+                .setTokenRateLimit(pausedThreshold, true, true)
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,
@@ -809,7 +866,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             expect(pausedTokenRateLimit.limitThreshold.toString()).to.equal(pausedThreshold.toString());
 
             await program.methods
-                .setTokenRateLimit(new anchor.BN(originalTokenRateLimit.limitThreshold.toString()))
+                .setTokenRateLimit(new anchor.BN(originalTokenRateLimit.limitThreshold.toString()), true, true)
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,

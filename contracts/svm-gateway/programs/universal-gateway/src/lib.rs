@@ -133,8 +133,15 @@ pub mod universal_gateway {
     pub fn set_token_rate_limit(
         ctx: Context<TokenRateLimitAction>,
         limit_threshold: u128,
+        trusted_mint_authority: bool,
+        trusted_freeze_authority: bool,
     ) -> Result<()> {
-        instructions::admin::set_token_rate_limit(ctx, limit_threshold)
+        instructions::admin::set_token_rate_limit(
+            ctx,
+            limit_threshold,
+            trusted_mint_authority,
+            trusted_freeze_authority,
+        )
     }
 
     // =========================

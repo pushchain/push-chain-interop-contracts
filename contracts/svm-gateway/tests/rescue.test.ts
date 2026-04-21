@@ -165,7 +165,7 @@ describe("Universal Gateway - Rescue Tests", () => {
 
         const nativeSolRateLimitPda = getTokenRateLimitPda(PublicKey.default);
         await program.methods
-            .setTokenRateLimit(new anchor.BN("1000000000000000000000"))
+            .setTokenRateLimit(new anchor.BN("1000000000000000000000"), false, false)
             .accountsPartial({
                 config: configPda,
                 tokenRateLimit: nativeSolRateLimitPda,
@@ -239,7 +239,7 @@ describe("Universal Gateway - Rescue Tests", () => {
 
         const splRateLimitPda = getTokenRateLimitPda(mockUSDT.mint.publicKey);
         await program.methods
-            .setTokenRateLimit(new anchor.BN("1000000000000000000000"))
+            .setTokenRateLimit(new anchor.BN("1000000000000000000000"), true, true)
             .accountsPartial({
                 config: configPda,
                 tokenRateLimit: splRateLimitPda,

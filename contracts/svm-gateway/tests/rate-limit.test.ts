@@ -58,7 +58,7 @@ describe("Universal Gateway - Rate Limiting Tests", () => {
         const veryLargeThreshold = new anchor.BN("1000000000000000000000"); // 1 sextillion (effectively unlimited)
         const nativeSolTokenRateLimitPda = getTokenRateLimitPda(PublicKey.default);
         await program.methods
-            .setTokenRateLimit(veryLargeThreshold)
+            .setTokenRateLimit(veryLargeThreshold, false, false)
             .accountsPartial({
                 admin: admin.publicKey,
                 config: configPda,
@@ -413,7 +413,7 @@ describe("Universal Gateway - Rate Limiting Tests", () => {
             const nativeSolTokenRateLimitPda = getTokenRateLimitPda(PublicKey.default);
 
             await program.methods
-                .setTokenRateLimit(limitThreshold)
+                .setTokenRateLimit(limitThreshold, false, false)
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,
@@ -536,7 +536,7 @@ describe("Universal Gateway - Rate Limiting Tests", () => {
             const usdtTokenRateLimitPda = getTokenRateLimitPda(mockUSDT.mint.publicKey);
 
             await program.methods
-                .setTokenRateLimit(limitThreshold)
+                .setTokenRateLimit(limitThreshold, true, true)
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,
@@ -645,7 +645,7 @@ describe("Universal Gateway - Rate Limiting Tests", () => {
             const nativeSolTokenRateLimitPda = getTokenRateLimitPda(PublicKey.default);
 
             await program.methods
-                .setTokenRateLimit(new anchor.BN(0))
+                .setTokenRateLimit(new anchor.BN(0), false, false)
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,
@@ -728,7 +728,7 @@ describe("Universal Gateway - Rate Limiting Tests", () => {
             const threshold1 = priorUsed.add(deposit).add(margin);
 
             await program.methods
-                .setTokenRateLimit(threshold1)
+                .setTokenRateLimit(threshold1, false, false)
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,
@@ -772,7 +772,7 @@ describe("Universal Gateway - Rate Limiting Tests", () => {
             // Remaining budget is now 0.6 SOL (usage preserved — not reset to 0).
             const threshold2 = threshold1.add(new anchor.BN(0.1 * LAMPORTS_PER_SOL));
             await program.methods
-                .setTokenRateLimit(threshold2)
+                .setTokenRateLimit(threshold2, false, false)
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,
@@ -842,7 +842,7 @@ describe("Universal Gateway - Rate Limiting Tests", () => {
             const nativeSolTokenRateLimitPda = getTokenRateLimitPda(PublicKey.default);
 
             await program.methods
-                .setTokenRateLimit(limitThreshold)
+                .setTokenRateLimit(limitThreshold, false, false)
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,
@@ -923,7 +923,7 @@ describe("Universal Gateway - Rate Limiting Tests", () => {
             const limitThreshold = priorUsed.add(new anchor.BN(fundsAmount)).add(new anchor.BN(0.1 * LAMPORTS_PER_SOL));
 
             await program.methods
-                .setTokenRateLimit(limitThreshold)
+                .setTokenRateLimit(limitThreshold, false, false)
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,
@@ -1035,7 +1035,7 @@ describe("Universal Gateway - Rate Limiting Tests", () => {
             const veryLargeThreshold = new anchor.BN("1000000000000000000000");
             const nativeSolTokenRateLimitPda = getTokenRateLimitPda(PublicKey.default);
             await program.methods
-                .setTokenRateLimit(veryLargeThreshold)
+                .setTokenRateLimit(veryLargeThreshold, false, false)
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,

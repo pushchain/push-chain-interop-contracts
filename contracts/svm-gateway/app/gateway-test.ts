@@ -509,7 +509,7 @@ async function run() {
     console.log("Native SOL rate limit already initialized");
   } catch {
     await program.methods
-      .setTokenRateLimit(veryLargeThreshold)
+      .setTokenRateLimit(veryLargeThreshold, false, false)
       .accountsPartial({
         admin: admin,
         config: configPda,
@@ -640,7 +640,7 @@ async function run() {
       console.log("SPL token rate limit already initialized");
     } catch {
       await program.methods
-        .setTokenRateLimit(veryLargeThreshold)
+        .setTokenRateLimit(veryLargeThreshold, true, true)
         .accountsPartial({
           admin: admin,
           config: configPda,

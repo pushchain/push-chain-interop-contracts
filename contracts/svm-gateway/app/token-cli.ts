@@ -406,6 +406,8 @@ program_cli
     .description('Whitelist a token by setting its rate limit threshold to non-zero and creating its vault ATA')
     .requiredOption('-m, --mint <mint>', 'Mint address or token symbol')
     .option('-t, --threshold <threshold>', 'Rate limit threshold in token natural units (default: max u64)', '18446744073709551615')
+    .option('--trusted-mint-authority', 'Acknowledge that this token retains mint authority')
+    .option('--trusted-freeze-authority', 'Acknowledge that this token retains freeze authority')
     .action(async (options) => {
         try {
             console.log("=== WHITELISTING TOKEN ===\n");
@@ -438,7 +440,11 @@ program_cli
             console.log(`Setting rate limit threshold to ${threshold.toString()}...`);
             const veryLargeThreshold = new anchor.BN(threshold.toString());
             await program.methods
-                .setTokenRateLimit(veryLargeThreshold)
+                .setTokenRateLimit(
+                    veryLargeThreshold,
+                    Boolean(options.trustedMintAuthority),
+                    Boolean(options.trustedFreezeAuthority),
+                )
                 .accountsPartial({
                     admin,
                     config: configPda,
@@ -497,7 +503,7 @@ program_cli
 
             console.log(`Setting rate limit threshold to 0...`);
             await program.methods
-                .setTokenRateLimit(new anchor.BN(0))
+                .setTokenRateLimit(new anchor.BN(0), false, false)
                 .accountsPartial({
                     admin,
                     config: configPda,

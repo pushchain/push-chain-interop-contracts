@@ -296,7 +296,7 @@ describe("Universal Gateway - Execute Tests", () => {
       [usdtTokenRateLimitPda, mockUSDT.mint.publicKey],
     ] as [PublicKey, PublicKey][]) {
       await gatewayProgram.methods
-        .setTokenRateLimit(veryLargeThreshold)
+        .setTokenRateLimit(veryLargeThreshold, true, true)
         .accountsPartial({
           config: configPda,
           tokenRateLimit: pda,

@@ -630,6 +630,8 @@ program_cli
     .description("Set rate limit threshold for a specific token")
     .requiredOption("--mint <pubkey>", "Token mint address (use Pubkey::default() for SOL)")
     .requiredOption("--threshold <value>", "Rate limit threshold (u128, token natural units)")
+    .option("--trusted-mint-authority", "Acknowledge that this token retains mint authority")
+    .option("--trusted-freeze-authority", "Acknowledge that this token retains freeze authority")
     .action(async (options) => {
         try {
             console.log("=== SETTING TOKEN RATE LIMIT ===\n");
@@ -644,10 +646,16 @@ program_cli
 
             console.log(`Token Mint: ${mint.toBase58()}`);
             console.log(`Threshold: ${threshold}`);
+            console.log(`Trusted Mint Authority: ${Boolean(options.trustedMintAuthority)}`);
+            console.log(`Trusted Freeze Authority: ${Boolean(options.trustedFreezeAuthority)}`);
             console.log(`Token Rate Limit PDA: ${tokenRateLimitPda.toBase58()}\n`);
 
             const tx = await program.methods
-                .setTokenRateLimit(new anchor.BN(threshold.toString()))
+                .setTokenRateLimit(
+                    new anchor.BN(threshold.toString()),
+                    Boolean(options.trustedMintAuthority),
+                    Boolean(options.trustedFreezeAuthority),
+                )
                 .accountsPartial({
                     config: configPda,
                     tokenRateLimit: tokenRateLimitPda,

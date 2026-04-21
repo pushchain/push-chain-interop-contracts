@@ -225,7 +225,11 @@ export async function ensureTestSetup(): Promise<void> {
             [mockUSDC.mint.publicKey, usdcTokenRateLimitPda],
         ] as const) {
             await program.methods
-                .setTokenRateLimit(veryLargeThreshold)
+                .setTokenRateLimit(
+                    veryLargeThreshold,
+                    tokenMint.equals(PublicKey.default) ? false : true,
+                    tokenMint.equals(PublicKey.default) ? false : true,
+                )
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,

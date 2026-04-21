@@ -1,5 +1,6 @@
 use crate::{errors::*, state::*};
 use anchor_lang::prelude::*;
+use anchor_spl::token::{Mint, Token};
 
 #[derive(Accounts)]
 pub struct AdminAction<'info> {
@@ -281,17 +282,40 @@ pub struct TokenRateLimitAction<'info> {
 pub fn set_token_rate_limit(
     ctx: Context<TokenRateLimitAction>,
     limit_threshold: u128,
+    trusted_mint_authority: bool,
+    trusted_freeze_authority: bool,
 ) -> Result<()> {
     // limit_threshold == 0 means token is not supported; deposits are rejected with NotSupported.
+    let token_mint_key = ctx.accounts.token_mint.key();
+
+    if limit_threshold > 0 && token_mint_key != Pubkey::default() {
+        let token_mint_info = ctx.accounts.token_mint.to_account_info();
+        require!(token_mint_info.owner == &Token::id(), GatewayError::InvalidMint);
+
+        let mint_data = token_mint_info
+            .try_borrow_data()
+            .map_err(|_| error!(GatewayError::InvalidMint))?;
+        let token_mint = Mint::try_deserialize(&mut &mint_data[..])
+            .map_err(|_| error!(GatewayError::InvalidMint))?;
+
+        if token_mint.mint_authority.is_some() {
+            require!(trusted_mint_authority, GatewayError::InvalidMint);
+        }
+
+        if token_mint.freeze_authority.is_some() {
+            require!(trusted_freeze_authority, GatewayError::InvalidMint);
+        }
+    }
+
     let token_rate_limit = &mut ctx.accounts.token_rate_limit;
-    token_rate_limit.token_mint = ctx.accounts.token_mint.key();
+    token_rate_limit.token_mint = token_mint_key;
     token_rate_limit.limit_threshold = limit_threshold;
     // epoch_usage is NOT reset here — preserving accumulated usage prevents an admin
     // threshold update from inadvertently clearing the current-epoch counter (EVM parity).
 
     // Emit event
     emit!(TokenRateLimitUpdated {
-        token_mint: ctx.accounts.token_mint.key(),
+        token_mint: token_mint_key,
         limit_threshold,
     });
 

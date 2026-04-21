@@ -173,7 +173,7 @@ async function testDeposit(mintAddress: string, amount: number, tokenSymbol?: st
         const veryLargeThreshold = new anchor.BN("1000000000000000000000"); // Effectively unlimited
         try {
             await program.methods
-                .setTokenRateLimit(veryLargeThreshold)
+                .setTokenRateLimit(veryLargeThreshold, true, true)
                 .accountsPartial({
                     config: configPda,
                     tokenRateLimit: splTokenRateLimitPda,

@@ -172,12 +172,14 @@ Each SPL token that can be bridged must be whitelisted with an epoch threshold.
 ```bash
 # Whitelist a token
 npm run token:whitelist -- --mint <mint-pubkey-or-symbol> --threshold <token-natural-units>
+npm run token:whitelist -- --mint <mint-pubkey-or-symbol> --threshold <token-natural-units> --trusted-mint-authority --trusted-freeze-authority
 
 # List whitelisted tokens
 npm run token:list
 ```
 
 The threshold is the maximum amount of that token that can be deposited in one epoch. Native SOL also has a rate limit entry (use `Pubkey::default()` as the mint when deriving the PDA).
+For SPL tokens, a non-zero threshold now requires explicit acknowledgment if the mint retains `mint_authority` and/or `freeze_authority`. Pass only the flags that match the issuer controls you are intentionally accepting.
 
 ---
 
