@@ -32,7 +32,7 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 | Actor | Trust Level | Capability |
 |---|---|---|
 | `Config.admin` | High | Update config, oracle feed, rate limits, authorities, bounded protocol fee |
-| `Config.pauser` | Medium | Pause/unpause gateway |
+| `Config.pauser` | Medium | Pause gateway |
 | TSS | High | Authorize all outbound releases with signatures |
 | UV | Untrusted for content | Submit txs and pay gas only |
 | Public user | Untrusted | Call inbound deposit only |
@@ -54,7 +54,8 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 | `Config.admin` | all `set_*` admin setters, `propose_authorities`, `set_protocol_fee`, `init_tss`, `update_tss` |
 | `Config.pending_admin` | `accept_admin` |
 | `Config.pending_pauser` | `accept_pauser` |
-| `Config.pauser` or `Config.admin` | `pause`, `unpause` |
+| `Config.pauser` or `Config.admin` | `pause` |
+| `Config.admin` | `unpause` |
 | TSS signature (`TssPda.tss_eth_address`) | `finalize_universal_tx`, `revert_universal_tx`, `rescue_funds` |
 | Public | `send_universal_tx` |
 
@@ -114,7 +115,7 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 10. **Pause griefing**  
    Risk: pauser halts flows.  
-   Control: admin can unpause directly and can still update configuration/rate-limit parameters while paused; keep admin/pauser as separate keys.
+   Control: pauser can halt flows, but only admin can unpause and can still update configuration/rate-limit parameters while paused; keep admin/pauser as separate keys.
 
 11. **Wrong `token_rate_limit` account passed**  
    Risk: bypass token caps using another token's state account.  

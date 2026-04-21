@@ -240,14 +240,15 @@ program_cli
             console.log("=== UNPAUSING GATEWAY ===\n");
 
             const configPda = deriveConfigPda();
+            const adminKeypair = pauserKeypair;
 
             const tx = await program.methods
                 .unpause()
                 .accountsPartial({
                     config: configPda,
-                    pauser: pauserKeypair.publicKey,
+                    admin: adminKeypair.publicKey,
                 })
-                .signers([pauserKeypair])
+                .signers([adminKeypair])
                 .rpc();
 
             console.log(`✅ Gateway unpaused successfully!`);

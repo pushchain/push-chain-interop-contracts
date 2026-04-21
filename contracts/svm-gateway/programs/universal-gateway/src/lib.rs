@@ -59,7 +59,7 @@ pub mod universal_gateway {
     }
 
     /// @notice Unpause the gateway
-    pub fn unpause(ctx: Context<PauseAction>) -> Result<()> {
+    pub fn unpause(ctx: Context<UnpauseAction>) -> Result<()> {
         instructions::admin::unpause(ctx)
     }
 

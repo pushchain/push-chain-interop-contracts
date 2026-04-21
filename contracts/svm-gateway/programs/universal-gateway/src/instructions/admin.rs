@@ -69,12 +69,25 @@ pub struct PauseAction<'info> {
     pub pauser: Signer<'info>,
 }
 
+#[derive(Accounts)]
+pub struct UnpauseAction<'info> {
+    #[account(
+        mut,
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        constraint = config.admin == admin.key() @ GatewayError::Unauthorized
+    )]
+    pub config: Account<'info, Config>,
+
+    pub admin: Signer<'info>,
+}
+
 pub fn pause(ctx: Context<PauseAction>) -> Result<()> {
     ctx.accounts.config.paused = true;
     Ok(())
 }
 
-pub fn unpause(ctx: Context<PauseAction>) -> Result<()> {
+pub fn unpause(ctx: Context<UnpauseAction>) -> Result<()> {
     ctx.accounts.config.paused = false;
     Ok(())
 }

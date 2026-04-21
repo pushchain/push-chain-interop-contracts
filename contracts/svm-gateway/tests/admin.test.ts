@@ -213,7 +213,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             expect(config.pauser.toString()).to.equal(newPauser.publicKey.toString());
             expect(config.pendingPauser.toString()).to.equal(PublicKey.default.toString());
 
-            // New pauser can pause/unpause
+            // New pauser can pause
             await program.methods
                 .pause()
                 .accountsPartial({
@@ -226,10 +226,10 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             await program.methods
                 .unpause()
                 .accountsPartial({
-                    pauser: newPauser.publicKey,
+                    admin: admin.publicKey,
                     config: configPda,
                 })
-                .signers([newPauser])
+                .signers([admin])
                 .rpc();
 
             try {
@@ -374,15 +374,55 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             await program.methods
                 .unpause()
                 .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            const config = await program.account.config.fetch(configPda);
+            expect(config.paused).to.be.false;
+
+        });
+
+        it("Rejects unpause from pauser", async () => {
+            await program.methods
+                .pause()
+                .accountsPartial({
                     pauser: pauser.publicKey,
                     config: configPda,
                 })
                 .signers([pauser])
                 .rpc();
 
+            try {
+                await program.methods
+                    .unpause()
+                    .accountsPartial({
+                        admin: pauser.publicKey,
+                        config: configPda,
+                    })
+                    .signers([pauser])
+                    .rpc();
+
+                expect.fail("Pauser unpause should have failed");
+            } catch (error: any) {
+                expect(error).to.exist;
+                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                expect(errorCode).to.equal("Unauthorized");
+            }
+
+            await program.methods
+                .unpause()
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
             const config = await program.account.config.fetch(configPda);
             expect(config.paused).to.be.false;
-
         });
 
         it("Rejects pause/unpause from unauthorized users", async () => {
@@ -407,7 +447,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 await program.methods
                     .unpause()
                     .accountsPartial({
-                        pauser: unauthorizedUser.publicKey,
+                        admin: unauthorizedUser.publicKey,
                         config: configPda,
                     })
                     .signers([unauthorizedUser])
@@ -613,10 +653,10 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             await program.methods
                 .unpause()
                 .accountsPartial({
-                    pauser: pauser.publicKey,
+                    admin: admin.publicKey,
                     config: configPda,
                 })
-                .signers([pauser])
+                .signers([admin])
                 .rpc();
 
             const pausedConfig = await program.account.config.fetch(configPda);
@@ -705,10 +745,10 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             await program.methods
                 .unpause()
                 .accountsPartial({
-                    pauser: pauser.publicKey,
+                    admin: admin.publicKey,
                     config: configPda,
                 })
-                .signers([pauser])
+                .signers([admin])
                 .rpc();
 
             const pausedRateLimitConfig = await program.account.rateLimitConfig.fetch(rateLimitConfigPda);
@@ -856,10 +896,10 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             await program.methods
                 .unpause()
                 .accountsPartial({
-                    pauser: pauser.publicKey,
+                    admin: admin.publicKey,
                     config: configPda,
                 })
-                .signers([pauser])
+                .signers([admin])
                 .rpc();
 
             const pausedTokenRateLimit = await program.account.tokenRateLimit.fetch(tokenRateLimitPda);

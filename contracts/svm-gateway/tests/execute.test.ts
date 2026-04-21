@@ -2259,7 +2259,7 @@ describe("Universal Gateway - Execute Tests", () => {
       } finally {
         await gatewayProgram.methods
           .unpause()
-          .accountsPartial({ pauser: admin.publicKey, config: configPda })
+          .accountsPartial({ admin: admin.publicKey, config: configPda })
           .signers([admin])
           .rpc();
       }

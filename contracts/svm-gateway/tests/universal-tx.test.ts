@@ -1063,8 +1063,8 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
       await program.methods
         .unpause()
-        .accountsPartial({ pauser: pauser.publicKey, config: configPda })
-        .signers([pauser])
+        .accountsPartial({ admin: admin.publicKey, config: configPda })
+        .signers([admin])
         .rpc();
     });
 
@@ -1433,8 +1433,8 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       if (config.paused) {
         await program.methods
           .unpause()
-          .accountsPartial({ pauser: pauser.publicKey, config: configPda })
-          .signers([pauser])
+          .accountsPartial({ admin: admin.publicKey, config: configPda })
+          .signers([admin])
           .rpc();
       }
     } catch (error) {

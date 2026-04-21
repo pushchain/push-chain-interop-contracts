@@ -1648,7 +1648,7 @@ async function run() {
       .unpause()
       .accountsPartial({
         config: configPda,
-        pauser: admin,
+        admin,
       })
       .rpc();
     console.log(`✅ Gateway unpaused: ${unpauseTx}\n`);

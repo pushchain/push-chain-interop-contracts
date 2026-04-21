@@ -471,8 +471,8 @@ describe("Universal Gateway - Withdraw Tests", () => {
 
             await program.methods
                 .unpause()
-                .accountsPartial({ pauser: pauser.publicKey, config: configPda })
-                .signers([pauser])
+                .accountsPartial({ admin: admin.publicKey, config: configPda })
+                .signers([admin])
                 .rpc();
         });
 
@@ -1273,8 +1273,8 @@ describe("Universal Gateway - Withdraw Tests", () => {
             } finally {
                 await program.methods
                     .unpause()
-                    .accountsPartial({ pauser: pauser.publicKey, config: configPda })
-                    .signers([pauser])
+                    .accountsPartial({ admin: admin.publicKey, config: configPda })
+                    .signers([admin])
                     .rpc();
             }
         });

@@ -144,7 +144,7 @@ See `5-RESCUE.md`.
 
 **Outbound (all):** TSS ECDSA secp256k1 signature. The program reconstructs the message, hashes it with keccak256, recovers the Ethereum address from the signature, and compares it to `TssPda.tss_eth_address`. No `onlyRole` or key-based auth — the signature is the only gate.
 
-**Admin:** config changes require the current admin pubkey to sign. `pause` / `unpause` can be called by either the configured pauser or the admin. Authority handover is two-step: the current admin proposes a new admin/pauser, and the proposed key must accept. These are Solana `Pubkey` fields stored in `Config`, not Ethereum addresses.
+**Admin:** config changes require the current admin pubkey to sign. `pause` can be called by either the configured pauser or the admin; `unpause` is admin-only. Authority handover is two-step: the current admin proposes a new admin/pauser, and the proposed key must accept. These are Solana `Pubkey` fields stored in `Config`, not Ethereum addresses.
 
 ---
 

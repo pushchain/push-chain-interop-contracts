@@ -500,8 +500,8 @@ describe("Universal Gateway - Rescue Tests", () => {
 
             await program.methods
                 .unpause()
-                .accountsPartial({ pauser: pauser.publicKey, config: configPda })
-                .signers([pauser])
+                .accountsPartial({ admin: admin.publicKey, config: configPda })
+                .signers([admin])
                 .rpc();
         });
 

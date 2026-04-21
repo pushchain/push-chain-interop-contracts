@@ -192,7 +192,7 @@ npm run config:pause
 npm run config:unpause
 ```
 
-Either the configured `pauser` or the current `admin` can call these. Admin and pauser can be the same or different keypairs.
+Either the configured `pauser` or the current `admin` can call `pause`. Only the current `admin` can call `unpause`. Admin and pauser can be the same or different keypairs.
 While paused, inbound and outbound user flows stay blocked, but the admin can still update configuration and rate-limit parameters to remediate an incident before unpausing.
 
 ---
@@ -240,7 +240,7 @@ Shows current values for:
 
 ## Common Issues
 
-**Deposit rejected with `Paused`:** Gateway is paused. Call `unpause` from the pauser address.
+**Deposit rejected with `Paused`:** Gateway is paused. Call `unpause` from the admin address.
 
 **Deposit rejected with `BelowMinCap` / `AboveMaxCap`:** `native_amount` (after protocol fee) is outside USD cap range. Adjust caps or deposit amount.
 
