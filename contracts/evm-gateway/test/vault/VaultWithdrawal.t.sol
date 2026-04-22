@@ -114,7 +114,7 @@ contract VaultWithdrawalTest is Test {
 
         // Update gateway's VAULT_ROLE
         vm.prank(admin);
-        gateway.setVault(address(vault));
+        gateway.updateVault(address(vault));
 
         // Deploy tokens
         usdc = new MockERC20("USD Coin", "USDC", 6, 1_000_000e6);

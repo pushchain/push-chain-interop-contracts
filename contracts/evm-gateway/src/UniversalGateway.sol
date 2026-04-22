@@ -68,9 +68,9 @@ contract UniversalGateway is
     ///         protocol fee that would DoS or grief users.
     uint256 public constant MAX_INBOUND_FEE = 0.05 ether;
 
-    /// @notice MUTABLE — admin-updatable via setTSS.
+    /// @notice MUTABLE — admin-updatable via updateTSS.
     address public TSS_ADDRESS;
-    /// @notice MUTABLE — admin-updatable via setVault.
+    /// @notice MUTABLE — admin-updatable via updateVault.
     address public VAULT;
 
     /// @notice Rate-Limiting CAPS and States
@@ -189,20 +189,20 @@ contract UniversalGateway is
         _unpause();
     }
 
-    /// @notice                Allows the admin to set the TSS address.
+    /// @notice                Allows the admin to update the TSS address.
     /// @dev                   TSS authorization in UG is enforced via the
     ///                        `TSS_ADDRESS` state variable (used as the native-fee / deposit
     ///                        recipient). No `TSS_ROLE` role is managed here; TSS role
     ///                        enforcement for outbound operations lives in the Vault contract.
     /// @param newTSS          New TSS address.
-    function setTSS(address newTSS) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateTSS(address newTSS) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newTSS == address(0)) revert Errors.ZeroAddress();
         TSS_ADDRESS = newTSS;
     }
 
-    /// @notice                Allows the admin to set the Vault address
+    /// @notice                Allows the admin to update the Vault address
     /// @param newVault        New Vault address
-    function setVault(address newVault) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateVault(address newVault) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newVault == address(0)) revert Errors.ZeroAddress();
         address old = VAULT;
 
@@ -1033,12 +1033,9 @@ contract UniversalGateway is
     /// @param caller           Caller address
     /// @param nativeValue      Native value (msg.value or swap output)
     /// @param fromCEA          True if called via sendUniversalTxFromCEA
-    function _routeUniversalTx(
-        UniversalTxRequest memory req,
-        address caller,
-        uint256 nativeValue,
-        bool fromCEA
-    ) internal {
+    function _routeUniversalTx(UniversalTxRequest memory req, address caller, uint256 nativeValue, bool fromCEA)
+        internal
+    {
         // Sanity Check : revertRecipient is not address(0)
         if (req.revertRecipient == address(0)) {
             revert Errors.InvalidRecipient();

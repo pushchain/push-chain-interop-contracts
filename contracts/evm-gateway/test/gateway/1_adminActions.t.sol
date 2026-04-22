@@ -73,44 +73,44 @@ contract GatewayAdminSettersTest is BaseTest {
     //      TSS ADDRESS TESTS //Note: COULD Change based on ESDCA vs BLS sign schemes.
     // =========================
 
-    function testSetTSSAddress() public {
+    function testUpdateTSSAddress() public {
         address newTSS = address(0x123);
 
         vm.prank(admin);
-        gateway.setTSS(newTSS);
+        gateway.updateTSS(newTSS);
 
         // UG no longer manages TSS_ROLE — only TSS_ADDRESS is updated.
         assertEq(gateway.TSS_ADDRESS(), newTSS);
     }
 
-    function testSetTSSAddressOnlyAdmin() public {
+    function testUpdateTSSAddressOnlyAdmin() public {
         address newTSS = address(0x123);
 
-        // Non-admin should not be able to set TSS
+        // Non-admin should not be able to update TSS
         vm.prank(user1);
         vm.expectRevert();
-        gateway.setTSS(newTSS);
+        gateway.updateTSS(newTSS);
 
-        // Admin should be able to set TSS
+        // Admin should be able to update TSS
         vm.prank(admin);
-        gateway.setTSS(newTSS);
+        gateway.updateTSS(newTSS);
         assertEq(gateway.TSS_ADDRESS(), newTSS);
     }
 
-    function testSetTSSAddressZeroAddress() public {
+    function testUpdateTSSAddressZeroAddress() public {
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        gateway.setTSS(address(0));
+        gateway.updateTSS(address(0));
     }
 
-    function testSetTSSAddressWhenPaused() public {
+    function testUpdateTSSAddressWhenPaused() public {
         // Pause the contract
         vm.prank(pauser);
         gateway.pause();
 
-        // Admin functions like setTSS should work even when paused
+        // Admin functions like updateTSS should work even when paused
         vm.prank(admin);
-        gateway.setTSS(address(0x123));
+        gateway.updateTSS(address(0x123));
         assertEq(gateway.TSS_ADDRESS(), address(0x123));
     }
 
@@ -557,7 +557,7 @@ contract GatewayAdminSettersTest is BaseTest {
         emit IUniversalGateway.VaultUpdated(oldVault, newVault);
 
         vm.prank(admin);
-        gateway.setVault(newVault);
+        gateway.updateVault(newVault);
 
         assertEq(gateway.VAULT(), newVault);
         assertTrue(gateway.hasRole(gateway.VAULT_ROLE(), newVault));
@@ -570,18 +570,18 @@ contract GatewayAdminSettersTest is BaseTest {
         // Non-admin should not be able to update vault
         vm.prank(user1);
         vm.expectRevert();
-        gateway.setVault(newVault);
+        gateway.updateVault(newVault);
 
         // Admin should be able to update vault
         vm.prank(admin);
-        gateway.setVault(newVault);
+        gateway.updateVault(newVault);
         assertEq(gateway.VAULT(), newVault);
     }
 
     function testUpdateVaultZeroAddressReverts() public {
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        gateway.setVault(address(0));
+        gateway.updateVault(address(0));
     }
 
     function testUpdateVaultRoleTransfer() public {
@@ -591,13 +591,13 @@ contract GatewayAdminSettersTest is BaseTest {
 
         // First update
         vm.prank(admin);
-        gateway.setVault(newVault1);
+        gateway.updateVault(newVault1);
         assertTrue(gateway.hasRole(gateway.VAULT_ROLE(), newVault1));
         assertFalse(gateway.hasRole(gateway.VAULT_ROLE(), oldVault));
 
         // Second update - should transfer role from newVault1 to newVault2
         vm.prank(admin);
-        gateway.setVault(newVault2);
+        gateway.updateVault(newVault2);
         assertTrue(gateway.hasRole(gateway.VAULT_ROLE(), newVault2));
         assertFalse(gateway.hasRole(gateway.VAULT_ROLE(), newVault1));
         assertFalse(gateway.hasRole(gateway.VAULT_ROLE(), oldVault));

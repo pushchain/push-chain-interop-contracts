@@ -54,7 +54,7 @@ contract Vault_InvariantsFuzz is Test {
 
         // Point gateway at real vault and register it with VAULT_ROLE
         vm.prank(admin);
-        gateway.setVault(address(vault));
+        gateway.updateVault(address(vault));
 
         // Deploy token and register it in gateway
         mockToken = new MockERC20("Mock", "MCK", 18, 0);
