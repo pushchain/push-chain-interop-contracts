@@ -349,9 +349,7 @@ contract UniversalGateway is
     /// @inheritdoc IUniversalGateway
     function sendUniversalTx(UniversalTxRequest calldata req) external payable nonReentrant whenNotPaused {
         if (_isCallerCEA()) revert Errors.InvalidInput();
-        uint256 nativeValue = msg.value;
-        TX_TYPE txType = _fetchTxType(req, nativeValue);
-        _routeUniversalTx(req, _msgSender(), nativeValue, txType, false);
+        _routeUniversalTx(req, _msgSender(), msg.value, false);
     }
 
     /// @inheritdoc IUniversalGateway
@@ -377,8 +375,7 @@ contract UniversalGateway is
             signatureData: reqToken.signatureData
         });
 
-        TX_TYPE txType = _fetchTxType(req, nativeValue);
-        _routeUniversalTx(req, _msgSender(), nativeValue, txType, false);
+        _routeUniversalTx(req, _msgSender(), nativeValue, false);
     }
 
     /// @inheritdoc IUniversalGateway
@@ -391,10 +388,7 @@ contract UniversalGateway is
 
         if (req.recipient != mappedUEA) revert Errors.InvalidRecipient();
 
-        uint256 nativeValue = msg.value;
-        TX_TYPE txType = _fetchTxType(req, nativeValue);
-
-        _routeUniversalTx(req, _msgSender(), nativeValue, txType, true);
+        _routeUniversalTx(req, _msgSender(), msg.value, true);
     }
 
     // ==============================
@@ -1033,16 +1027,16 @@ contract UniversalGateway is
     }
 
     /// @dev                    Internal router that dispatches to the appropriate handler based on TX_TYPE.
+    ///                         TX_TYPE inference is performed AFTER fee deduction so that the inferred
+    ///                         type matches the effective native value used by downstream handlers.
     /// @param req              UniversalTxRequest struct
     /// @param caller           Caller address
-    /// @param nativeValue      Native value (msg.value)
-    /// @param txType           TX_TYPE
+    /// @param nativeValue      Native value (msg.value or swap output)
     /// @param fromCEA          True if called via sendUniversalTxFromCEA
     function _routeUniversalTx(
         UniversalTxRequest memory req,
         address caller,
         uint256 nativeValue,
-        TX_TYPE txType,
         bool fromCEA
     ) internal {
         // Sanity Check : revertRecipient is not address(0)
@@ -1056,6 +1050,8 @@ contract UniversalGateway is
             (nativeValue, feeCollected) = _collectInboundFee(nativeValue);
             totalProtocolFeesCollected += feeCollected;
         }
+
+        TX_TYPE txType = _fetchTxType(req, nativeValue);
 
         // Route 1: GAS or GAS_AND_PAYLOAD → Instant route
         if (txType == TX_TYPE.GAS || txType == TX_TYPE.GAS_AND_PAYLOAD) {
