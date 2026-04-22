@@ -66,7 +66,7 @@ contract UniversalGateway is
 
     /// @notice Upper bound for INBOUND_FEE. Prevents admin from configuring an absurdly high flat
     ///         protocol fee that would DoS or grief users.
-    uint256 public constant MAX_INBOUND_FEE = 1 ether;
+    uint256 public constant MAX_INBOUND_FEE = 0.05 ether;
 
     /// @notice MUTABLE — admin-updatable via setTSS.
     address public TSS_ADDRESS;
