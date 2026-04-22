@@ -643,13 +643,3 @@ fn process_spl_vault_to_cea_transfer<'info>(
 
     Ok(ata_created)
 }
-
-git add contracts/svm-gateway/app/gateway-test.ts contracts/svm-gateway/docs/2-WITHDRAW-EXECUTE.md                         contracts/svm-gateway/docs/0-SVM-GATEWAY.md                              contracts/svm-gateway/docs/4-CEA.md                                      contracts/svm-gateway/programs/universal-gateway/src/errors.rs                                                                         contracts/svm-gateway/programs/universal-gateway/src/instructions/execute.rs     contracts/svm-gateway/programs/universal-gateway/src/state.rs contracts/svm-gateway/tests/cea-to-uea.test.ts                           contracts/svm-gateway/tests/execute.test.ts            contracts/svm-gateway/tests/helpers/test-utils.ts contracts/svm-gateway/tests/withdraw.test.ts
-contracts/svm-gateway/docs/0-SVM-GATEWAY.md                             
-contracts/svm-gateway/docs/4-CEA.md                                     
-contracts/svm-gateway/programs/universal-gateway/src/errors.rs                                                                        
-contracts/svm-gateway/programs/universal-gateway/src/instructions/execute.rs    
-contracts/svm-gateway/programs/universal-gateway/src/state.rs
-contracts/svm-gateway/tests/cea-to-uea.test.ts                          
-contracts/svm-gateway/tests/execute.test.ts           
-contracts/svm-gateway/tests/helpers/test-utils.ts contracts/svm-gateway/tests/withdraw.test.ts
