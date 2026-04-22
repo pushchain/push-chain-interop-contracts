@@ -180,7 +180,10 @@ pub struct GatewayAccountMeta {
 pub struct UniversalTxFinalized {
     pub sub_tx_id: [u8; 32],
     pub universal_tx_id: [u8; 32], // Universal transaction ID from source chain
-    pub gas_fee: u64,              // UV gas reimbursement amount (lamports)
+    pub gas_fee: u64,              // Signed gas budget (lamports) — what TSS authorized
+    pub gas_used: u64,             // Actual relayer reimbursement (lamports)
+    pub gas_to_refund: u64,        // Unused gas returned to user on Push Chain
+    pub ata_created: bool,         // Whether CEA ATA was created in this finalize
     pub push_account: [u8; 20],    // EVM address
     pub target: Pubkey,            // Target program
     pub token: Pubkey,             // Token (Pubkey::default() for SOL)

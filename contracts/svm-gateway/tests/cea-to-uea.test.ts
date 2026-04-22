@@ -24,6 +24,7 @@ import {
   USDT_DECIMALS,
   TOKEN_MULTIPLIER,
   COMPUTE_BUFFER,
+  SIGNATURE_FEE_LAMPORTS,
   asLamports,
   asTokenAmount,
   computeDiscriminator,
@@ -339,20 +340,15 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
       );
       const actualBalanceChangeWithdraw =
         callerBalanceAfterWithdraw - callerBalanceBeforeWithdraw;
-      // Balance flow (Option 1: relayer pays gateway costs, gets relayer_fee reimbursement):
-      // 1. Caller PAYS for executed_sub_tx account creation: -890k (replay protection account)
-      // 2. Caller PAYS transaction fees: ~-10-20k (Solana network compute fees)
-      // 3. Vault TRANSFERS relayer_fee to caller: relayer_fee = gas_fee (reimbursement for gateway costs)
-      // relayer_fee = executed_sub_tx_rent + compute_buffer
-      // Net expected: -executed_sub_tx_rent - tx_fees + (executed_sub_tx_rent + compute_buffer) ≈ +compute_buffer - tx_fees
-      // Note: CEA is a PDA - caller doesn't pay for its creation (auto-created by Solana on first transfer)
+      // Relayer pays sub_tx_rent upfront; receives gas_used back from vault.
+      // gas_used = SIGNATURE_FEE + sub_tx_rent (SOL path, no ATA).
+      // Net change for relayer ≈ SIGNATURE_FEE - tx_fees ≈ 0.
       const actualRentForExecutedTx = await getExecutedTxRent(
         provider.connection
       );
-      const relayerFeeWithdraw = Number(gasFeeWithdraw);
+      const gasUsedWithdraw = Number(SIGNATURE_FEE_LAMPORTS) + actualRentForExecutedTx;
       const expectedBalanceChangeWithdraw =
-        -actualRentForExecutedTx + relayerFeeWithdraw;
-      // Use tight tolerance (50k) to catch missing relayer_fee reimbursement
+        -actualRentForExecutedTx + gasUsedWithdraw;
       expect(actualBalanceChangeWithdraw).to.be.closeTo(
         expectedBalanceChangeWithdraw,
         50000
@@ -430,7 +426,7 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
 
       // Read CEA balance and calculate fees before building args.
       const ceaBalBeforeP2 = await provider.connection.getBalance(cea);
-      const { gasFee: gasFeeWithdraw } = await calculateSolExecuteFees(
+      const { gasFee: gasFeeWithdraw, gasUsed: gasUsedWithdrawEvent } = await calculateSolExecuteFees(
         provider.connection
       );
       const legacyTopupWithdraw = BigInt(0);
@@ -542,6 +538,14 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
       expect(finalizedEvent.data.gasFee.toString()).to.equal(
         Number(gasFeeWithdraw).toString()
       );
+      // New accounting fields: verify gas_used, gas_to_refund, ata_created
+      expect(finalizedEvent.data.gasUsed.toString()).to.equal(
+        gasUsedWithdrawEvent.toString()
+      );
+      expect(finalizedEvent.data.gasToRefund.toString()).to.equal(
+        (gasFeeWithdraw - gasUsedWithdrawEvent).toString()
+      );
+      expect(finalizedEvent.data.ataCreated).to.equal(false); // SOL path — no ATA
       expect(Buffer.from(finalizedEvent.data.subTxId).toString("hex")).to.equal(
         Buffer.from(txIdWithdraw).toString("hex")
       );
@@ -847,22 +851,17 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
       );
       const callerBalanceChangeFund =
         callerBalanceAfterFund - callerBalanceBeforeFund;
-      // Option 1: Relayer pays gateway costs, gets relayer_fee reimbursement
-      // Caller pays for:
-      // 1. executed_sub_tx account rent (~890k)
-      // 2. CEA ATA rent (if it doesn't exist - caller is payer per line 465 in execute.rs) (~2M)
-      // 3. Transaction fees (varies by transaction size)
-      // Caller receives: relayer_fee = gas_fee as reimbursement
+      // Relayer pays sub_tx_rent + ata_rent (if created) upfront; receives gas_used back.
+      // gas_used = SIGNATURE_FEE + sub_tx_rent + ata_rent; net ≈ SIGNATURE_FEE - tx_fees.
       const actualRentForExecutedTx = await getExecutedTxRent(
         provider.connection
       );
       const actualRentForCeaAta = ceaAtaExistedBefore
         ? 0
         : await getTokenAccountRent(provider.connection);
-      const relayerFeeFund = Number(gasFeeLamports);
-      // Expected: -executed_sub_tx_rent - cea_ata_rent (if created) + relayer_fee - transaction_fees
+      const gasUsedFund = Number(SIGNATURE_FEE_LAMPORTS) + actualRentForExecutedTx + actualRentForCeaAta;
       const expectedBalanceChangeFund =
-        -actualRentForExecutedTx - actualRentForCeaAta + relayerFeeFund;
+        -actualRentForExecutedTx - actualRentForCeaAta + gasUsedFund;
       expect(callerBalanceChangeFund).to.be.closeTo(
         expectedBalanceChangeFund,
         100000
@@ -946,17 +945,12 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
         await provider.connection.getBalance(admin.publicKey);
       const callerBalanceChangeWithdrawSpl =
         callerBalanceAfterWithdrawSpl - callerBalanceBeforeWithdrawSpl;
-      // Option 1: Relayer pays gateway costs, gets relayer_fee reimbursement
-      // Caller pays for:
-      // 1. executed_sub_tx account rent (~890k)
-      // 2. Transaction fees (varies by transaction size)
-      // Caller receives: relayer_fee = gas_fee (reimbursement for gateway costs)
-      // relayer_fee = executed_sub_tx_rent + compute_buffer
-      // Reuse actualRentForExecutedTx from above (same test scope)
-      const relayerFeeWithdrawSpl = Number(gasFeeWithdrawSpl);
-      // Expected: -executed_sub_tx_rent + relayer_fee - transaction_fees
+      // Relayer pays sub_tx_rent upfront; receives gas_used back (ATA already exists).
+      // gas_used = SIGNATURE_FEE + sub_tx_rent; net ≈ SIGNATURE_FEE - tx_fees.
+      // Reuse actualRentForExecutedTx from above (same test scope).
+      const gasUsedWithdrawSpl = Number(SIGNATURE_FEE_LAMPORTS) + actualRentForExecutedTx;
       const expectedBalanceChangeWithdrawSpl =
-        -actualRentForExecutedTx + relayerFeeWithdrawSpl;
+        -actualRentForExecutedTx + gasUsedWithdrawSpl;
       expect(callerBalanceChangeWithdrawSpl).to.be.closeTo(
         expectedBalanceChangeWithdrawSpl,
         15000

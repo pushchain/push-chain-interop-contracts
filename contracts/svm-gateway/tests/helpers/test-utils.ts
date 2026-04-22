@@ -17,6 +17,9 @@ export const TOKEN_MULTIPLIER = BigInt(10 ** USDT_DECIMALS);
 /** Buffer for Solana tx fees + compute unit costs (~0.0001 SOL) */
 export const COMPUTE_BUFFER = BigInt(100_000);
 
+/** Base Solana fee per signature — matches SIGNATURE_FEE_LAMPORTS in execute.rs. */
+export const SIGNATURE_FEE_LAMPORTS = BigInt(5_000);
+
 // =============================================================================
 // Utilities
 // =============================================================================
@@ -138,29 +141,33 @@ export const ceaAtaExists = async (
 
 /**
  * Calculate gas_fee for SOL execute operations.
- * gas_fee = executed_sub_tx_rent + COMPUTE_BUFFER
+ * gasUsed = SIGNATURE_FEE + executed_sub_tx_rent  (matches on-chain execute.rs accounting)
+ * gasFee  = gasUsed + COMPUTE_BUFFER             (COMPUTE_BUFFER becomes gas_to_refund)
  */
 export const calculateSolExecuteFees = async (
   connection: anchor.web3.Connection
-): Promise<{ gasFee: bigint }> => {
+): Promise<{ gasFee: bigint; gasUsed: bigint }> => {
   const executedTxRent = BigInt(await getExecutedTxRent(connection));
-  return { gasFee: executedTxRent + COMPUTE_BUFFER };
+  const gasUsed = SIGNATURE_FEE_LAMPORTS + executedTxRent;
+  return { gasFee: executedTxRent + COMPUTE_BUFFER, gasUsed };
 };
 
 /**
  * Calculate gas_fee for SPL execute operations.
- * gas_fee = executed_sub_tx_rent + cea_ata_rent (if not yet created) + COMPUTE_BUFFER
+ * gasUsed = SIGNATURE_FEE + executed_sub_tx_rent + cea_ata_rent (if not yet created)
+ * gasFee  = gasUsed + COMPUTE_BUFFER  (COMPUTE_BUFFER becomes gas_to_refund)
  */
 export const calculateSplExecuteFees = async (
   connection: anchor.web3.Connection,
   ceaAta: PublicKey
-): Promise<{ gasFee: bigint }> => {
+): Promise<{ gasFee: bigint; gasUsed: bigint }> => {
   const executedTxRent = BigInt(await getExecutedTxRent(connection));
   const ataExists = await ceaAtaExists(connection, ceaAta);
   const ceaAtaRent = ataExists
     ? BigInt(0)
     : BigInt(await getTokenAccountRent(connection));
-  return { gasFee: executedTxRent + ceaAtaRent + COMPUTE_BUFFER };
+  const gasUsed = SIGNATURE_FEE_LAMPORTS + executedTxRent + ceaAtaRent;
+  return { gasFee: executedTxRent + ceaAtaRent + COMPUTE_BUFFER, gasUsed };
 };
 
 // =============================================================================

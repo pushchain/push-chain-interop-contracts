@@ -158,8 +158,9 @@ async function getCeaAta(
   );
 }
 
-// Fee calculation helpers (matching execute.test.ts)
+// Fee calculation helpers (matching execute.test.ts / test-utils.ts)
 const COMPUTE_BUFFER = BigInt(100_000); // 0.0001 SOL buffer for compute + tx fees
+const SIGNATURE_FEE_LAMPORTS = BigInt(5_000); // Base Solana fee per signature — matches execute.rs
 
 const getExecutedTxRent = async (
   connection: anchor.web3.Connection
@@ -183,25 +184,35 @@ const ceaAtaExists = async (
   return accountInfo !== null && accountInfo.data.length > 0;
 };
 
+/**
+ * Calculate gas_fee for SOL execute operations.
+ * gasUsed = SIGNATURE_FEE + executed_sub_tx_rent  (matches on-chain execute.rs accounting)
+ * gasFee  = executed_sub_tx_rent + COMPUTE_BUFFER (COMPUTE_BUFFER - SIGNATURE_FEE = gas_to_refund)
+ */
 const calculateSolExecuteFees = async (
   connection: anchor.web3.Connection
-): Promise<{ gasFee: bigint }> => {
+): Promise<{ gasFee: bigint; gasUsed: bigint }> => {
   const executedTxRent = BigInt(await getExecutedTxRent(connection));
-  const gasFee = executedTxRent + COMPUTE_BUFFER;
-  return { gasFee };
+  const gasUsed = SIGNATURE_FEE_LAMPORTS + executedTxRent;
+  return { gasFee: executedTxRent + COMPUTE_BUFFER, gasUsed };
 };
 
+/**
+ * Calculate gas_fee for SPL execute operations.
+ * gasUsed = SIGNATURE_FEE + executed_sub_tx_rent + cea_ata_rent (if not yet created)
+ * gasFee  = executed_sub_tx_rent + cea_ata_rent + COMPUTE_BUFFER
+ */
 const calculateSplExecuteFees = async (
   connection: anchor.web3.Connection,
   ceaAta: PublicKey
-): Promise<{ gasFee: bigint }> => {
+): Promise<{ gasFee: bigint; gasUsed: bigint }> => {
   const executedTxRent = BigInt(await getExecutedTxRent(connection));
   const ceaAtaExisted = await ceaAtaExists(connection, ceaAta);
   const ceaAtaRent = ceaAtaExisted
     ? BigInt(0)
     : BigInt(await getTokenAccountRent(connection));
-  const gasFee = executedTxRent + ceaAtaRent + COMPUTE_BUFFER;
-  return { gasFee };
+  const gasUsed = SIGNATURE_FEE_LAMPORTS + executedTxRent + ceaAtaRent;
+  return { gasFee: executedTxRent + ceaAtaRent + COMPUTE_BUFFER, gasUsed };
 };
 
 // Load IDL
@@ -1820,26 +1831,26 @@ async function run() {
   );
 
   // Verify withdraw results
-  // Admin receives withdrawAmount + gas_fee (as caller/relayer reimbursement) but pays executed_sub_tx rent
+  // Admin receives withdraw amount + gas_used (as caller/relayer reimbursement) and pays executed_sub_tx rent.
   const adminBalanceAfter = await connection.getBalance(admin);
   const vaultBalanceAfter = await connection.getBalance(vaultPda);
   const adminNetChange = adminBalanceAfter - adminBalanceBefore;
-  // Admin receives: withdrawAmount + gas_fee (relayer reimbursement)
-  // Admin pays: executedTxRent (for PDA creation)
-  // Net = withdrawAmount + gas_fee - executedTxRent
-  const expectedAdminNet = withdrawAmountTss + withdrawGasFee - executedTxRent;
+  const signatureFeeLamports = 5_000;
+  const gasUsed = signatureFeeLamports + executedTxRent;
+  // Net = withdrawAmount + gas_used - executedTxRent
+  const expectedAdminNet = withdrawAmountTss + gasUsed - executedTxRent;
 
   // Allow small tolerance for transaction fees (compute units)
   const tolerance = 10000; // ~0.00001 SOL for tx fees
   assert.isAtLeast(
     adminNetChange,
     expectedAdminNet - tolerance,
-    `Admin net should be ~${expectedAdminNet} (receives ${withdrawAmountTss} + ${withdrawGasFee} gas, pays ${executedTxRent} rent)`
+    `Admin net should be ~${expectedAdminNet} (receives ${withdrawAmountTss} + ${gasUsed} gas_used, pays ${executedTxRent} rent)`
   );
   assert.equal(
     vaultBalanceBefore - vaultBalanceAfter,
-    withdrawAmountTss + withdrawGasFee,
-    "Vault should lose withdraw amount + gas_fee"
+    withdrawAmountTss + gasUsed,
+    "Vault should lose withdraw amount + gas_used"
   );
 
   const executedTxExistsAfterWithdraw =
@@ -2205,18 +2216,18 @@ async function run() {
       "execute amount must not be transferred to CEA"
     );
 
-    // Relayer receives relayer_fee but pays executedSubTx rent (as fee payer) and transaction fees
+    // Relayer pays executedSubTx rent upfront; receives gas_used = SIGNATURE_FEE + executedTxRent from vault.
+    // Net ≈ SIGNATURE_FEE (5_000 lamports) minus network transaction fees.
     const relayerBalanceAfter = await connection.getBalance(relayer);
     const relayerNetChange = relayerBalanceAfter - relayerBalanceBefore;
-    const relayerFeeReceived = Number(gasFee);
-    // Net = relayer_fee - executedTxRent - computeFees (approximate)
-    const expectedRelayerNet = relayerFeeReceived - executedTxRent;
+    const gasUsedSol = Number(SIGNATURE_FEE_LAMPORTS) + executedTxRent;
+    const expectedRelayerNet = gasUsedSol - executedTxRent; // = SIGNATURE_FEE = 5_000
     // Allow tolerance for compute fees (~50k-100k lamports)
     const computeFeeTolerance = 150000;
     assert.isAtLeast(
       relayerNetChange,
       expectedRelayerNet - computeFeeTolerance,
-      `Relayer net should be ~${expectedRelayerNet} (receives ${relayerFeeReceived}, pays ${executedTxRent} rent + compute fees)`
+      `Relayer net should be ~${expectedRelayerNet} (receives gas_used=${gasUsedSol}, pays ${executedTxRent} rent + compute fees)`
     );
 
     const executedTxExistsAfter =
@@ -2396,13 +2407,12 @@ async function run() {
       "Vault ATA should lose exact SPL amount"
     );
 
-    // Relayer receives relayer_fee but pays executedSubTx rent (as fee payer) and transaction fees
+    // Relayer pays executedSubTx rent (+ cea_ata_rent if created) upfront; receives gas_used from vault.
+    // gas_used = SIGNATURE_FEE + executedTxRent [+ ataRent]. Net is always SIGNATURE_FEE regardless of ATA creation.
     const relayerBalanceAfterSpl = await connection.getBalance(relayer);
     const relayerNetChangeSpl =
       relayerBalanceAfterSpl - relayerBalanceBeforeSpl;
-    const relayerFeeReceivedSpl = Number(gasFee);
-    // Net = relayer_fee - executedTxRent - computeFees (approximate)
-    const expectedRelayerNetSpl = relayerFeeReceivedSpl - executedTxRentSpl;
+    const expectedRelayerNetSpl = Number(SIGNATURE_FEE_LAMPORTS); // always 5_000: gas_used - rents_paid = SIGNATURE_FEE
     // Allow tolerance for compute fees (~50k-100k lamports)
     const computeFeeToleranceSpl = 150000;
     assert.isAtLeast(

@@ -42,9 +42,10 @@ sub_tx_id[32] | universal_tx_id[32] | push_account[20] | token[32] | gas_fee_be[
 2. Verify TSS signature — recover Ethereum address, compare to `TssPda.tss_eth_address`
 3. Create `ExecutedSubTx` PDA (replay protection — init fails if `sub_tx_id` reused)
 4. `Vault → CEA`: transfer `amount`
-5. `Vault → Caller`: transfer `gas_fee` (UV reimbursement)
-6. Mode-specific action (see below)
-7. Emit `UniversalTxFinalized` (all finalized paths, including CEA self-withdraw) with `gas_fee`
+5. Compute `gas_used = signature_fee + executed_sub_tx_rent (+ cea_ata_rent if ATA was created)` and require `gas_fee >= gas_used`
+6. `Vault → Caller`: transfer `gas_used` (actual UV reimbursement)
+7. Mode-specific action (see below)
+8. Emit `UniversalTxFinalized` (all finalized paths, including CEA self-withdraw) with `gas_fee`, `gas_used`, `gas_to_refund`, `ata_created`
 
 ---
 
@@ -90,7 +91,7 @@ Valid combinations:
 The recipient UEA address comes from the `push_account` parameter, not from `ix_data`.
 This path emits:
 - `UniversalTx` with `from_cea: true` using inner decoded args (`token`, `amount`, `payload`)
-- `UniversalTxFinalized` from parent finalize flow using outer execute fields (`amount`, `gas_fee`, full `ix_data`)
+- `UniversalTxFinalized` from parent finalize flow using outer execute fields (`amount`, signed `gas_fee`, full `ix_data`) plus accounting fields (`gas_used`, `gas_to_refund`, `ata_created`)
 
 ---
 
@@ -110,7 +111,7 @@ This path emits:
 - **Replay protection:** `sub_tx_id` uniqueness enforced via PDA init — each ID can execute exactly once
 - **CEA isolation:** `CEA(sender_A) != CEA(sender_B)` — cross-user CPI is impossible
 - **No outer signers:** `remaining_accounts` entries with `is_signer = true` are rejected
-- **Vault integrity:** only `gas_fee` leaves vault as UV reimbursement; `amount` moves vault → CEA → target, never directly to the UV
+- **Vault integrity:** only `gas_used` leaves vault as UV reimbursement; `amount` moves vault → CEA → target, never directly to the UV
 
 ---
 
@@ -124,4 +125,5 @@ This path emits:
 | `UnexpectedOuterSigner` | `remaining_accounts` entry has `is_signer = true` |
 | `AccountPubkeyMismatch` | Account in `remaining_accounts` doesn't match signed payload |
 | `InvalidProgram` | Target program not executable |
+| `InsufficientGasBudget` | `gas_fee < gas_used` — on-chain guard in `settle_relayer_gas_cost` |
 | `Paused` | Gateway is paused |

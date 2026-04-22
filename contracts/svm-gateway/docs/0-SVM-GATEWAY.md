@@ -31,7 +31,7 @@ The program uses PDAs for all protocol state. No external signers or owner keys 
 | `RateLimitConfig` | `["rate_limit_config"]` | Block USD cap, epoch duration |
 | `TokenRateLimit` | `["rate_limit", mint]` | Per-token epoch usage |
 
-**Vault vs FeeVault separation:** `Vault` holds only user-deposited bridge funds, keeping it 1:1 backed. `FeeVault` holds protocol fees and funds UV reimbursement for `revert_universal_tx` and `rescue_funds`. `finalize_universal_tx` currently reimburses `gas_fee` from `Vault` as part of the outbound release path. The inbound protocol fee is hard-capped at `2_000_000` lamports (`0.002 SOL`) so the fee remains bounded to reimbursement-oriented use.
+**Vault vs FeeVault separation:** `Vault` holds only user-deposited bridge funds, keeping it 1:1 backed. `FeeVault` holds protocol fees and funds UV reimbursement for `revert_universal_tx` and `rescue_funds`. `finalize_universal_tx` reimburses only `gas_used` from `Vault`; any signed surplus (`gas_to_refund = gas_fee - gas_used`) remains in `Vault` and is refunded to the user on Push Chain using the `UniversalTxFinalized` event. The inbound protocol fee is hard-capped at `2_000_000` lamports (`0.002 SOL`) so protocol fee flow stays bounded.
 
 **CEA vs EVM:** On EVM, CEA is a deployed contract per user. On SVM, CEA is a system-owned PDA. No deployment step is needed — the Solana runtime creates it on first lamport transfer.
 

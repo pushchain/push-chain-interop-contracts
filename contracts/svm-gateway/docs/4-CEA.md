@@ -27,7 +27,7 @@ When `destination_program == gateway_program_id` in execute mode, the flow route
 ```
 finalize_universal_tx (instruction_id=2, target=gateway)
   → Vault → CEA (amount)
-  → Vault → Caller (gas_fee, UV reimbursement)
+  → Vault → Caller (gas_used, UV reimbursement)
   → CEA → Vault (withdraw_amount)   [skipped when amount == 0]
   → emit UniversalTx (from_cea=true)
   → emit UniversalTxFinalized
@@ -35,7 +35,7 @@ finalize_universal_tx (instruction_id=2, target=gateway)
 
 The `UniversalTx` event is picked up by Push Chain Universal Validators (UVs) to credit the user's UEA.
 `UniversalTx` uses inner decoded values from `send_universal_tx_to_uea` args (`amount`, `payload`, `revert_recipient`).
-`UniversalTxFinalized` uses outer `finalize_universal_tx` values (`amount`, `gas_fee`, full `ix_data`).
+`UniversalTxFinalized` uses outer `finalize_universal_tx` values (`amount`, signed `gas_fee`, full `ix_data`) and includes `gas_used`, `gas_to_refund`, and `ata_created`.
 
 `from_cea` is always `true` on this path. This differs from EVM where FUNDS-only CEA withdrawals emit `from_cea=false` — an artifact of EVM routing that does not apply to SVM, where the gateway always knows it is handling a CEA withdrawal.
 

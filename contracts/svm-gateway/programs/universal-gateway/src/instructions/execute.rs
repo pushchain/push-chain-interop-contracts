@@ -15,6 +15,18 @@ use anchor_lang::solana_program::{
 use anchor_spl::associated_token::{spl_associated_token_account, AssociatedToken};
 use anchor_spl::token::{spl_token, Mint, Token, TokenAccount};
 
+/// Base Solana transaction fee per signature (protocol constant, unchanged since genesis).
+///
+/// PROTOCOL ASSUMPTION: `caller` is the sole fee payer and the finalize transaction has exactly
+/// one required signature (the UV/relayer keypair). If the UV ever uses a separate fee-payer
+/// account or a multi-signature setup, `gas_used` will under-estimate the actual tx cost and
+/// the accounting will drift. This constraint is NOT enforced on-chain — it must be upheld
+/// by the UV submission service and documented in its operational runbook.
+const SIGNATURE_FEE_LAMPORTS: u64 = 5_000;
+
+/// SPL token account data size in bytes (spl_token::state::Account layout — stable protocol constant).
+const SPL_TOKEN_ACCOUNT_LEN: usize = 165;
+
 // =========================
 //  UNIFIED FINALIZE_UNIVERSAL_TX
 // =========================
@@ -165,7 +177,11 @@ pub fn finalize_universal_tx(
     let cea_bump = [ctx.bumps.cea_authority];
     let cea_seeds = [CEA_SEED, push_account.as_ref(), &cea_bump[..]];
 
-    stage_assets_to_cea(&ctx, &request, amount, gas_fee, &vault_seeds)?;
+    // Stage assets vault → CEA. Returns whether CEA ATA was created.
+    let ata_created = stage_assets_to_cea(&ctx, &request, amount, &vault_seeds)?;
+
+    let (gas_used, gas_to_refund) = settle_relayer_gas_cost(&ctx, gas_fee, ata_created)?;
+
     dispatch_finalize_action(
         &mut ctx,
         &request,
@@ -180,6 +196,9 @@ pub fn finalize_universal_tx(
         sub_tx_id,
         universal_tx_id,
         gas_fee,
+        gas_used,
+        gas_to_refund,
+        ata_created,
         push_account,
         target: request.target,
         token: request.token,
@@ -188,6 +207,39 @@ pub fn finalize_universal_tx(
     });
 
     Ok(())
+}
+
+/// Compute gas accounting and reimburse relayer for actual cost.
+///
+/// Marked `inline(never)` to keep `finalize_universal_tx` stack usage below the
+/// BPF frame limit.
+#[inline(never)]
+fn settle_relayer_gas_cost(
+    ctx: &Context<FinalizeUniversalTx>,
+    gas_fee: u64,
+    ata_created: bool,
+) -> Result<(u64, u64)> {
+    let sub_tx_rent = Rent::get()?.minimum_balance(ExecutedSubTx::LEN);
+    let ata_rent = if ata_created {
+        Rent::get()?.minimum_balance(SPL_TOKEN_ACCOUNT_LEN)
+    } else {
+        0
+    };
+    let gas_used = SIGNATURE_FEE_LAMPORTS + sub_tx_rent + ata_rent;
+    require!(gas_fee >= gas_used, GatewayError::InsufficientGasBudget);
+    let gas_to_refund = gas_fee - gas_used;
+
+    // Reimburse relayer for actual cost only. Remaining gas_to_refund stays in vault
+    // until UVs return it to the user on Push Chain via the emitted event.
+    crate::utils::transfer_gas_fee_to_caller(
+        &ctx.accounts.vault_sol.to_account_info(),
+        &ctx.accounts.caller.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        gas_used,
+        ctx.accounts.config.vault_bump,
+    )?;
+
+    Ok((gas_used, gas_to_refund))
 }
 
 // ============================================
@@ -350,13 +402,16 @@ fn verify_finalize_tss(
     Ok(Some(accounts))
 }
 
+/// Stage bridged assets from vault to CEA. Returns `ata_created` indicating whether
+/// the CEA ATA had to be created (SPL path only; always false for native SOL).
+/// Gas transfer to caller is intentionally NOT performed here — it is computed and
+/// paid separately after this call, once actual gas_used is known.
 fn stage_assets_to_cea(
     ctx: &Context<FinalizeUniversalTx>,
     request: &FinalizeRequestContext,
     amount: u64,
-    gas_fee: u64,
     vault_seeds: &[&[u8]],
-) -> Result<()> {
+) -> Result<bool> {
     if request.is_native {
         pda_system_transfer(
             &ctx.accounts.vault_sol.to_account_info(),
@@ -365,17 +420,10 @@ fn stage_assets_to_cea(
             amount,
             vault_seeds,
         )?;
+        Ok(false)
     } else {
-        process_spl_vault_to_cea_transfer(ctx, amount, vault_seeds)?;
+        process_spl_vault_to_cea_transfer(ctx, amount, vault_seeds)
     }
-
-    crate::utils::transfer_gas_fee_to_caller(
-        &ctx.accounts.vault_sol.to_account_info(),
-        &ctx.accounts.caller.to_account_info(),
-        &ctx.accounts.system_program.to_account_info(),
-        gas_fee,
-        ctx.accounts.config.vault_bump,
-    )
 }
 
 fn dispatch_finalize_action(
@@ -521,12 +569,13 @@ fn build_and_validate_tss_execute<'info>(
 //    SPL ACCOUNT HELPERS (PHASE 3)
 // ============================================
 
-/// Validate and process SPL token transfer from vault to CEA
+/// Validate and process SPL token transfer from vault to CEA.
+/// Returns `true` if the CEA ATA did not exist and had to be created.
 fn process_spl_vault_to_cea_transfer<'info>(
     ctx: &Context<FinalizeUniversalTx<'info>>,
     amount: u64,
     vault_seeds: &[&[u8]],
-) -> Result<()> {
+) -> Result<bool> {
     // Unpack SPL accounts (guaranteed Some by validate_account_presence)
     let vault_ata = ctx.accounts.vault_ata.as_ref().ok_or(error!(GatewayError::InvalidAccount))?;
     let cea_ata = ctx.accounts.cea_ata.as_ref().ok_or(error!(GatewayError::InvalidAccount))?;
@@ -549,9 +598,10 @@ fn process_spl_vault_to_cea_transfer<'info>(
         GatewayError::InvalidAccount
     );
 
-    // Create CEA ATA if it doesn't exist
+    // Create CEA ATA if it doesn't exist; capture whether creation happened.
     let cea_ata_info = cea_ata.to_account_info();
-    if cea_ata_info.data_is_empty() {
+    let ata_created = cea_ata_info.data_is_empty();
+    if ata_created {
         let create_ata_ix =
             spl_associated_token_account::instruction::create_associated_token_account(
                 &ctx.accounts.caller.key(),
@@ -591,5 +641,15 @@ fn process_spl_vault_to_cea_transfer<'info>(
         vault_seeds,
     )?;
 
-    Ok(())
+    Ok(ata_created)
 }
+
+git add contracts/svm-gateway/app/gateway-test.ts contracts/svm-gateway/docs/2-WITHDRAW-EXECUTE.md                         contracts/svm-gateway/docs/0-SVM-GATEWAY.md                              contracts/svm-gateway/docs/4-CEA.md                                      contracts/svm-gateway/programs/universal-gateway/src/errors.rs                                                                         contracts/svm-gateway/programs/universal-gateway/src/instructions/execute.rs     contracts/svm-gateway/programs/universal-gateway/src/state.rs contracts/svm-gateway/tests/cea-to-uea.test.ts                           contracts/svm-gateway/tests/execute.test.ts            contracts/svm-gateway/tests/helpers/test-utils.ts contracts/svm-gateway/tests/withdraw.test.ts
+contracts/svm-gateway/docs/0-SVM-GATEWAY.md                             
+contracts/svm-gateway/docs/4-CEA.md                                     
+contracts/svm-gateway/programs/universal-gateway/src/errors.rs                                                                        
+contracts/svm-gateway/programs/universal-gateway/src/instructions/execute.rs    
+contracts/svm-gateway/programs/universal-gateway/src/state.rs
+contracts/svm-gateway/tests/cea-to-uea.test.ts                          
+contracts/svm-gateway/tests/execute.test.ts           
+contracts/svm-gateway/tests/helpers/test-utils.ts contracts/svm-gateway/tests/withdraw.test.ts

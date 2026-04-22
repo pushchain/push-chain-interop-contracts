@@ -90,4 +90,7 @@ pub enum GatewayError {
 
     #[msg("Fee vault has insufficient balance to reimburse relayer")]
     InsufficientFeePool,
+
+    #[msg("gas_fee is below the minimum required gas_used for this finalize")]
+    InsufficientGasBudget,
 }

@@ -22,7 +22,8 @@ import {
 import { makeFinalizeUniversalTxBuilder, FinalizeUniversalTxArgs } from "./helpers/builders";
 
 // Gas fee constants (in lamports)
-const DEFAULT_GAS_FEE = BigInt(5000); // 0.000005 SOL for relayer
+// Must be >= SIGNATURE_FEE + ExecutedSubTx rent (+ optional ATA rent on SPL paths).
+const DEFAULT_GAS_FEE = BigInt(4_000_000);
 
 const toBytes = (pubkey: PublicKey) => pubkey.toBuffer();
 
@@ -370,12 +371,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const finalRecipient = await provider.connection.getBalance(recipient.publicKey);
             const callerBalanceAfter = await provider.connection.getBalance(relayer.publicKey);
 
-            expect(finalVault).to.equal(initialVault - withdrawLamports - Number(DEFAULT_GAS_FEE)); // Vault pays withdraw amount + gas fee
+            const actualRentForExecutedTx = await provider.connection.getMinimumBalanceForRentExemption(8);
+            const gasUsed = 5_000 + actualRentForExecutedTx;
+            expect(finalVault).to.equal(initialVault - withdrawLamports - gasUsed); // Vault pays withdraw amount + gas_used
             expect(finalRecipient).to.equal(initialRecipient + withdrawLamports);
-            // Caller should receive gas_fee (minus rent for executed_sub_tx account creation)
+            // Caller pays executed_sub_tx rent and gets gas_used reimbursement.
             const callerBalanceChange = callerBalanceAfter - callerBalanceBefore;
-            const actualRentForExecutedTx = 890880; // Approximate rent for 8-byte ExecutedSubTx account
-            const expectedCallerGain = Number(DEFAULT_GAS_FEE) - actualRentForExecutedTx; // gas_fee minus rent for executed_sub_tx
+            const expectedCallerGain = gasUsed - actualRentForExecutedTx;
             expect(callerBalanceChange).to.be.closeTo(expectedCallerGain, 100000); // Allow larger variance
         });
 
@@ -579,7 +581,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
 
             expect(finalVault).to.equal(initialVault - withdrawTokens);
             expect(finalRecipient).to.equal(initialRecipient + withdrawTokens);
-            // Caller should receive gas_fee minus executed_sub_tx rent, optional CEA ATA rent, and tx fee
+            // Caller pays rents upfront and receives gas_used back (gas_to_refund stays in vault).
             const callerBalanceChange = callerBalanceAfter - callerBalanceBefore;
             await provider.connection.confirmTransaction(sig, "confirmed");
             let tx = null as Awaited<ReturnType<typeof provider.connection.getTransaction>>;
@@ -1055,12 +1057,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
                 .signers([relayer])
                 .rpc();
 
-            // Verify caller received gas fee
+            // Verify caller received gas_used reimbursement
             const callerBalanceAfter = await provider.connection.getBalance(relayer.publicKey);
             const callerBalanceChange = callerBalanceAfter - callerBalanceBefore;
-            // Caller pays for executed_sub_tx account rent, receives gas_fee (transaction fees vary, so we use tolerance)
+            // Caller pays executed_sub_tx rent, receives gas_used = signature_fee + sub_tx_rent.
             const actualRentForExecutedTx = await provider.connection.getMinimumBalanceForRentExemption(8);
-            const expectedCallerGain = -actualRentForExecutedTx + Number(DEFAULT_GAS_FEE);
+            const gasUsed = 5_000 + actualRentForExecutedTx;
+            const expectedCallerGain = -actualRentForExecutedTx + gasUsed;
             expect(callerBalanceChange).to.be.closeTo(expectedCallerGain, 15000); // Allow for transaction fees
 
             // Verify executed_sub_tx account exists after success
