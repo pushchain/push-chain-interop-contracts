@@ -107,7 +107,7 @@ contract VaultWithdrawalTest is Test {
             Vault.initialize.selector, admin, pauser, tss, address(gateway), address(ceaFactory)
         );
         ERC1967Proxy vaultProxy = new ERC1967Proxy(address(vaultImpl), vaultInitData);
-        vault = Vault(address(vaultProxy));
+        vault = Vault(payable(address(vaultProxy)));
 
         // Set vault in CEAFactory
         ceaFactory.setVault(address(vault));

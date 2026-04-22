@@ -42,7 +42,7 @@ contract VerifyDeployment is Script {
         uint256 failures = 0;
 
         UniversalGateway gateway = UniversalGateway(payable(gatewayProxy));
-        Vault vault = Vault(vaultProxy);
+        Vault vault = Vault(payable(vaultProxy));
 
         // ============================================================
         //  Category 1: Contract Existence

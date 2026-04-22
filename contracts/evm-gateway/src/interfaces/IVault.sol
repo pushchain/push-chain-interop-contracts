@@ -68,6 +68,18 @@ interface IVault {
         RevertInstructions revertInstruction
     );
 
+    /// @notice                  Tokens migrated from this vault to a new vault
+    /// @param newVault          Destination vault address
+    /// @param tokens            Array of ERC20 token addresses migrated
+    /// @param amounts           Array of amounts transferred (parallel to tokens)
+    /// @param nativeAmount      Amount of native ETH transferred (0 if none)
+    event TokensMigrated(
+        address indexed newVault,
+        address[] tokens,
+        uint256[] amounts,
+        uint256 nativeAmount
+    );
+
     // =========================
     //  V_2: WITHDRAW & EXECUTION
     // =========================
@@ -126,4 +138,14 @@ interface IVault {
         uint256 amount,
         RevertInstructions calldata revertInstruction
     ) external payable;
+
+    // =========================
+    //    V_3: MIGRATION
+    // =========================
+
+    /// @notice Migrates ERC20 balances and any native ETH to a new vault.
+    /// @dev    MUST be called while BOTH this vault AND the gateway are paused.
+    /// @param newVault Destination vault address
+    /// @param tokens   Caller-supplied list of ERC20 token addresses to sweep
+    function migrateTokens(address newVault, address[] calldata tokens) external;
 }

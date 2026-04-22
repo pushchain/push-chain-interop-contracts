@@ -189,6 +189,10 @@ contract UniversalGateway is
         _unpause();
     }
 
+    function paused() public view override(PausableUpgradeable, IUniversalGateway) returns (bool) {
+        return super.paused();
+    }
+
     /// @notice                Allows the admin to update the TSS address.
     /// @dev                   TSS authorization in UG is enforced via the
     ///                        `TSS_ADDRESS` state variable (used as the native-fee / deposit

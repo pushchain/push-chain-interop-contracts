@@ -96,7 +96,7 @@ contract VaultTest is Test {
             Vault.initialize.selector, admin, pauser, tss, address(gateway), address(ceaFactory)
         );
         ERC1967Proxy vaultProxy = new ERC1967Proxy(address(vaultImpl), vaultInitData);
-        vault = Vault(address(vaultProxy));
+        vault = Vault(payable(address(vaultProxy)));
 
         // Set vault in CEAFactory
         ceaFactory.setVault(address(vault));
@@ -1354,23 +1354,25 @@ contract VaultTest is Test {
     }
 
     // ============================================================================
-    // NO NATIVE INVARIANT TESTS
+    // NATIVE ETH RECEIVE TESTS
     // ============================================================================
 
-    function test_NoNative_DirectETHSendReverts() public {
+    function test_Receive_DirectETHSendSucceeds() public {
         vm.deal(user1, 1 ether);
 
         vm.prank(user1);
         (bool success,) = address(vault).call{ value: 1 ether }("");
-        assertFalse(success);
+        assertTrue(success);
+        assertEq(address(vault).balance, 1 ether);
     }
 
-    function test_NoNative_NoReceiveFunction() public {
+    function test_Receive_SendViaCallSucceeds() public {
         vm.deal(user1, 1 ether);
 
         vm.prank(user1);
-        vm.expectRevert();
-        payable(address(vault)).transfer(1 ether);
+        (bool success,) = payable(address(vault)).call{ value: 1 ether }("");
+        assertTrue(success);
+        assertEq(address(vault).balance, 1 ether);
     }
 
     function test_NoNative_FunctionsDoNotAcceptValue() public {
@@ -1780,7 +1782,7 @@ contract VaultTest is Test {
         ERC1967Proxy proxy = new ERC1967Proxy(address(newImpl), initData);
 
         // Verify the proxy was created and initialized correctly
-        Vault newVault = Vault(address(proxy));
+        Vault newVault = Vault(payable(address(proxy)));
         assertEq(address(newVault.gateway()), address(gateway));
         assertEq(address(newVault.CEAFactory()), address(newCeaFactory));
         assertTrue(newVault.hasRole(newVault.DEFAULT_ADMIN_ROLE(), admin));

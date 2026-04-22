@@ -156,7 +156,7 @@ contract UpgradeVault is Script, VaultConfig {
         require(currentImplementation == newImplementation, "Implementation not updated");
         require(currentImplementation != oldImplementation, "Implementation unchanged");
 
-        Vault vault = Vault(cfg.vaultProxy);
+        Vault vault = Vault(payable(cfg.vaultProxy));
         address gateway = address(vault.gateway());
         address ceaFactory = address(vault.CEAFactory());
         // Assert critical state preserved

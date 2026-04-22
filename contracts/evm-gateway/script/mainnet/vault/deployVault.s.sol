@@ -179,7 +179,7 @@ contract DeployVault is Script, VaultConfig {
         require(vaultImplementation != address(0), "Implementation not deployed");
         require(vaultProxy != address(0), "Proxy not deployed");
 
-        Vault vault = Vault(vaultProxy);
+        Vault vault = Vault(payable(vaultProxy));
 
         // Verify initialization parameters
         require(address(vault.gateway()) == cfg.gateway, "Gateway address mismatch");

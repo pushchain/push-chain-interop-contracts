@@ -42,6 +42,8 @@ contract Vault is
         _disableInitializers();
     }
 
+    receive() external payable {}
+
     // ==============================
     //     Vault_1: ADMIN ACTIONS
     // ==============================
@@ -94,6 +96,40 @@ contract Vault is
         address old = address(CEAFactory);
         CEAFactory = ICEAFactory(newCEAFactory);
         emit CEAFactoryUpdated(old, newCEAFactory);
+    }
+
+    /// @notice                Migrates ERC20 balances and any native ETH to a new vault.
+    /// @dev                   BOTH this vault AND the gateway MUST be paused.
+    ///                        Call this BEFORE gateway.updateVault(newVault).
+    ///                        Tokens with zero balance are silently skipped.
+    /// @param newVault        Destination vault address
+    /// @param tokens          ERC20 token addresses to sweep
+    function migrateTokens(
+        address newVault,
+        address[] calldata tokens
+    ) external nonReentrant whenPaused onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newVault == address(0)) revert Errors.ZeroAddress();
+        if (tokens.length == 0) revert Errors.EmptyTokenList();
+        if (!gateway.paused()) revert Errors.GatewayNotPaused();
+
+        uint256 len = tokens.length;
+        uint256[] memory amounts = new uint256[](len);
+
+        for (uint256 i; i < len; ++i) {
+            uint256 bal = IERC20(tokens[i]).balanceOf(address(this));
+            amounts[i] = bal;
+            if (bal > 0) {
+                IERC20(tokens[i]).safeTransfer(newVault, bal);
+            }
+        }
+
+        uint256 nativeBal = address(this).balance;
+        if (nativeBal > 0) {
+            (bool ok,) = newVault.call{ value: nativeBal }("");
+            if (!ok) revert Errors.WithdrawFailed();
+        }
+
+        emit TokensMigrated(newVault, tokens, amounts, nativeBal);
     }
 
     // ==============================
