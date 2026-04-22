@@ -38,7 +38,8 @@ contract MockReentrantContract {
             token: prc20Token,
             amount: amount,
             gasLimit: gasLimit,
-            payload: bytes(""), // empty payload for FUNDS type
+            maxPCForGas: 0,
+            payload: bytes(""),
             revertRecipient: revertRecipient
         });
         IUniversalGatewayPC(gateway).sendUniversalTxOutbound{value: msg.value}(req);
@@ -55,7 +56,8 @@ contract MockReentrantContract {
             token: prc20Token,
             amount: amount,
             gasLimit: gasLimit,
-            payload: payload, // non-empty payload for FUNDS_AND_PAYLOAD type
+            maxPCForGas: 0,
+            payload: payload,
             revertRecipient: revertRecipient
         });
         IUniversalGatewayPC(gateway).sendUniversalTxOutbound{value: msg.value}(req);

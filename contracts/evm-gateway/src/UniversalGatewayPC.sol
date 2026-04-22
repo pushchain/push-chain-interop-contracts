@@ -129,7 +129,17 @@ contract UniversalGatewayPC is
             (bool ok,) = address(VAULT_PC).call{ value: protocolFee }("");
             if (!ok) revert Errors.InvalidInput();
         }
-        _swapAndCollectFees(gasToken, msg.value - protocolFee, gasFee);
+        uint256 pcForSwap = msg.value - protocolFee;
+        if (req.maxPCForGas != 0) {
+            if (req.maxPCForGas > pcForSwap) revert Errors.InvalidAmount();
+            uint256 excess = pcForSwap - req.maxPCForGas;
+            pcForSwap = req.maxPCForGas;
+            if (excess > 0) {
+                (bool refundOk,) = msg.sender.call{ value: excess }("");
+                if (!refundOk) revert Errors.WithdrawFailed();
+            }
+        }
+        _swapAndCollectFees(gasToken, pcForSwap, gasFee);
 
         uint256 currentNonce = nonce;
         nonce = currentNonce + 1;
