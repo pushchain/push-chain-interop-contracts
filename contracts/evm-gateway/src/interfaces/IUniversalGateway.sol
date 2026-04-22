@@ -218,4 +218,7 @@ interface IUniversalGateway {
 
     /// @notice                  Running total of protocol fees collected (native, in wei).
     function totalProtocolFeesCollected() external view returns (uint256);
+
+    /// @notice                  Whether the gateway is currently paused.
+    function paused() external view returns (bool);
 }

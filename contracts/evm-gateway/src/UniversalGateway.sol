@@ -66,11 +66,11 @@ contract UniversalGateway is
 
     /// @notice Upper bound for INBOUND_FEE. Prevents admin from configuring an absurdly high flat
     ///         protocol fee that would DoS or grief users.
-    uint256 public constant MAX_INBOUND_FEE = 1 ether;
+    uint256 public constant MAX_INBOUND_FEE = 0.05 ether;
 
-    /// @notice MUTABLE — admin-updatable via setTSS.
+    /// @notice MUTABLE — admin-updatable via updateTSS.
     address public TSS_ADDRESS;
-    /// @notice MUTABLE — admin-updatable via setVault.
+    /// @notice MUTABLE — admin-updatable via updateVault.
     address public VAULT;
 
     /// @notice Rate-Limiting CAPS and States
@@ -189,20 +189,24 @@ contract UniversalGateway is
         _unpause();
     }
 
-    /// @notice                Allows the admin to set the TSS address.
+    function paused() public view override(PausableUpgradeable, IUniversalGateway) returns (bool) {
+        return super.paused();
+    }
+
+    /// @notice                Allows the admin to update the TSS address.
     /// @dev                   TSS authorization in UG is enforced via the
     ///                        `TSS_ADDRESS` state variable (used as the native-fee / deposit
     ///                        recipient). No `TSS_ROLE` role is managed here; TSS role
     ///                        enforcement for outbound operations lives in the Vault contract.
     /// @param newTSS          New TSS address.
-    function setTSS(address newTSS) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateTSS(address newTSS) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newTSS == address(0)) revert Errors.ZeroAddress();
         TSS_ADDRESS = newTSS;
     }
 
-    /// @notice                Allows the admin to set the Vault address
+    /// @notice                Allows the admin to update the Vault address
     /// @param newVault        New Vault address
-    function setVault(address newVault) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateVault(address newVault) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newVault == address(0)) revert Errors.ZeroAddress();
         address old = VAULT;
 
@@ -349,9 +353,7 @@ contract UniversalGateway is
     /// @inheritdoc IUniversalGateway
     function sendUniversalTx(UniversalTxRequest calldata req) external payable nonReentrant whenNotPaused {
         if (_isCallerCEA()) revert Errors.InvalidInput();
-        uint256 nativeValue = msg.value;
-        TX_TYPE txType = _fetchTxType(req, nativeValue);
-        _routeUniversalTx(req, _msgSender(), nativeValue, txType, false);
+        _routeUniversalTx(req, _msgSender(), msg.value, false);
     }
 
     /// @inheritdoc IUniversalGateway
@@ -377,8 +379,7 @@ contract UniversalGateway is
             signatureData: reqToken.signatureData
         });
 
-        TX_TYPE txType = _fetchTxType(req, nativeValue);
-        _routeUniversalTx(req, _msgSender(), nativeValue, txType, false);
+        _routeUniversalTx(req, _msgSender(), nativeValue, false);
     }
 
     /// @inheritdoc IUniversalGateway
@@ -391,10 +392,7 @@ contract UniversalGateway is
 
         if (req.recipient != mappedUEA) revert Errors.InvalidRecipient();
 
-        uint256 nativeValue = msg.value;
-        TX_TYPE txType = _fetchTxType(req, nativeValue);
-
-        _routeUniversalTx(req, _msgSender(), nativeValue, txType, true);
+        _routeUniversalTx(req, _msgSender(), msg.value, true);
     }
 
     // ==============================
@@ -1033,18 +1031,15 @@ contract UniversalGateway is
     }
 
     /// @dev                    Internal router that dispatches to the appropriate handler based on TX_TYPE.
+    ///                         TX_TYPE inference is performed AFTER fee deduction so that the inferred
+    ///                         type matches the effective native value used by downstream handlers.
     /// @param req              UniversalTxRequest struct
     /// @param caller           Caller address
-    /// @param nativeValue      Native value (msg.value)
-    /// @param txType           TX_TYPE
+    /// @param nativeValue      Native value (msg.value or swap output)
     /// @param fromCEA          True if called via sendUniversalTxFromCEA
-    function _routeUniversalTx(
-        UniversalTxRequest memory req,
-        address caller,
-        uint256 nativeValue,
-        TX_TYPE txType,
-        bool fromCEA
-    ) internal {
+    function _routeUniversalTx(UniversalTxRequest memory req, address caller, uint256 nativeValue, bool fromCEA)
+        internal
+    {
         // Sanity Check : revertRecipient is not address(0)
         if (req.revertRecipient == address(0)) {
             revert Errors.InvalidRecipient();
@@ -1056,6 +1051,8 @@ contract UniversalGateway is
             (nativeValue, feeCollected) = _collectInboundFee(nativeValue);
             totalProtocolFeesCollected += feeCollected;
         }
+
+        TX_TYPE txType = _fetchTxType(req, nativeValue);
 
         // Route 1: GAS or GAS_AND_PAYLOAD → Instant route
         if (txType == TX_TYPE.GAS || txType == TX_TYPE.GAS_AND_PAYLOAD) {

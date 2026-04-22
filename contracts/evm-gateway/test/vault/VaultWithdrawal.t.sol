@@ -107,14 +107,14 @@ contract VaultWithdrawalTest is Test {
             Vault.initialize.selector, admin, pauser, tss, address(gateway), address(ceaFactory)
         );
         ERC1967Proxy vaultProxy = new ERC1967Proxy(address(vaultImpl), vaultInitData);
-        vault = Vault(address(vaultProxy));
+        vault = Vault(payable(address(vaultProxy)));
 
         // Set vault in CEAFactory
         ceaFactory.setVault(address(vault));
 
         // Update gateway's VAULT_ROLE
         vm.prank(admin);
-        gateway.setVault(address(vault));
+        gateway.updateVault(address(vault));
 
         // Deploy tokens
         usdc = new MockERC20("USD Coin", "USDC", 6, 1_000_000e6);

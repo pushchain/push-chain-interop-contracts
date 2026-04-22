@@ -43,7 +43,7 @@ contract UniversalGateway_ProtocolFeeFuzz is BaseTest {
 
     /// @dev Any msg.value strictly below INBOUND_FEE must revert InsufficientProtocolFee.
     function testFuzz_ProtocolFee_InsufficientValueReverts(uint64 feeWei, uint64 sentWei) public {
-        feeWei  = uint64(bound(feeWei,  1, 1 ether));
+        feeWei  = uint64(bound(feeWei,  1, 0.05 ether));
         sentWei = uint64(bound(sentWei, 0, uint256(feeWei) - 1));
 
         vm.prank(admin);

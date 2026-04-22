@@ -44,7 +44,7 @@ The Vault's function handles the token/ETH branching before forwarding to the Ga
 
 **Call chain**:
 1. TSS calls `Vault.revertUniversalTx(subTxId, universalTxId, token, amount, revertInstruction)`.
-2. Vault validates: `amount > 0`, `revertRecipient != address(0)`, token is supported, `IERC20(token).balanceOf(vault) >= amount`.
+2. Vault validates: `amount > 0`, `revertRecipient != address(0)`, `IERC20(token).balanceOf(vault) >= amount`.
 3. Vault calls `IERC20(token).safeTransfer(gateway, amount)`.
 4. Vault calls `gateway.revertUniversalTx(subTxId, universalTxId, token, amount, revertInstruction)`.
 5. Gateway checks `isExecuted[subTxId]` — reverts `PayloadExecuted` if already processed (replay protection).
@@ -62,7 +62,7 @@ sequenceDiagram
     participant R as revertRecipient
 
     TSS->>V: revertUniversalTx(subTxId, universalTxId, token, amount, {revertRecipient})
-    V->>V: validate: amount>0, revertRecipient≠0, token supported, balance≥amount
+    V->>V: validate: amount>0, revertRecipient≠0, balance≥amount
     V->>TOKEN: safeTransfer(gateway, amount)
     V->>GW: revertUniversalTx(subTxId, universalTxId, token, amount, revertInstruction)
     GW->>GW: isExecuted[subTxId] check (replay protection) → set true
@@ -153,7 +153,7 @@ sequenceDiagram
     GPC-->>TSS: emit RescueFundsOnSourceChain(universalTxId, TX_TYPE.RESCUE_FUNDS)
 
     TSS->>V: rescueFunds(subTxId, universalTxId, token, amount, {revertRecipient})
-    V->>V: validate: amount>0, revertRecipient≠0, token supported, balance≥amount
+    V->>V: validate: amount>0, revertRecipient≠0, balance≥amount
     V->>TOKEN: safeTransfer(gateway, amount)
     V->>GW: rescueFunds(subTxId, universalTxId, token, amount, revertInstruction)
     GW->>GW: isExecuted[subTxId] check (replay protection) → set true

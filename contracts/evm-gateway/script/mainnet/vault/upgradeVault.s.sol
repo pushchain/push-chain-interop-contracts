@@ -156,22 +156,16 @@ contract UpgradeVault is Script, VaultConfig {
         require(currentImplementation == newImplementation, "Implementation not updated");
         require(currentImplementation != oldImplementation, "Implementation unchanged");
 
-        Vault vault = Vault(cfg.vaultProxy);
+        Vault vault = Vault(payable(cfg.vaultProxy));
         address gateway = address(vault.gateway());
         address ceaFactory = address(vault.CEAFactory());
-        address tssAddress = vault.TSS_ADDRESS();
-
         // Assert critical state preserved
         require(gateway != address(0), "Gateway reference lost after upgrade");
         require(ceaFactory != address(0), "CEAFactory reference lost after upgrade");
-        require(tssAddress != address(0), "TSS_ADDRESS lost after upgrade");
-        require(vault.hasRole(vault.TSS_ROLE(), tssAddress), "TSS_ROLE lost after upgrade");
 
         console.log("OK: Implementation updated successfully");
         console.log("OK: Gateway:", gateway);
         console.log("OK: CEAFactory:", ceaFactory);
-        console.log("OK: TSS_ADDRESS:", tssAddress);
-        console.log("OK: TSS_ROLE preserved");
         console.log("");
     }
 

@@ -17,11 +17,6 @@ interface IVault {
     /// @param newGateway        New Gateway address
     event GatewayUpdated(address indexed oldGateway, address indexed newGateway);
 
-    /// @notice                  TSS updated event
-    /// @param oldTss            Previous TSS address
-    /// @param newTss            New TSS address
-    event TSSUpdated(address indexed oldTss, address indexed newTss);
-
     /// @notice                  CEAFactory updated event
     /// @param oldCEAFactory     Previous CEAFactory address
     /// @param newCEAFactory     New CEAFactory address
@@ -71,6 +66,18 @@ interface IVault {
         address indexed token,
         uint256 amount,
         RevertInstructions revertInstruction
+    );
+
+    /// @notice                  Tokens migrated from this vault to a new vault
+    /// @param newVault          Destination vault address
+    /// @param tokens            Array of ERC20 token addresses migrated
+    /// @param amounts           Array of amounts transferred (parallel to tokens)
+    /// @param nativeAmount      Amount of native ETH transferred (0 if none)
+    event TokensMigrated(
+        address indexed newVault,
+        address[] tokens,
+        uint256[] amounts,
+        uint256 nativeAmount
     );
 
     // =========================
@@ -131,4 +138,14 @@ interface IVault {
         uint256 amount,
         RevertInstructions calldata revertInstruction
     ) external payable;
+
+    // =========================
+    //    V_3: MIGRATION
+    // =========================
+
+    /// @notice Migrates ERC20 balances and any native ETH to a new vault.
+    /// @dev    MUST be called while BOTH this vault AND the gateway are paused.
+    /// @param newVault Destination vault address
+    /// @param tokens   Caller-supplied list of ERC20 token addresses to sweep
+    function migrateTokens(address newVault, address[] calldata tokens) external;
 }

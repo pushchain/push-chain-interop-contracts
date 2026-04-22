@@ -517,7 +517,7 @@ contract ProtocolFeeTest is BaseTest {
         // Replace TSS with a contract that rejects ETH
         ProtocolFeeEthRejecter rejecter = new ProtocolFeeEthRejecter();
         vm.prank(admin);
-        gw.setTSS(address(rejecter));
+        gw.updateTSS(address(rejecter));
 
         UniversalTxRequest memory req = _buildReq(address(0), 0, bytes(""));
         vm.prank(user1);

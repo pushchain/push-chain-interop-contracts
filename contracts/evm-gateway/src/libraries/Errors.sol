@@ -18,6 +18,8 @@ library Errors {
     error InvalidRecipient();
     error PayloadExecuted();
     error Unauthorized();
+    error GatewayNotPaused();
+    error EmptyTokenList();
 
     // ==============================
     //     GATEWAY ERRORS
