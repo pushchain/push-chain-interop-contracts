@@ -66,14 +66,13 @@ contract VerifyDeployment is Script {
         address gwVault = gateway.VAULT();
         address vGateway = address(vault.gateway());
         address gwTss = gateway.TSS_ADDRESS();
-        address vTss = vault.TSS_ADDRESS();
         address gwCeaFactory = gateway.CEA_FACTORY();
         address vCeaFactory = address(vault.CEAFactory());
 
         failures += _check(gwVault == vaultProxy, "Gateway.VAULT == Vault proxy");
         failures += _check(vGateway == gatewayProxy, "Vault.gateway == Gateway proxy");
         failures += _check(gwCeaFactory == vCeaFactory, "Gateway.CEA_FACTORY == Vault.CEAFactory");
-        failures += _check(gwTss == vTss, "Gateway.TSS_ADDRESS == Vault.TSS_ADDRESS");
+        failures += _check(vault.hasRole(vault.TSS_ROLE(), gwTss), "Vault.TSS_ROLE granted to Gateway.TSS_ADDRESS");
 
         console.log("  TSS_ADDRESS:", gwTss);
         console.log("  CEA_FACTORY:", gwCeaFactory);
@@ -137,7 +136,7 @@ contract VerifyDeployment is Script {
         failures += _check(gateway.hasRole(vaultRole, gwVault), "Gateway: VAULT_ROLE granted to Vault");
         // UG no longer manages TSS_ROLE; verify TSS_ADDRESS directly.
         failures += _check(gateway.TSS_ADDRESS() == gwTss, "Gateway: TSS_ADDRESS set to TSS");
-        failures += _check(vault.hasRole(tssRole, vTss), "Vault: TSS_ROLE granted to TSS");
+        failures += _check(vault.hasRole(tssRole, gwTss), "Vault: TSS_ROLE granted to TSS");
 
         // ProxyAdmin owners
         address gwProxyAdmin = _readSlotAsAddress(gatewayProxy, _ADMIN_SLOT);

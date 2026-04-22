@@ -17,11 +17,6 @@ interface IVault {
     /// @param newGateway        New Gateway address
     event GatewayUpdated(address indexed oldGateway, address indexed newGateway);
 
-    /// @notice                  TSS updated event
-    /// @param oldTss            Previous TSS address
-    /// @param newTss            New TSS address
-    event TSSUpdated(address indexed oldTss, address indexed newTss);
-
     /// @notice                  CEAFactory updated event
     /// @param oldCEAFactory     Previous CEAFactory address
     /// @param newCEAFactory     New CEAFactory address

@@ -184,8 +184,6 @@ contract DeployVault is Script, VaultConfig {
         // Verify initialization parameters
         require(address(vault.gateway()) == cfg.gateway, "Gateway address mismatch");
         require(address(vault.CEAFactory()) == cfg.ceaFactory, "CEAFactory address mismatch");
-        require(vault.TSS_ADDRESS() == tss, "TSS address mismatch");
-
         // Verify roles
         require(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), admin), "Admin role not set");
         require(vault.hasRole(vault.PAUSER_ROLE(), pauser), "Pauser role not set");

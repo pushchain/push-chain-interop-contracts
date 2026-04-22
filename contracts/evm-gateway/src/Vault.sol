@@ -35,8 +35,6 @@ contract Vault is
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     IUniversalGateway public gateway;
-    /// @notice MUTABLE — admin-updatable via setTSS.
-    address public TSS_ADDRESS;
     ICEAFactory public CEAFactory;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -69,7 +67,6 @@ contract Vault is
         _grantRole(TSS_ROLE, tss);
 
         gateway = IUniversalGateway(gw);
-        TSS_ADDRESS = tss;
         CEAFactory = ICEAFactory(ceaFactory);
     }
 
@@ -88,19 +85,6 @@ contract Vault is
         address old = address(gateway);
         gateway = IUniversalGateway(gw);
         emit GatewayUpdated(old, gw);
-    }
-
-    /// @notice                Updates the TSS address and transfers TSS_ROLE.
-    /// @param newTss          New TSS address.
-    function setTSS(address newTss) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (newTss == address(0)) revert Errors.ZeroAddress();
-        address old = TSS_ADDRESS;
-
-        if (hasRole(TSS_ROLE, old)) _revokeRole(TSS_ROLE, old);
-        _grantRole(TSS_ROLE, newTss);
-
-        TSS_ADDRESS = newTss;
-        emit TSSUpdated(old, newTss);
     }
 
     /// @notice                Updates the CEAFactory address.
