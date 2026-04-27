@@ -125,8 +125,8 @@ DA:277,82
 BRDA:277,11,0,-
 DA:278,82
 DA:283,21
-FN:283,UniversalGateway.setProtocolFee
-FNDA:21,UniversalGateway.setProtocolFee
+FN:283,UniversalGateway.setInboundFee
+FNDA:21,UniversalGateway.setInboundFee
 DA:284,20
 DA:285,20
 DA:293,349

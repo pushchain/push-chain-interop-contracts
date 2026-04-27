@@ -57,54 +57,63 @@ contract AccessControlTest is Test {
         vm.startPrank(proxyDeployer);
 
         UniversalGateway gwImpl = new UniversalGateway();
-        gw = UniversalGateway(payable(address(
-            new TransparentUpgradeableProxy(
-                address(gwImpl),
-                proxyDeployer,
-                abi.encodeWithSelector(
-                    UniversalGateway.initialize.selector,
-                    admin, pauser, tss, address(this),
-                    1e18, 10e18,
-                    address(0), address(0), address(weth)
-                )
-            )
-        )));
+        gw = UniversalGateway(
+            payable(address(
+                    new TransparentUpgradeableProxy(
+                        address(gwImpl),
+                        proxyDeployer,
+                        abi.encodeWithSelector(
+                            UniversalGateway.initialize.selector,
+                            admin,
+                            pauser,
+                            tss,
+                            address(this),
+                            1e18,
+                            10e18,
+                            address(0),
+                            address(0),
+                            address(weth)
+                        )
+                    )
+                ))
+        );
 
         Vault vaultImpl = new Vault();
-        vault = Vault(payable(address(
-            new TransparentUpgradeableProxy(
-                address(vaultImpl),
-                proxyDeployer,
-                abi.encodeWithSelector(
-                    Vault.initialize.selector,
-                    admin, pauser, tss, address(gw), address(ceaFactory)
-                )
-            )
-        )));
+        vault = Vault(
+            payable(address(
+                    new TransparentUpgradeableProxy(
+                        address(vaultImpl),
+                        proxyDeployer,
+                        abi.encodeWithSelector(
+                            Vault.initialize.selector, admin, pauser, tss, address(gw), address(ceaFactory)
+                        )
+                    )
+                ))
+        );
 
         UniversalGatewayPC gwPCImpl = new UniversalGatewayPC();
-        gwPC = UniversalGatewayPC(payable(address(
-            new TransparentUpgradeableProxy(
-                address(gwPCImpl),
-                proxyDeployer,
-                abi.encodeWithSelector(
-                    UniversalGatewayPC.initialize.selector,
-                    admin, pauser, address(0x100), address(0x200)
-                )
-            )
-        )));
+        gwPC = UniversalGatewayPC(
+            payable(address(
+                    new TransparentUpgradeableProxy(
+                        address(gwPCImpl),
+                        proxyDeployer,
+                        abi.encodeWithSelector(
+                            UniversalGatewayPC.initialize.selector, admin, pauser, address(0x100), address(0x200)
+                        )
+                    )
+                ))
+        );
 
         VaultPC vpcImpl = new VaultPC();
-        vaultPC = VaultPC(payable(address(
-            new TransparentUpgradeableProxy(
-                address(vpcImpl),
-                proxyDeployer,
-                abi.encodeWithSelector(
-                    VaultPC.initialize.selector,
-                    admin, pauser, admin
-                )
-            )
-        )));
+        vaultPC = VaultPC(
+            payable(address(
+                    new TransparentUpgradeableProxy(
+                        address(vpcImpl),
+                        proxyDeployer,
+                        abi.encodeWithSelector(VaultPC.initialize.selector, admin, pauser, admin)
+                    )
+                ))
+        );
 
         vm.stopPrank();
 
@@ -329,7 +338,7 @@ contract AccessControlTest is Test {
     function test_setProtocolFee_onlyUGAdmin() public {
         vm.prank(attacker);
         vm.expectRevert();
-        gw.setProtocolFee(0.01 ether);
+        gw.setInboundFee(0.01 ether);
     }
 
     function test_updateTSS_onlyOperator() public {
@@ -459,10 +468,7 @@ contract AccessControlTest is Test {
     function test_finalizeUniversalTx_onlyTSS() public {
         vm.prank(attacker);
         vm.expectRevert();
-        vault.finalizeUniversalTx(
-            bytes32(0), bytes32(0), address(0x1),
-            address(0x2), address(0), 0, bytes("")
-        );
+        vault.finalizeUniversalTx(bytes32(0), bytes32(0), address(0x1), address(0x2), address(0), 0, bytes(""));
     }
 
     // ============================================================
@@ -599,5 +605,5 @@ contract AccessControlTest is Test {
         assertTrue(vaultPC.hasRole(PAUSER_ROLE, pauser));
     }
 
-    receive() external payable {}
+    receive() external payable { }
 }

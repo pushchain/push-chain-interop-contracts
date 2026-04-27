@@ -26,18 +26,18 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 ## 3. Trust Boundaries & Actor Definitions
 
-| Actor | Type | Trust Level | Capabilities |
-|---|---|---|---|
-| `DEFAULT_ADMIN_ROLE` | EOA / Multisig | Highest | Config changes, role assignment across all contracts |
-| TSS (Threshold Sig Authority) | Off-chain multi-party | High | Finalise, revert, and rescue funds; relay between chains |
-| `PAUSER_ROLE` | EOA / Multisig | Medium | Emergency pause / unpause only |
-| `VAULT_ROLE` | Smart contract (Vault) | Medium | Call `revertUniversalTx()` and `rescueFunds()` on Gateway |
-| `MANAGER_ROLE` | EOA / Multisig (VaultPC) | Medium | Withdraw collected protocol fees from VaultPC |
-| CEA (Chain Execution Account) | Smart contract | Low-Medium | `sendUniversalTxFromCEA()` only; identity verified via CEAFactory |
-| Public User | EOA / contract | Untrusted | `sendUniversalTx()`, `sendUniversalTxOutbound()`, `rescueFundsOnSourceChain()` |
-| Chainlink Oracle | External protocol | Trusted-external | ETH/USD price feed, L2 sequencer uptime |
-| Uniswap V3 | External protocol | Trusted-external | Token → native ETH swaps on EVM side |
-| UniversalCore | Push Chain contract | Trusted-external | Gas quotes, exactOutputSingle swaps, refund of unused PC |
+| Actor                         | Type                     | Trust Level      | Capabilities                                                                   |
+| ----------------------------- | ------------------------ | ---------------- | ------------------------------------------------------------------------------ |
+| `DEFAULT_ADMIN_ROLE`          | EOA / Multisig           | Highest          | Config changes, role assignment across all contracts                           |
+| TSS (Threshold Sig Authority) | Off-chain multi-party    | High             | Finalise, revert, and rescue funds; relay between chains                       |
+| `PAUSER_ROLE`                 | EOA / Multisig           | Medium           | Emergency pause / unpause only                                                 |
+| `VAULT_ROLE`                  | Smart contract (Vault)   | Medium           | Call `revertUniversalTx()` and `rescueFunds()` on Gateway                      |
+| `MANAGER_ROLE`                | EOA / Multisig (VaultPC) | Medium           | Withdraw collected protocol fees from VaultPC                                  |
+| CEA (Chain Execution Account) | Smart contract           | Low-Medium       | `sendUniversalTxFromCEA()` only; identity verified via CEAFactory              |
+| Public User                   | EOA / contract           | Untrusted        | `sendUniversalTx()`, `sendUniversalTxOutbound()`, `rescueFundsOnSourceChain()` |
+| Chainlink Oracle              | External protocol        | Trusted-external | ETH/USD price feed, L2 sequencer uptime                                        |
+| Uniswap V3                    | External protocol        | Trusted-external | Token → native ETH swaps on EVM side                                           |
+| UniversalCore                 | Push Chain contract      | Trusted-external | Gas quotes, exactOutputSingle swaps, refund of unused PC                       |
 
 **Trust boundary summary:**
 
@@ -67,25 +67,25 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 ### Access Control Table
 
-| Role | Constant | Assigned To | Protected Functions |
-|---|---|---|---|
-| `DEFAULT_ADMIN_ROLE` | OZ default | Admin multisig | `pause()`, `unpause()`, `setTSS()`, `setVault()` (whenPaused), `setCapsUSD()`, `setBlockUsdCap()`, `setUniswapV3Config()`, `setTokenLimitThresholds()`, `setEthUsdFeed()`, `setChainlinkStalePeriod()`, `setL2SequencerFeed()`, `setL2SequencerGracePeriodSec()`, `setCEAFactory()`, `setProtocolFee()`, `updateEpochDuration()`, `setDefaultSwapDeadline()`, `setV3FeeOrder()` |
-| `TSS_ROLE` | `keccak256("TSS_ROLE")` | TSS address | Receives native ETH via `_handleDeposits()` (direct transfer target) |
-| `VAULT_ROLE` | `keccak256("VAULT_ROLE")` | Vault contract | `revertUniversalTx()`, `rescueFunds()` |
-| CEA identity check | via CEAFactory | CEA contracts only | `sendUniversalTxFromCEA()` |
-| *(none)* | — | Public | `sendUniversalTx()`, `sendUniversalTx(token,...)`, `checkUSDCaps()`, `getEthUsdPrice()`, `isSupportedToken()`, `currentTokenUsage()` |
+| Role                 | Constant                  | Assigned To        | Protected Functions                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------- | ------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DEFAULT_ADMIN_ROLE` | OZ default                | Admin multisig     | `pause()`, `unpause()`, `setTSS()`, `setVault()` (whenPaused), `setCapsUSD()`, `setBlockUsdCap()`, `setUniswapV3Config()`, `setTokenLimitThresholds()`, `setEthUsdFeed()`, `setChainlinkStalePeriod()`, `setL2SequencerFeed()`, `setL2SequencerGracePeriodSec()`, `setCEAFactory()`, `setInboundFee()`, `updateEpochDuration()`, `setDefaultSwapDeadline()`, `setV3FeeOrder()` |
+| `TSS_ROLE`           | `keccak256("TSS_ROLE")`   | TSS address        | Receives native ETH via `_handleDeposits()` (direct transfer target)                                                                                                                                                                                                                                                                                                           |
+| `VAULT_ROLE`         | `keccak256("VAULT_ROLE")` | Vault contract     | `revertUniversalTx()`, `rescueFunds()`                                                                                                                                                                                                                                                                                                                                         |
+| CEA identity check   | via CEAFactory            | CEA contracts only | `sendUniversalTxFromCEA()`                                                                                                                                                                                                                                                                                                                                                     |
+| *(none)*             | —                         | Public             | `sendUniversalTx()`, `sendUniversalTx(token,...)`, `checkUSDCaps()`, `getEthUsdPrice()`, `isSupportedToken()`, `currentTokenUsage()`                                                                                                                                                                                                                                           |
 
 ### External Dependencies
 
-| Dependency | Interface | Trust Assumption | Risk if Compromised |
-|---|---|---|---|
-| Chainlink ETH/USD feed | `AggregatorV3Interface` | Returns fresh, correct ETH/USD price | Manipulated price bypasses USD rate limits (both min and max caps) |
-| Chainlink L2 sequencer feed | `AggregatorV3Interface` | Accurately reflects sequencer uptime | False "UP" signal allows deposits during sequencer downtime |
-| Uniswap V3 router | `ISwapRouterV3` | Executes swaps honestly within deadline | Malicious router drains token approvals granted by the gateway |
-| Uniswap V3 factory | `IUniswapV3Factory` | Returns correct pool addresses | Fake pool routes user swap to attacker-controlled contract |
-| CEAFactory | `ICEAFactory` | `isCEA()` and `getPushAccountForCEA()` are accurate | CEA spoofing; arbitrary recipient injected via `sendUniversalTxFromCEA` |
-| tssAddress | EOA / multisig | Controlled by honest TSS committee | Compromised TSS receives and retains all deposited native ETH |
-| Vault (VAULT_ROLE) | `IVault` | Calls `revertUniversalTx`/`rescueFunds` correctly | Malicious vault with VAULT_ROLE drains gateway ERC-20 balances |
+| Dependency                  | Interface               | Trust Assumption                                    | Risk if Compromised                                                     |
+| --------------------------- | ----------------------- | --------------------------------------------------- | ----------------------------------------------------------------------- |
+| Chainlink ETH/USD feed      | `AggregatorV3Interface` | Returns fresh, correct ETH/USD price                | Manipulated price bypasses USD rate limits (both min and max caps)      |
+| Chainlink L2 sequencer feed | `AggregatorV3Interface` | Accurately reflects sequencer uptime                | False "UP" signal allows deposits during sequencer downtime             |
+| Uniswap V3 router           | `ISwapRouterV3`         | Executes swaps honestly within deadline             | Malicious router drains token approvals granted by the gateway          |
+| Uniswap V3 factory          | `IUniswapV3Factory`     | Returns correct pool addresses                      | Fake pool routes user swap to attacker-controlled contract              |
+| CEAFactory                  | `ICEAFactory`           | `isCEA()` and `getPushAccountForCEA()` are accurate | CEA spoofing; arbitrary recipient injected via `sendUniversalTxFromCEA` |
+| tssAddress                  | EOA / multisig          | Controlled by honest TSS committee                  | Compromised TSS receives and retains all deposited native ETH           |
+| Vault (VAULT_ROLE)          | `IVault`                | Calls `revertUniversalTx`/`rescueFunds` correctly   | Malicious vault with VAULT_ROLE drains gateway ERC-20 balances          |
 
 ### Threat Scenarios
 
@@ -117,20 +117,20 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 ### Access Control Table
 
-| Role | Constant | Assigned To | Protected Functions |
-|---|---|---|---|
-| `DEFAULT_ADMIN_ROLE` | OZ default | Admin multisig | `setGateway()`, `setTSS()`, `setCEAFactory()` |
-| `TSS_ROLE` | `keccak256("TSS_ROLE")` | TSS address | `finalizeUniversalTx()`, `revertUniversalTxToken()`, `rescueFunds()` |
-| `PAUSER_ROLE` | `keccak256("PAUSER_ROLE")` | Pauser address | `pause()`, `unpause()` |
+| Role                 | Constant                   | Assigned To    | Protected Functions                                                  |
+| -------------------- | -------------------------- | -------------- | -------------------------------------------------------------------- |
+| `DEFAULT_ADMIN_ROLE` | OZ default                 | Admin multisig | `setGateway()`, `setTSS()`, `setCEAFactory()`                        |
+| `TSS_ROLE`           | `keccak256("TSS_ROLE")`    | TSS address    | `finalizeUniversalTx()`, `revertUniversalTxToken()`, `rescueFunds()` |
+| `PAUSER_ROLE`        | `keccak256("PAUSER_ROLE")` | Pauser address | `pause()`, `unpause()`                                               |
 
 ### External Dependencies
 
-| Dependency | Interface | Trust Assumption | Risk if Compromised |
-|---|---|---|---|
-| UniversalGateway | `IUniversalGateway` | Accepts `revertUniversalTx`/`rescueFunds` calls faithfully | Malicious gateway (with `VAULT_ROLE`) can refuse refunds or drain Vault ERC-20 via those calls |
-| CEAFactory | `ICEAFactory` | `getCEAForPushAccount()` returns the correct CEA; `deployCEA()` is safe | Wrong CEA address receives user funds; malicious factory redirects all custody |
-| ICEA (per-user) | `ICEA` | `executeUniversalTx()` executes the payload faithfully and does not reenter | CEA multicall payload reenters Vault or Gateway before state is finalised |
-| TSS (off-chain) | EOA / multisig | Calls `finalizeUniversalTx` with correct params matching the user's request | Compromised TSS redirects funds to the wrong CEA or suppresses all finalisations |
+| Dependency       | Interface           | Trust Assumption                                                            | Risk if Compromised                                                                            |
+| ---------------- | ------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| UniversalGateway | `IUniversalGateway` | Accepts `revertUniversalTx`/`rescueFunds` calls faithfully                  | Malicious gateway (with `VAULT_ROLE`) can refuse refunds or drain Vault ERC-20 via those calls |
+| CEAFactory       | `ICEAFactory`       | `getCEAForPushAccount()` returns the correct CEA; `deployCEA()` is safe     | Wrong CEA address receives user funds; malicious factory redirects all custody                 |
+| ICEA (per-user)  | `ICEA`              | `executeUniversalTx()` executes the payload faithfully and does not reenter | CEA multicall payload reenters Vault or Gateway before state is finalised                      |
+| TSS (off-chain)  | EOA / multisig      | Calls `finalizeUniversalTx` with correct params matching the user's request | Compromised TSS redirects funds to the wrong CEA or suppresses all finalisations               |
 
 ### Threat Scenarios
 
@@ -162,20 +162,20 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 ### Access Control Table
 
-| Role | Constant | Assigned To | Protected Functions |
-|---|---|---|---|
-| `DEFAULT_ADMIN_ROLE` | OZ default | Admin multisig | `setVaultPC()` (requires `whenNotPaused`), role management |
-| `PAUSER_ROLE` | `keccak256("PAUSER_ROLE")` | Pauser address | `pause()`, `unpause()` |
-| *(none)* | — | Public | `sendUniversalTxOutbound()`, `rescueFundsOnSourceChain()` |
+| Role                 | Constant                   | Assigned To    | Protected Functions                                        |
+| -------------------- | -------------------------- | -------------- | ---------------------------------------------------------- |
+| `DEFAULT_ADMIN_ROLE` | OZ default                 | Admin multisig | `setVaultPC()` (requires `whenNotPaused`), role management |
+| `PAUSER_ROLE`        | `keccak256("PAUSER_ROLE")` | Pauser address | `pause()`, `unpause()`                                     |
+| *(none)*             | —                          | Public         | `sendUniversalTxOutbound()`, `rescueFundsOnSourceChain()`  |
 
 ### External Dependencies
 
-| Dependency | Interface | Trust Assumption | Risk if Compromised |
-|---|---|---|---|
-| UniversalCore | `IUniversalCore` | Returns accurate gas quotes; `swapAndBurnGas()` executes and refunds correctly | Inflated fee quotes drain excess user PC; swap failure blocks all outbound transactions |
-| VaultPC | `IVaultPC` | Accepts native PC transfers (payable) | If VaultPC reverts on receive, every outbound transaction fails |
-| PRC20 token | `IPRC20` | `burn()` destroys tokens correctly; `transferFrom()` respects approval | Burn failure with false return leaves tokens in UGPC with no on-chain recovery; fake burn enables double-spend |
-| TSS (off-chain) | Off-chain relay | Monitors `UniversalTxOutbound` event and executes on source chain | TSS ignoring an event destroys user tokens with no corresponding origin-chain release |
+| Dependency      | Interface        | Trust Assumption                                                               | Risk if Compromised                                                                                            |
+| --------------- | ---------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| UniversalCore   | `IUniversalCore` | Returns accurate gas quotes; `swapAndBurnGas()` executes and refunds correctly | Inflated fee quotes drain excess user PC; swap failure blocks all outbound transactions                        |
+| VaultPC         | `IVaultPC`       | Accepts native PC transfers (payable)                                          | If VaultPC reverts on receive, every outbound transaction fails                                                |
+| PRC20 token     | `IPRC20`         | `burn()` destroys tokens correctly; `transferFrom()` respects approval         | Burn failure with false return leaves tokens in UGPC with no on-chain recovery; fake burn enables double-spend |
+| TSS (off-chain) | Off-chain relay  | Monitors `UniversalTxOutbound` event and executes on source chain              | TSS ignoring an event destroys user tokens with no corresponding origin-chain release                          |
 
 ### Threat Scenarios
 
@@ -205,20 +205,20 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 ### Access Control Table
 
-| Role | Constant | Assigned To | Protected Functions |
-|---|---|---|---|
-| `DEFAULT_ADMIN_ROLE` | OZ default | Admin multisig | `grantRole()`, `revokeRole()`, role management |
-| `PAUSER_ROLE` | `keccak256("PAUSER_ROLE")` | Pauser address | `pause()`, `unpause()` |
-| `MANAGER_ROLE` | `keccak256("MANAGER_ROLE")` | Fee manager | `withdraw()`, `withdrawToken()` |
-| *(none)* | — | Public | `receive()` — accepts any native PC from any sender |
+| Role                 | Constant                    | Assigned To    | Protected Functions                                 |
+| -------------------- | --------------------------- | -------------- | --------------------------------------------------- |
+| `DEFAULT_ADMIN_ROLE` | OZ default                  | Admin multisig | `grantRole()`, `revokeRole()`, role management      |
+| `PAUSER_ROLE`        | `keccak256("PAUSER_ROLE")`  | Pauser address | `pause()`, `unpause()`                              |
+| `MANAGER_ROLE`       | `keccak256("MANAGER_ROLE")` | Fee manager    | `withdraw()`, `withdrawToken()`                     |
+| *(none)*             | —                           | Public         | `receive()` — accepts any native PC from any sender |
 
 ### External Dependencies
 
-| Dependency | Interface | Trust Assumption | Risk if Compromised |
-|---|---|---|---|
-| IERC20 tokens (via SafeERC20) | `SafeERC20` | `safeTransfer` executes correctly | Fee-on-transfer tokens reduce actual received amount vs expected |
-| `MANAGER_ROLE` holder | EOA / multisig | Withdraws only to legitimate recipients | Compromised manager drains all accumulated fees |
-| UniversalGatewayPC | Caller via `receive()` | Sends only legitimate protocol fee amounts | No sender check — any address can deposit native PC |
+| Dependency                    | Interface              | Trust Assumption                           | Risk if Compromised                                              |
+| ----------------------------- | ---------------------- | ------------------------------------------ | ---------------------------------------------------------------- |
+| IERC20 tokens (via SafeERC20) | `SafeERC20`            | `safeTransfer` executes correctly          | Fee-on-transfer tokens reduce actual received amount vs expected |
+| `MANAGER_ROLE` holder         | EOA / multisig         | Withdraws only to legitimate recipients    | Compromised manager drains all accumulated fees                  |
+| UniversalGatewayPC            | Caller via `receive()` | Sends only legitimate protocol fee amounts | No sender check — any address can deposit native PC              |
 
 ### Threat Scenarios
 

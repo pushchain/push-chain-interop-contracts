@@ -116,7 +116,7 @@ contract UniversalGateway is
     /// @notice MUTABLE — admin-updatable via setCEAFactory.
     address public ceaFactory;
 
-    /// @notice MUTABLE — admin-updatable via setProtocolFee.
+    /// @notice MUTABLE — admin-updatable via setInboundFee.
     uint256 public inboundFee;
 
     uint256 public totalProtocolFeesCollected;
@@ -351,7 +351,7 @@ contract UniversalGateway is
     /// @dev                   Must be <= MAX_INBOUND_FEE to prevent misconfiguration or governance
     ///                        abuse.
     /// @param fee             New protocol fee in wei
-    function setProtocolFee(uint256 fee) external onlyRole(UG_ADMIN_ROLE) {
+    function setInboundFee(uint256 fee) external onlyRole(UG_ADMIN_ROLE) {
         if (fee > MAX_INBOUND_FEE) revert Errors.InvalidInput();
         inboundFee = fee;
         emit ProtocolFeeUpdated(fee);

@@ -21,14 +21,14 @@ UniversalGateway **infers `TX_TYPE` internally** using a fixed decision matrix d
 
 ### Inference Table
 
-| TX_TYPE | hasPayload | hasFunds | fundsIsNative | hasNativeValue |
-|---------|-----------|----------|---------------|----------------|
-| **TX_TYPE.GAS** | NO | NO | not-needed | YES |
-| **TX_TYPE.GAS_AND_PAYLOAD** | YES | NO | not-needed | YES or NO *(NO = payload-only)* |
-| **TX_TYPE.FUNDS (Native)** | NO | YES | YES | YES |
-| **TX_TYPE.FUNDS (ERC-20)** | NO | YES | NO | any |
-| **TX_TYPE.FUNDS_AND_PAYLOAD (No batching)** | YES | YES | NO | any |
-| **TX_TYPE.FUNDS_AND_PAYLOAD (Native + Gas batching)** | YES | YES | YES | YES |
+| TX_TYPE                                               | hasPayload | hasFunds | fundsIsNative | hasNativeValue                  |
+| ----------------------------------------------------- | ---------- | -------- | ------------- | ------------------------------- |
+| **TX_TYPE.GAS**                                       | NO         | NO       | not-needed    | YES                             |
+| **TX_TYPE.GAS_AND_PAYLOAD**                           | YES        | NO       | not-needed    | YES or NO *(NO = payload-only)* |
+| **TX_TYPE.FUNDS (Native)**                            | NO         | YES      | YES           | YES                             |
+| **TX_TYPE.FUNDS (ERC-20)**                            | NO         | YES      | NO            | any                             |
+| **TX_TYPE.FUNDS_AND_PAYLOAD (No batching)**           | YES        | YES      | NO            | any                             |
+| **TX_TYPE.FUNDS_AND_PAYLOAD (Native + Gas batching)** | YES        | YES      | YES           | YES                             |
 
 Any other combination reverts with `Errors.InvalidInput`.
 
@@ -84,10 +84,10 @@ UniversalGateway enforces two distinct rate-limit systems, aligned with differen
 
 ### 3.1 Block Confirmation Model
 
-| Route | TX_TYPEs | Confirmations | Rationale |
-|-------|----------|---------------|-----------|
-| Instant | `GAS`, `GAS_AND_PAYLOAD` | Low | Frequent, low-value; fast UX |
-| Standard | `FUNDS`, `FUNDS_AND_PAYLOAD` | High | High-value; stronger finality required |
+| Route    | TX_TYPEs                     | Confirmations | Rationale                              |
+| -------- | ---------------------------- | ------------- | -------------------------------------- |
+| Instant  | `GAS`, `GAS_AND_PAYLOAD`     | Low           | Frequent, low-value; fast UX           |
+| Standard | `FUNDS`, `FUNDS_AND_PAYLOAD` | High          | High-value; stronger finality required |
 
 ### 3.2 Instant Route — Per-Transaction USD Caps
 
@@ -125,26 +125,26 @@ Per-token epoch-based quota:
 
 Every inbound transaction (except CEA self-calls) pays a flat protocol fee in native token before routing begins.
 
-| Property | Value |
-|----------|-------|
-| State variable | `inboundFee` (uint256, wei). Default: 0 (disabled). |
-| Admin setter | `setProtocolFee(uint256)` — `DEFAULT_ADMIN_ROLE` only. |
-| Accumulator | `totalProtocolFeesCollected` — running total, incremented per-tx. |
-| Destination | Forwarded to `tssAddress` via low-level call. |
-| CEA path (`fromCEA=true`) | **Skipped** — fee is already paid on Push Chain. |
-| Insufficient fee | Reverts with `Errors.InsufficientProtocolFee()`. |
+| Property                  | Value                                                             |
+| ------------------------- | ----------------------------------------------------------------- |
+| State variable            | `inboundFee` (uint256, wei). Default: 0 (disabled).               |
+| Admin setter              | `setInboundFee(uint256)` — `DEFAULT_ADMIN_ROLE` only.             |
+| Accumulator               | `totalProtocolFeesCollected` — running total, incremented per-tx. |
+| Destination               | Forwarded to `tssAddress` via low-level call.                     |
+| CEA path (`fromCEA=true`) | **Skipped** — fee is already paid on Push Chain.                  |
+| Insufficient fee          | Reverts with `Errors.InsufficientProtocolFee()`.                  |
 
 **Extraction**: `_collectProtocolFee(nativeValue)` is called inside `_routeUniversalTx` **before** any routing logic. All downstream functions receive the post-fee `nativeValue`.
 
 **Fee mechanics (additive model)**: Users send `msg.value = desiredAmount + inboundFee`. After extraction, `nativeValue = msg.value - inboundFee`.
 
-| TX_TYPE | `msg.value` required | Post-fee `nativeValue` |
-|---------|---------------------|------------------------|
-| `GAS` | `gasTopUp + inboundFee` | `gasTopUp` |
-| `GAS_AND_PAYLOAD` (with gas) | `gasAmount + inboundFee` | `gasAmount` |
-| `GAS_AND_PAYLOAD` (payload-only) | `inboundFee` (or 0 if disabled) | 0 |
-| `FUNDS` (native) | `req.amount + inboundFee` | `req.amount` |
-| `FUNDS` (ERC-20, no gas batching) | `inboundFee` (or 0 if disabled) | 0 |
-| `FUNDS` (ERC-20, gas batching) | `gasTopUp + inboundFee` | `gasTopUp` |
+| TX_TYPE                           | `msg.value` required            | Post-fee `nativeValue` |
+| --------------------------------- | ------------------------------- | ---------------------- |
+| `GAS`                             | `gasTopUp + inboundFee`         | `gasTopUp`             |
+| `GAS_AND_PAYLOAD` (with gas)      | `gasAmount + inboundFee`        | `gasAmount`            |
+| `GAS_AND_PAYLOAD` (payload-only)  | `inboundFee` (or 0 if disabled) | 0                      |
+| `FUNDS` (native)                  | `req.amount + inboundFee`       | `req.amount`           |
+| `FUNDS` (ERC-20, no gas batching) | `inboundFee` (or 0 if disabled) | 0                      |
+| `FUNDS` (ERC-20, gas batching)    | `gasTopUp + inboundFee`         | `gasTopUp`             |
 
 > See [5_InboundTx_Flows.md](./5_InboundTx_Flows.md) for full flow diagrams showing fee extraction in context.

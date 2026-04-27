@@ -205,5 +205,5 @@ interface IUniversalGatewayV0 {
 
     /// @notice            Set the flat protocol fee (in wei). Set to 0 to disable.
     /// @param fee         New protocol fee in wei
-    function setProtocolFee(uint256 fee) external;
+    function setInboundFee(uint256 fee) external;
 }

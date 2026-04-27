@@ -419,14 +419,14 @@ contract GatewayAdminSettersTest is BaseTest {
 
     function testSetProtocolFee_AcceptsZero() public {
         vm.prank(admin);
-        gateway.setProtocolFee(0);
+        gateway.setInboundFee(0);
         assertEq(gateway.inboundFee(), 0);
     }
 
     function testSetProtocolFee_AcceptsMaxExact() public {
         uint256 max = gateway.MAX_INBOUND_FEE();
         vm.prank(admin);
-        gateway.setProtocolFee(max);
+        gateway.setInboundFee(max);
         assertEq(gateway.inboundFee(), max);
     }
 
@@ -434,7 +434,7 @@ contract GatewayAdminSettersTest is BaseTest {
         uint256 max = gateway.MAX_INBOUND_FEE();
         vm.prank(admin);
         vm.expectRevert(Errors.InvalidInput.selector);
-        gateway.setProtocolFee(max + 1);
+        gateway.setInboundFee(max + 1);
     }
 
     function testSetL2SequencerFeed() public {

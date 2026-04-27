@@ -245,7 +245,7 @@ contract UniversalGatewayV0 is
 
     /// @notice         Set the flat protocol fee (in wei). Set to 0 to disable.
     /// @param fee      New protocol fee in wei
-    function setProtocolFee(uint256 fee) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setInboundFee(uint256 fee) external onlyRole(DEFAULT_ADMIN_ROLE) {
         INBOUND_FEE = fee;
         emit ProtocolFeeUpdated(fee);
     }

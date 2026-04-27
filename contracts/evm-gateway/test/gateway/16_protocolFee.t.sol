@@ -158,7 +158,7 @@ contract ProtocolFeeTest is BaseTest {
         emit ProtocolFeeUpdated(PROTOCOL_FEE_WEI);
 
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         assertEq(gw.inboundFee(), PROTOCOL_FEE_WEI);
     }
@@ -167,16 +167,16 @@ contract ProtocolFeeTest is BaseTest {
     function testSetProtocolFee_NonAdmin_Reverts() public {
         vm.expectRevert();
         vm.prank(user1);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
     }
 
     /// @notice Setting fee to 0 disables it (accumulator unaffected)
     function testSetProtocolFee_Zero_Disables() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         vm.prank(admin);
-        gw.setProtocolFee(0);
+        gw.setInboundFee(0);
 
         assertEq(gw.inboundFee(), 0);
         // With fee=0, GAS tx with any native value succeeds without fee deduction
@@ -193,7 +193,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice GAS tx: fee deducted, TSS receives deposit + fee, accumulator increments
     function testGAS_WithFee_TSSReceivesFee() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         uint256 totalSend = GAS_AMOUNT + PROTOCOL_FEE_WEI;
         uint256 tssBalBefore = tss.balance;
@@ -210,7 +210,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice GAS tx: msg.value < inboundFee reverts with InsufficientProtocolFee
     function testGAS_InsufficientFee_Reverts() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         UniversalTxRequest memory req = _buildReq(address(0), 0, bytes(""));
         vm.expectRevert(Errors.InsufficientProtocolFee.selector);
@@ -221,7 +221,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice GAS tx event emits gasAmount (post-fee) not total msg.value
     function testGAS_EventAmountIsPostFee() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         uint256 totalSend = GAS_AMOUNT + PROTOCOL_FEE_WEI;
 
@@ -242,7 +242,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice Payload-only GAS_AND_PAYLOAD: user must supply exactly inboundFee
     function testGAS_AND_PAYLOAD_PayloadOnly_RequiresFee() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         UniversalTxRequest memory req = _buildReq(address(0), 0, _defaultPayload());
 
@@ -255,7 +255,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice Payload-only with insufficient native reverts
     function testGAS_AND_PAYLOAD_PayloadOnly_InsufficientFee_Reverts() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         UniversalTxRequest memory req = _buildReq(address(0), 0, _defaultPayload());
 
@@ -267,7 +267,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice Payload-only: event emits amount=0 (nothing bridged, only fee collected)
     function testGAS_AND_PAYLOAD_PayloadOnly_EventAmountIsZero() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         bytes memory payload = _defaultPayload();
 
@@ -288,7 +288,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice FUNDS native: user sends req.amount + fee, event emits req.amount (bridge amount unchanged)
     function testFUNDS_Native_AmountUnchanged() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         uint256 tssBalBefore = tss.balance;
 
@@ -312,7 +312,7 @@ contract ProtocolFeeTest is BaseTest {
     ///      the Case 1.1 equality check (adjustedNative = req.amount - fee != req.amount).
     function testFUNDS_Native_WrongMsgValue_Reverts() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         // Send req.amount only (forgot the fee): passes fee guard but fails amount check
         UniversalTxRequest memory req = _buildReq(address(0), FUNDS_AMOUNT, bytes(""));
@@ -324,7 +324,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice FUNDS native: exact mismatch (msg.value - fee != req.amount) reverts with InvalidAmount
     function testFUNDS_Native_AmountMismatch_Reverts() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         // req.amount != msg.value - fee
         UniversalTxRequest memory req = _buildReq(address(0), FUNDS_AMOUNT, bytes(""));
@@ -340,7 +340,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice ERC20 FUNDS: requires msg.value == inboundFee alongside ERC20 deposit
     function testFUNDS_ERC20_RequiresNativeFee() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         uint256 tssBalBefore = tss.balance;
         uint256 erc20Amount = 100 ether;
@@ -357,7 +357,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice ERC20 FUNDS: msg.value > inboundFee routes excess as gas top-up
     function testFUNDS_ERC20_ExcessNative_RoutesAsGas() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         uint256 erc20Amount = 100 ether;
         uint256 extraNative = 0.003 ether; // ~$6 at $2000/ETH, within $1-$10 USD cap
@@ -376,7 +376,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice ERC20 FUNDS: msg.value = 0 reverts when fee > 0
     function testFUNDS_ERC20_ZeroNative_WithFeeEnabled_Reverts() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         uint256 erc20Amount = 100 ether;
         UniversalTxRequest memory req = _buildReq(address(tokenA), erc20Amount, bytes(""));
@@ -393,7 +393,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice totalProtocolFeesCollected accumulates across multiple transactions
     function testProtocolFeeAccumulator_MultipleTransactions() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         uint256 txCount = 3;
 
@@ -419,7 +419,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice CEA GAS tx: no fee deducted, full msg.value forwarded
     function testCEAPath_NoFee_GAS() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         uint256 tssBalBefore = tss.balance;
 
@@ -434,7 +434,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice CEA native FUNDS tx: no fee deducted, full amount bridged
     function testCEAPath_NoFee_FUNDS_Native() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         uint256 tssBalBefore = tss.balance;
 
@@ -449,7 +449,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice CEA ERC20 FUNDS tx: no native fee required
     function testCEAPath_NoFee_FUNDS_ERC20() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         uint256 erc20Amount = 100 ether;
         UniversalTxRequest memory req = _buildCEAReq(address(tokenA), erc20Amount, bytes(""));
@@ -463,7 +463,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice Normal tx increments accumulator; CEA tx leaves it unchanged
     function testCEAPath_NoFee_AccumulatorUnchanged() public {
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         // Normal tx: accumulator increments
         UniversalTxRequest memory normalReq = _buildReq(address(0), 0, bytes(""));
@@ -512,7 +512,7 @@ contract ProtocolFeeTest is BaseTest {
     function testFeeForward_TSSRejectsETH_Reverts() public {
         // Set fee on gw
         vm.prank(admin);
-        gw.setProtocolFee(PROTOCOL_FEE_WEI);
+        gw.setInboundFee(PROTOCOL_FEE_WEI);
 
         // Replace TSS with a contract that rejects ETH
         ProtocolFeeEthRejecter rejecter = new ProtocolFeeEthRejecter();
