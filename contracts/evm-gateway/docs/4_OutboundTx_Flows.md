@@ -885,7 +885,7 @@ after TSS has already taken custody.
 **Call chain**:
 ```
 TSS → Vault.revertUniversalTxToken(subTxId, uSubTxId, USDC, amount, revertInstruction)
-    → Vault: validate token support + balance, safeTransfer(gateway, amount)
+    → Vault: validate amount + balance, safeTransfer(gateway, amount)
     → gateway.revertUniversalTxToken(...) → safeTransfer(revertRecipient, amount)
     → emit RevertUniversalTx
 ```
@@ -900,7 +900,7 @@ sequenceDiagram
     participant R as revertRecipient
 
     TSS->>V: revertUniversalTxToken(subTxId, uSubTxId, USDC, amount, {revertRecipient})
-    V->>V: validate: token supported, balance sufficient
+    V->>V: validate: amount > 0, balance sufficient
     V->>USDC: safeTransfer(gateway, amount)
     V->>GW: revertUniversalTxToken(subTxId, uSubTxId, USDC, amount, revertInstruction)
     GW->>USDC: safeTransfer(revertRecipient, amount)

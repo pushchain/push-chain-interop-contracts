@@ -63,7 +63,7 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 ## 4. UniversalGateway
 
-**What this contract does:** Inbound entry point on external EVM chains. Accepts native ETH and ERC-20 tokens from users, enforces a dual-layer rate limit system (per-block USD caps for instant routes; per-token epoch limits for standard routes), forwards native ETH deposits directly to the TSS address, coordinates ERC-20 custody with Vault, and handles refund and rescue flows back to users. It also serves as the canonical token support registry consulted by Vault.
+**What this contract does:** Inbound entry point on external EVM chains. Accepts native ETH and ERC-20 tokens from users, enforces a dual-layer rate limit system (per-block USD caps for instant routes; per-token epoch limits for standard routes), forwards native ETH deposits directly to the TSS address, coordinates ERC-20 custody with Vault, and handles refund and rescue flows back to users. It maintains a token support registry used for inbound deposit validation.
 
 ### Access Control Table
 
@@ -127,7 +127,7 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 | Dependency | Interface | Trust Assumption | Risk if Compromised |
 |---|---|---|---|
-| UniversalGateway | `IUniversalGateway` | `isSupportedToken()` is correct; accepts `revertUniversalTx`/`rescueFunds` calls | Malicious gateway (with `VAULT_ROLE`) can refuse refunds or drain Vault ERC-20 via those calls |
+| UniversalGateway | `IUniversalGateway` | Accepts `revertUniversalTx`/`rescueFunds` calls faithfully | Malicious gateway (with `VAULT_ROLE`) can refuse refunds or drain Vault ERC-20 via those calls |
 | CEAFactory | `ICEAFactory` | `getCEAForPushAccount()` returns the correct CEA; `deployCEA()` is safe | Wrong CEA address receives user funds; malicious factory redirects all custody |
 | ICEA (per-user) | `ICEA` | `executeUniversalTx()` executes the payload faithfully and does not reenter | CEA multicall payload reenters Vault or Gateway before state is finalised |
 | TSS (off-chain) | EOA / multisig | Calls `finalizeUniversalTx` with correct params matching the user's request | Compromised TSS redirects funds to the wrong CEA or suppresses all finalisations |
@@ -142,7 +142,7 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 4. **Gateway address replaced with malicious contract** — Admin updates `gateway` to an attacker-controlled contract. Vault calls `gateway.revertUniversalTx()` or `gateway.rescueFunds()`, transferring tokens to the fake gateway which retains them. Mitigated by: requires `DEFAULT_ADMIN_ROLE`. Residual risk: no timelock.
 
-5. **Token delist blocking revert path** — Admin removes a token from the Gateway's supported list after a user has deposited but before TSS processes the revert. `_enforceSupported()` in `revertUniversalTxToken()` and `rescueFunds()` reverts, permanently blocking TSS from returning user funds for that token. Mitigation: operational process must verify no pending reverts exist before delisting a token.
+5. **[RESOLVED] Token delist blocking revert path** — Previously, Vault's `revertUniversalTx()` and `rescueFunds()` called `_enforceSupported()`, which would revert if the token had been delisted. This has been fixed: Vault no longer performs token support checks on revert/rescue paths, so TSS can return funds for any token regardless of its support status.
 
 6. **Insufficient Vault balance on finalisation** — The Vault holds fewer tokens than `amount` specified in `finalizeUniversalTx()` (e.g. due to accounting error or manual sweep). The `balanceOf >= amount` check reverts, blocking all finalisations for that token until balance is restored. TSS must ensure the Vault is funded before submitting finalisation transactions.
 
@@ -248,7 +248,7 @@ These scenarios span multiple contracts and cannot be mitigated by any single co
 
 3. **Event-driven off-chain / on-chain synchronisation gap** — The entire system depends on TSS observing on-chain events and executing the corresponding on-chain action on the destination chain. A sustained network partition, TSS downtime, censored block range, or RPC failure can leave transactions in permanent limbo: ERC-20 tokens locked in Vault (inbound path) or PRC20 tokens burned on Push Chain (outbound path) with no on-chain timeout or dispute resolution mechanism. There is no on-chain timeout after which a user can self-recover.
 
-4. **Token delist race condition** — If admin removes a token from Gateway's supported list while a user's inbound transaction is mid-flight (deposited at Gateway, not yet finalised at Vault), both the Vault's `_enforceSupported()` and Gateway's `rescueFunds()` will revert on that token, permanently trapping user funds with no on-chain recovery path. Operational procedure must guarantee no pending inbound transactions exist before any token is delisted.
+4. **[RESOLVED] Token delist race condition** — Previously, if admin removed a token from Gateway's supported list while a user's inbound transaction was mid-flight, Vault's `_enforceSupported()` would revert on revert/rescue calls, trapping user funds. This has been fixed: Vault no longer performs token support checks on outbound paths (finalise, revert, rescue), so delisting a token only blocks new inbound deposits — it never blocks fund recovery.
 
 5. **Upgradeable proxy initialiser attack** — If any implementation contract is deployed without immediately calling `_disableInitializers()` in its constructor (or without being initialised via the proxy), an attacker can call `initialize()` directly on the bare implementation contract and claim admin control of the implementation. This does not affect the proxy's storage but could be used to emit confusing events or to execute delegatecall attacks if the implementation's admin then upgrades the proxy. All implementation constructors must call `_disableInitializers()`.
 

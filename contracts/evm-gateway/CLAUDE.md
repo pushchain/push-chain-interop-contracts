@@ -184,10 +184,6 @@ function revertUniversalTxToken(
   - Native flow: `token == address(0)` → `msg.value == amount`
   - ERC20 flow: `token != address(0)` → `msg.value == 0`
 
-**Token Support Enforcement** (`_enforceSupported`):
-- All token operations validated against `UniversalGateway.isSupportedToken(token)`
-- Single source of truth for supported tokens across Vault and Gateway
-
 **Balance Checks**:
 - ERC20 operations verify `IERC20(token).balanceOf(address(this)) >= amount`
 - Prevents overdraft or insufficient balance reverts
