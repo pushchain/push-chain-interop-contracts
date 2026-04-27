@@ -82,7 +82,7 @@ contract ProtocolFeeTest is BaseTest {
         ceaFactory = new MockCEAFactory();
         ceaFactory.setVault(address(this));
         vm.prank(admin);
-        gw.setCEAFactory(address(ceaFactory));
+        gw.updateCEAFactory(address(ceaFactory));
 
         mappedUEA = address(0xBEEF);
         address ceaAddr = ceaFactory.deployCEA(mappedUEA);

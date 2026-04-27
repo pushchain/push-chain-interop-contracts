@@ -45,20 +45,23 @@ import { ISwapRouter as ISwapRouterV3 } from "@uniswap/v3-periphery/contracts/in
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import { AccessControlUpgradeable } from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import { AccessControlDefaultAdminRulesUpgradeable } from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
 import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 contract UniversalGateway is
     PausableUpgradeable,
     ReentrancyGuardUpgradeable,
-    AccessControlUpgradeable,
+    AccessControlDefaultAdminRulesUpgradeable,
     IUniversalGateway
 {
     using SafeERC20 for IERC20;
 
-    bytes32 public constant VAULT_ROLE = keccak256("VAULT_ROLE");
+    bytes32 public constant ROLE_MANAGER_ROLE = keccak256("ROLE_MANAGER_ROLE");
+    bytes32 public constant UG_ADMIN_ROLE = keccak256("UG_ADMIN_ROLE");
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    bytes32 public constant VAULT_ROLE = keccak256("VAULT_ROLE");
 
     /// @notice Minimum permitted value for chainlinkStalePeriod. Prevents admin from disabling
     ///         oracle freshness validation by setting the period to 0 or an absurdly small value.
@@ -148,12 +151,18 @@ contract UniversalGateway is
             revert Errors.ZeroAddress();
         }
 
-        __Context_init();
         __Pausable_init();
         __ReentrancyGuard_init();
-        __AccessControl_init();
+        __AccessControlDefaultAdminRules_init(1 days, admin);
 
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _setRoleAdmin(UG_ADMIN_ROLE, ROLE_MANAGER_ROLE);
+        _setRoleAdmin(OPERATOR_ROLE, ROLE_MANAGER_ROLE);
+        _setRoleAdmin(PAUSER_ROLE, ROLE_MANAGER_ROLE);
+        _setRoleAdmin(VAULT_ROLE, ROLE_MANAGER_ROLE);
+
+        _grantRole(ROLE_MANAGER_ROLE, admin);
+        _grantRole(UG_ADMIN_ROLE, admin);
+        _grantRole(OPERATOR_ROLE, admin);
         _grantRole(PAUSER_ROLE, pauser);
         _grantRole(VAULT_ROLE, vaultAddress);
 
@@ -185,7 +194,7 @@ contract UniversalGateway is
         _pause();
     }
 
-    function unpause() external whenPaused onlyRole(PAUSER_ROLE) {
+    function unpause() external whenPaused onlyRole(OPERATOR_ROLE) {
         _unpause();
     }
 
@@ -199,14 +208,14 @@ contract UniversalGateway is
     ///                        recipient). No `TSS_ROLE` role is managed here; TSS role
     ///                        enforcement for outbound operations lives in the Vault contract.
     /// @param newTSS          New TSS address.
-    function updateTSS(address newTSS) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateTSS(address newTSS) external onlyRole(OPERATOR_ROLE) {
         if (newTSS == address(0)) revert Errors.ZeroAddress();
         TSS_ADDRESS = newTSS;
     }
 
     /// @notice                Allows the admin to update the Vault address
     /// @param newVault        New Vault address
-    function updateVault(address newVault) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateVault(address newVault) external onlyRole(OPERATOR_ROLE) {
         if (newVault == address(0)) revert Errors.ZeroAddress();
         address old = VAULT;
 
@@ -221,7 +230,7 @@ contract UniversalGateway is
     /// @notice                Allows the admin to set the USD cap ranges
     /// @param minCapUsd       Minimum USD cap
     /// @param maxCapUsd       Maximum USD cap
-    function setCapsUSD(uint256 minCapUsd, uint256 maxCapUsd) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function setCapsUSD(uint256 minCapUsd, uint256 maxCapUsd) external onlyRole(UG_ADMIN_ROLE) whenNotPaused {
         if (minCapUsd > maxCapUsd) revert Errors.InvalidCapRange();
 
         MIN_CAP_UNIVERSAL_TX_USD = minCapUsd;
@@ -231,13 +240,13 @@ contract UniversalGateway is
 
     /// @notice                Set the per-block USD cap for GAS routes (1e18 = $1). 0 disables.
     /// @param cap1e18         Per-block USD cap scaled to 1e18
-    function setBlockUsdCap(uint256 cap1e18) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function setBlockUsdCap(uint256 cap1e18) external onlyRole(UG_ADMIN_ROLE) whenNotPaused {
         BLOCK_USD_CAP = cap1e18;
     }
 
     /// @notice                Set the default swap deadline window (used when caller passes deadline = 0)
     /// @param deadlineSec     Number of seconds to add to block.timestamp
-    function setDefaultSwapDeadline(uint256 deadlineSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function setDefaultSwapDeadline(uint256 deadlineSec) external onlyRole(UG_ADMIN_ROLE) whenNotPaused {
         if (deadlineSec == 0) revert Errors.InvalidAmount();
         defaultSwapDeadlineSec = deadlineSec;
     }
@@ -247,7 +256,7 @@ contract UniversalGateway is
     ///                        plural name implied multi-router support that does not exist.
     /// @param factory         New Uniswap V3 factory address
     /// @param router          New Uniswap V3 router address
-    function setUniswapV3Config(address factory, address router) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function updateUniswapV3Config(address factory, address router) external onlyRole(OPERATOR_ROLE) whenNotPaused {
         if (factory == address(0) || router == address(0)) revert Errors.ZeroAddress();
         address oldFactory = address(uniV3Factory);
         address oldRouter = address(uniV3Router);
@@ -261,7 +270,7 @@ contract UniversalGateway is
     /// @param thresholds      Limit thresholds for the tokens
     function setTokenLimitThresholds(address[] calldata tokens, uint256[] calldata thresholds)
         external
-        onlyRole(DEFAULT_ADMIN_ROLE)
+        onlyRole(UG_ADMIN_ROLE)
     {
         if (tokens.length != thresholds.length) revert Errors.InvalidInput();
         for (uint256 i = 0; i < tokens.length; i++) {
@@ -280,7 +289,7 @@ contract UniversalGateway is
     ///                        value records the old epoch index at the moment of the update so the
     ///                        reset is auditable on-chain.
     /// @param newDurationSec  New epoch duration in seconds
-    function updateEpochDuration(uint256 newDurationSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function updateEpochDuration(uint256 newDurationSec) external onlyRole(UG_ADMIN_ROLE) whenNotPaused {
         if (newDurationSec == 0) revert Errors.InvalidInput();
         uint256 old = epochDurationSec;
         uint64 epochIndexAtChange = uint64(block.timestamp / old);
@@ -292,13 +301,13 @@ contract UniversalGateway is
     /// @param a               First fee tier
     /// @param b               Second fee tier
     /// @param c               Third fee tier
-    function setV3FeeOrder(uint24 a, uint24 b, uint24 c) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function setV3FeeOrder(uint24 a, uint24 b, uint24 c) external onlyRole(UG_ADMIN_ROLE) whenNotPaused {
         v3FeeOrder = [a, b, c];
     }
 
     /// @notice                Set the Chainlink ETH/USD feed (and cache its decimals)
     /// @param feed            Chainlink ETH/USD feed address
-    function setEthUsdFeed(address feed) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function setEthUsdFeed(address feed) external onlyRole(UG_ADMIN_ROLE) whenNotPaused {
         if (feed == address(0)) revert Errors.ZeroAddress();
         AggregatorV3Interface f = AggregatorV3Interface(feed);
         // Will revert if not a contract or not a valid aggregator when decimals() is called by non-aggregator contracts.
@@ -311,7 +320,7 @@ contract UniversalGateway is
     /// @dev                   Must be >= MIN_CHAINLINK_STALE_PERIOD to prevent accidental or
     ///                        intentional disabling of freshness validation.
     /// @param stalePeriodSec  latestRoundData().updatedAt must be within this many seconds
-    function setChainlinkStalePeriod(uint256 stalePeriodSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function setChainlinkStalePeriod(uint256 stalePeriodSec) external onlyRole(UG_ADMIN_ROLE) whenNotPaused {
         if (stalePeriodSec < MIN_CHAINLINK_STALE_PERIOD) revert Errors.InvalidInput();
         chainlinkStalePeriod = stalePeriodSec;
     }
@@ -319,19 +328,19 @@ contract UniversalGateway is
     /// @notice                Set (or clear) the Chainlink L2 sequencer uptime feed for rollups
     /// @dev                   Set to address(0) on L1s / chains without a sequencer feed.
     /// @param feed            Chainlink L2 sequencer uptime feed address
-    function setL2SequencerFeed(address feed) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function setL2SequencerFeed(address feed) external onlyRole(UG_ADMIN_ROLE) whenNotPaused {
         l2SequencerFeed = AggregatorV3Interface(feed);
     }
 
     /// @notice                Configure the grace window after sequencer comes back up
     /// @param gracePeriodSec  If > 0, require block.timestamp - sequencer.updatedAt > gracePeriodSec
-    function setL2SequencerGracePeriod(uint256 gracePeriodSec) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function setL2SequencerGracePeriod(uint256 gracePeriodSec) external onlyRole(UG_ADMIN_ROLE) whenNotPaused {
         l2SequencerGracePeriodSec = gracePeriodSec;
     }
 
     /// @notice                Set the CEAFactory address for CEA identity validation
     /// @param newFactory      New CEAFactory address
-    function setCEAFactory(address newFactory) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateCEAFactory(address newFactory) external onlyRole(OPERATOR_ROLE) {
         if (newFactory == address(0)) revert Errors.ZeroAddress();
         CEA_FACTORY = newFactory;
     }
@@ -340,7 +349,7 @@ contract UniversalGateway is
     /// @dev                   Must be <= MAX_INBOUND_FEE to prevent misconfiguration or governance
     ///                        abuse.
     /// @param fee             New protocol fee in wei
-    function setProtocolFee(uint256 fee) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setProtocolFee(uint256 fee) external onlyRole(UG_ADMIN_ROLE) {
         if (fee > MAX_INBOUND_FEE) revert Errors.InvalidInput();
         INBOUND_FEE = fee;
         emit ProtocolFeeUpdated(fee);

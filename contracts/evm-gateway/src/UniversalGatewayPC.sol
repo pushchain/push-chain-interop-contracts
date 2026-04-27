@@ -21,18 +21,20 @@ import { UniversalOutboundTxRequest } from "./libraries/TypesUGPC.sol";
 
 
 import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import { AccessControlUpgradeable } from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import { AccessControlDefaultAdminRulesUpgradeable } from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
 import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 contract UniversalGatewayPC is
-    AccessControlUpgradeable,
+    AccessControlDefaultAdminRulesUpgradeable,
     ReentrancyGuardUpgradeable,
     PausableUpgradeable,
     IUniversalGatewayPC
 {
+    bytes32 public constant ROLE_MANAGER_ROLE = keccak256("ROLE_MANAGER_ROLE");
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
-    /// @notice MUTABLE — admin-updatable via setUniversalCore.
+    /// @notice MUTABLE — admin-updatable via updateUniversalCore.
     address public UNIVERSAL_CORE;
     /// @notice MUTABLE — admin-updatable via setVaultPC.
     IVaultPC public VAULT_PC;
@@ -55,11 +57,15 @@ contract UniversalGatewayPC is
             revert Errors.ZeroAddress();
         }
 
-        __AccessControl_init();
         __ReentrancyGuard_init();
         __Pausable_init();
+        __AccessControlDefaultAdminRules_init(1 days, admin);
 
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _setRoleAdmin(OPERATOR_ROLE, ROLE_MANAGER_ROLE);
+        _setRoleAdmin(PAUSER_ROLE, ROLE_MANAGER_ROLE);
+
+        _grantRole(ROLE_MANAGER_ROLE, admin);
+        _grantRole(OPERATOR_ROLE, admin);
         _grantRole(PAUSER_ROLE, pauser);
 
         UNIVERSAL_CORE = universalCore;
@@ -70,13 +76,13 @@ contract UniversalGatewayPC is
         _pause();
     }
 
-    function unpause() external onlyRole(PAUSER_ROLE) whenPaused {
+    function unpause() external onlyRole(OPERATOR_ROLE) whenPaused {
         _unpause();
     }
 
     /// @notice                Sets the VaultPC address.
     /// @param vaultPC         Address of the new VaultPC.
-    function setVaultPC(address vaultPC) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function updateVaultPC(address vaultPC) external onlyRole(OPERATOR_ROLE) whenNotPaused {
         if (vaultPC == address(0)) revert Errors.ZeroAddress();
         address oldVaultPC = address(VAULT_PC);
         VAULT_PC = IVaultPC(vaultPC);
@@ -87,7 +93,7 @@ contract UniversalGatewayPC is
     /// @dev                   Allows admin to re-point the UniversalCore dependency without
     ///                        requiring a proxy upgrade. Mirrors setVaultPC.
     /// @param universalCore   Address of the new UniversalCore.
-    function setUniversalCore(address universalCore) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+    function updateUniversalCore(address universalCore) external onlyRole(OPERATOR_ROLE) whenNotPaused {
         if (universalCore == address(0)) revert Errors.ZeroAddress();
         address oldUniversalCore = UNIVERSAL_CORE;
         UNIVERSAL_CORE = universalCore;

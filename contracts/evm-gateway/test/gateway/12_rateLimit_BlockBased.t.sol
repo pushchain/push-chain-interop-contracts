@@ -61,7 +61,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
         gateway.setTokenLimitThresholds(tokens, thresholds);
 
         // Configure gateway with mock WETH and dummy routers
-        gateway.setUniswapV3Config(address(0x1), address(0x2));
+        gateway.updateUniswapV3Config(address(0x1), address(0x2));
         vm.stopPrank();
     }
 
@@ -451,8 +451,8 @@ contract GatewayBlockRateLimitTest is BaseTest {
         vm.expectRevert("EnforcedPause()");
         gateway.sendUniversalTx{ value: ETH_FOR_5_USD }(_buildGasTxRequest());
 
-        // Unpause
-        vm.prank(pauser);
+        // Unpause (requires OPERATOR_ROLE, held by admin at bootstrap)
+        vm.prank(admin);
         gateway.unpause();
 
         // Should be able to use remaining $5 of cap

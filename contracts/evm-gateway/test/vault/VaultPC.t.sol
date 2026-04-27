@@ -83,7 +83,7 @@ contract VaultPCTest is Test {
     function test_Initialization_RolesAssigned() public view {
         assertTrue(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), admin));
         assertTrue(vault.hasRole(vault.PAUSER_ROLE(), pauser));
-        assertTrue(vault.hasRole(vault.MANAGER_ROLE(), fundManager));
+        assertTrue(vault.hasRole(vault.VPC_ADMIN_ROLE(), fundManager));
     }
 
     function test_Initialization_StartsUnpaused() public view {
@@ -127,11 +127,11 @@ contract VaultPCTest is Test {
         vault.pause();
     }
 
-    function test_Unpause_OnlyPauserCanUnpause() public {
+    function test_Unpause_OnlyOperatorCanUnpause() public {
         vm.prank(pauser);
         vault.pause();
 
-        vm.prank(pauser);
+        vm.prank(admin);
         vault.unpause();
         assertFalse(vault.paused());
     }
@@ -180,7 +180,7 @@ contract VaultPCTest is Test {
     }
 
     function test_Unpause_DoubleUnpauseReverts() public {
-        vm.prank(pauser);
+        vm.prank(admin);
         vm.expectRevert();
         vault.unpause();
     }
@@ -189,7 +189,7 @@ contract VaultPCTest is Test {
         vm.prank(pauser);
         vault.pause();
 
-        vm.prank(pauser);
+        vm.prank(admin);
         vault.unpause();
 
         vm.prank(fundManager);
@@ -451,7 +451,7 @@ contract VaultPCTest is Test {
         vm.prank(pauser);
         vault.pause();
 
-        vm.prank(pauser);
+        vm.prank(admin);
         vault.unpause();
 
         vm.prank(fundManager);

@@ -46,6 +46,10 @@ abstract contract BaseTest is Test {
     address public attacker;
     address public recipient;
 
+    address public roleManager;
+    address public ugAdmin;
+    address public operator;
+
     // =========================
     //        CONTRACTS
     // =========================
@@ -127,6 +131,10 @@ abstract contract BaseTest is Test {
         vm.label(user4, "user4");
         vm.label(attacker, "attacker");
         vm.label(recipient, "recipient");
+
+        roleManager = admin;
+        ugAdmin = admin;
+        operator = admin;
     }
 
     function _fundActors() internal {
@@ -470,7 +478,7 @@ abstract contract BaseTest is Test {
 
     function setUniswapV3Config(address factory, address router) internal {
         vm.prank(admin);
-        gateway.setUniswapV3Config(factory, router);
+        gateway.updateUniswapV3Config(factory, router);
     }
 
     function setCaps(uint256 minUsd1e18, uint256 maxUsd1e18) internal {

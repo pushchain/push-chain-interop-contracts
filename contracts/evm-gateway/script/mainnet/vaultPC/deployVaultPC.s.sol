@@ -153,7 +153,7 @@ contract DeployVaultPC is Script, VaultPCConfig {
         // Verify roles
         require(vaultPC.hasRole(vaultPC.DEFAULT_ADMIN_ROLE(), admin), "Admin role not set");
         require(vaultPC.hasRole(vaultPC.PAUSER_ROLE(), pauser), "Pauser role not set");
-        require(vaultPC.hasRole(vaultPC.MANAGER_ROLE(), fundManager), "Manager role not set");
+        require(vaultPC.hasRole(vaultPC.VPC_ADMIN_ROLE(), fundManager), "VPC Admin role not set");
 
         console.log("OK: All roles assigned correctly");
         console.log("");

@@ -61,7 +61,7 @@ contract OracleTest is BaseTest {
 
         // Set Uniswap V3 addresses
         vm.prank(admin);
-        gateway.setUniswapV3Config(0x1F98431c8aD98523631AE4a59f267346ea31F984, 0xE592427A0AEce92De3Edee1F18E0157C05861564);
+        gateway.updateUniswapV3Config(0x1F98431c8aD98523631AE4a59f267346ea31F984, 0xE592427A0AEce92De3Edee1F18E0157C05861564);
         console.log("Uniswap V3 addresses set");
         console.log("========================");
     }

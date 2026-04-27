@@ -186,7 +186,7 @@ contract DeployGateway is Script, GatewayConfig {
         // Set CEA Factory if available
         if (cfg.ceaFactory != address(0)) {
             console.log("Setting CEA Factory:", cfg.ceaFactory);
-            gateway.setCEAFactory(cfg.ceaFactory);
+            gateway.updateCEAFactory(cfg.ceaFactory);
         }
 
         console.log("Configuration complete");

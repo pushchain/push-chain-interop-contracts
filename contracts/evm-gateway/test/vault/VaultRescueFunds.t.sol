@@ -93,7 +93,7 @@ contract VaultRescueFundsTest is Test {
 
         // Update vault to point to the real gateway
         vm.prank(admin);
-        vault.setGateway(address(gateway));
+        vault.updateGateway(address(gateway));
 
         // Deploy tokens
         token = new MockERC20("Test Token", "TST", 18, 1_000_000e18);

@@ -312,11 +312,11 @@ contract VaultTest is Test {
         vault.pause();
     }
 
-    function test_Unpause_OnlyPauserCanUnpause() public {
+    function test_Unpause_OnlyOperatorCanUnpause() public {
         vm.prank(pauser);
         vault.pause();
 
-        vm.prank(pauser);
+        vm.prank(admin);
         vault.unpause();
         assertFalse(vault.paused());
     }
@@ -339,20 +339,20 @@ contract VaultTest is Test {
         UniversalGateway newGateway = UniversalGateway(payable(address(newProxy)));
 
         vm.prank(admin);
-        vault.setGateway(address(newGateway));
+        vault.updateGateway(address(newGateway));
         assertEq(address(vault.gateway()), address(newGateway));
     }
 
     function test_SetGateway_NonAdminReverts() public {
         vm.prank(user1);
         vm.expectRevert();
-        vault.setGateway(address(gateway));
+        vault.updateGateway(address(gateway));
     }
 
     function test_SetGateway_ZeroAddressReverts() public {
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        vault.setGateway(address(0));
+        vault.updateGateway(address(0));
     }
 
     function test_SetGateway_EmitsEvent() public {
@@ -366,7 +366,7 @@ contract VaultTest is Test {
         vm.prank(admin);
         vm.expectEmit(true, true, false, false);
         emit GatewayUpdated(address(gateway), address(newGateway));
-        vault.setGateway(address(newGateway));
+        vault.updateGateway(address(newGateway));
     }
 
     function test_TSS_GrantRole_OnlyAdminCanGrant() public {
@@ -507,7 +507,7 @@ contract VaultTest is Test {
         UniversalGateway newGateway = UniversalGateway(payable(address(newProxy)));
 
         vm.prank(admin);
-        vault.setGateway(address(newGateway));
+        vault.updateGateway(address(newGateway));
         assertEq(address(vault.gateway()), address(newGateway));
     }
 
@@ -521,7 +521,7 @@ contract VaultTest is Test {
     }
 
     function test_Unpause_DoubleUnpauseReverts() public {
-        vm.prank(pauser);
+        vm.prank(admin);
         vm.expectRevert();
         vault.unpause();
     }
@@ -530,7 +530,7 @@ contract VaultTest is Test {
         vm.prank(pauser);
         vault.pause();
 
-        vm.prank(pauser);
+        vm.prank(admin);
         vault.unpause();
 
         vm.prank(tss);
@@ -1718,7 +1718,7 @@ contract VaultTest is Test {
         UniversalGateway newGateway = UniversalGateway(payable(address(newProxy)));
 
         vm.prank(admin);
-        vault.setGateway(address(newGateway));
+        vault.updateGateway(address(newGateway));
 
         assertEq(address(vault.gateway()), address(newGateway));
     }
@@ -1738,7 +1738,7 @@ contract VaultTest is Test {
         vm.prank(admin);
         vm.expectEmit(true, true, false, false);
         emit GatewayUpdated(address(gateway), address(newGateway));
-        vault.setGateway(address(newGateway));
+        vault.updateGateway(address(newGateway));
     }
 
     function test_Events_VaultWithdraw() public {
@@ -2143,7 +2143,7 @@ contract VaultTest is Test {
         vm.prank(admin);
         vm.expectEmit(true, true, false, false);
         emit CEAFactoryUpdated(address(ceaFactory), address(newFactory));
-        vault.setCEAFactory(address(newFactory));
+        vault.updateCEAFactory(address(newFactory));
 
         assertEq(address(vault.CEAFactory()), address(newFactory));
     }
@@ -2151,13 +2151,13 @@ contract VaultTest is Test {
     function test_SetCEAFactory_ZeroAddressReverts() public {
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        vault.setCEAFactory(address(0));
+        vault.updateCEAFactory(address(0));
     }
 
     function test_SetCEAFactory_NonAdminReverts() public {
         vm.prank(user1);
         vm.expectRevert();
-        vault.setCEAFactory(address(ceaFactory));
+        vault.updateCEAFactory(address(ceaFactory));
     }
 
     function test_TSS_RevokeAndGrantNewTSS() public {

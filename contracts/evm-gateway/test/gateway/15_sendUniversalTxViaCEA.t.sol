@@ -53,7 +53,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
         vm.label(address(ceaFactory), "CEAFactory");
 
         vm.prank(admin);
-        gateway.setCEAFactory(address(ceaFactory));
+        gateway.updateCEAFactory(address(ceaFactory));
 
         // Deploy a CEA via factory (requires vault as caller)
         mappedUEA = address(0xBEEF);
@@ -144,7 +144,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
         address fakeCEA = address(0xDEAD);
 
         vm.prank(admin);
-        gateway.setCEAFactory(address(badFactory));
+        gateway.updateCEAFactory(address(badFactory));
 
         UniversalTxRequest memory req = _buildViaCEARequest(address(tokenA), 100 ether, _defaultPayload());
 

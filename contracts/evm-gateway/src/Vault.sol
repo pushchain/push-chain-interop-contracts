@@ -20,19 +20,22 @@ import { RevertInstructions } from "./libraries/Types.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import { AccessControlUpgradeable } from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import { AccessControlDefaultAdminRulesUpgradeable } from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
 import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 contract Vault is
     PausableUpgradeable,
     ReentrancyGuardUpgradeable,
-    AccessControlUpgradeable,
+    AccessControlDefaultAdminRulesUpgradeable,
     IVault
 {
     using SafeERC20 for IERC20;
 
-    bytes32 public constant TSS_ROLE = keccak256("TSS_ROLE");
+    bytes32 public constant ROLE_MANAGER_ROLE = keccak256("ROLE_MANAGER_ROLE");
+    bytes32 public constant VAULT_ADMIN_ROLE = keccak256("VAULT_ADMIN_ROLE");
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+    bytes32 public constant TSS_ROLE = keccak256("TSS_ROLE");
 
     IUniversalGateway public gateway;
     ICEAFactory public CEAFactory;
@@ -59,12 +62,18 @@ contract Vault is
             revert Errors.ZeroAddress();
         }
 
-        __Context_init();
         __Pausable_init();
         __ReentrancyGuard_init();
-        __AccessControl_init();
+        __AccessControlDefaultAdminRules_init(1 days, admin);
 
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _setRoleAdmin(VAULT_ADMIN_ROLE, ROLE_MANAGER_ROLE);
+        _setRoleAdmin(OPERATOR_ROLE, ROLE_MANAGER_ROLE);
+        _setRoleAdmin(PAUSER_ROLE, ROLE_MANAGER_ROLE);
+        _setRoleAdmin(TSS_ROLE, ROLE_MANAGER_ROLE);
+
+        _grantRole(ROLE_MANAGER_ROLE, admin);
+        _grantRole(VAULT_ADMIN_ROLE, admin);
+        _grantRole(OPERATOR_ROLE, admin);
         _grantRole(PAUSER_ROLE, pauser);
         _grantRole(TSS_ROLE, tss);
 
@@ -76,13 +85,13 @@ contract Vault is
         _pause();
     }
 
-    function unpause() external whenPaused onlyRole(PAUSER_ROLE) {
+    function unpause() external whenPaused onlyRole(OPERATOR_ROLE) {
         _unpause();
     }
 
     /// @notice                Updates the UniversalGateway address.
     /// @param gw              New UniversalGateway address.
-    function setGateway(address gw) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateGateway(address gw) external onlyRole(OPERATOR_ROLE) {
         if (gw == address(0)) revert Errors.ZeroAddress();
         address old = address(gateway);
         gateway = IUniversalGateway(gw);
@@ -91,7 +100,7 @@ contract Vault is
 
     /// @notice                Updates the CEAFactory address.
     /// @param newCEAFactory   New CEAFactory address.
-    function setCEAFactory(address newCEAFactory) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateCEAFactory(address newCEAFactory) external onlyRole(OPERATOR_ROLE) {
         if (newCEAFactory == address(0)) revert Errors.ZeroAddress();
         address old = address(CEAFactory);
         CEAFactory = ICEAFactory(newCEAFactory);
@@ -107,7 +116,7 @@ contract Vault is
     function migrateTokens(
         address newVault,
         address[] calldata tokens
-    ) external nonReentrant whenPaused onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external nonReentrant whenPaused onlyRole(VAULT_ADMIN_ROLE) {
         if (newVault == address(0)) revert Errors.ZeroAddress();
         if (tokens.length == 0) revert Errors.EmptyTokenList();
         if (!gateway.paused()) revert Errors.GatewayNotPaused();

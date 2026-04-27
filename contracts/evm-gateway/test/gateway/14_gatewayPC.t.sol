@@ -227,7 +227,7 @@ contract UniversalGatewayPCTest is Test {
         vm.prank(admin);
         vm.expectEmit(true, true, false, false);
         emit IUniversalGatewayPC.VaultPCUpdated(vaultPC, newVaultPC);
-        gateway.setVaultPC(newVaultPC);
+        gateway.updateVaultPC(newVaultPC);
 
         // Verify state changes
         assertEq(address(gateway.VAULT_PC()), newVaultPC);
@@ -238,13 +238,13 @@ contract UniversalGatewayPCTest is Test {
 
         vm.prank(attacker);
         vm.expectRevert();
-        gateway.setVaultPC(newVaultPC);
+        gateway.updateVaultPC(newVaultPC);
     }
 
     function testSetVaultPCRevertZeroAddress() public {
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        gateway.setVaultPC(address(0));
+        gateway.updateVaultPC(address(0));
     }
 
     function testSetVaultPCRevertWhenPaused() public {
@@ -257,7 +257,7 @@ contract UniversalGatewayPCTest is Test {
         // Attempt to set VaultPC while paused should revert
         vm.prank(admin);
         vm.expectRevert();
-        gateway.setVaultPC(newVaultPC);
+        gateway.updateVaultPC(newVaultPC);
     }
 
     // ---- setUniversalCore ----
@@ -269,7 +269,7 @@ contract UniversalGatewayPCTest is Test {
         vm.prank(admin);
         vm.expectEmit(true, true, false, false);
         emit IUniversalGatewayPC.UniversalCoreUpdated(oldUniversalCore, newUniversalCore);
-        gateway.setUniversalCore(newUniversalCore);
+        gateway.updateUniversalCore(newUniversalCore);
 
         assertEq(gateway.UNIVERSAL_CORE(), newUniversalCore);
     }
@@ -279,13 +279,13 @@ contract UniversalGatewayPCTest is Test {
 
         vm.prank(attacker);
         vm.expectRevert();
-        gateway.setUniversalCore(newUniversalCore);
+        gateway.updateUniversalCore(newUniversalCore);
     }
 
     function testSetUniversalCoreRevertZeroAddress() public {
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        gateway.setUniversalCore(address(0));
+        gateway.updateUniversalCore(address(0));
     }
 
     function testSetUniversalCoreRevertWhenPaused() public {
@@ -296,7 +296,7 @@ contract UniversalGatewayPCTest is Test {
 
         vm.prank(admin);
         vm.expectRevert();
-        gateway.setUniversalCore(newUniversalCore);
+        gateway.updateUniversalCore(newUniversalCore);
     }
 
     function testPauseSuccess() public {
@@ -326,52 +326,48 @@ contract UniversalGatewayPCTest is Test {
     }
 
     function testUnpauseSuccess() public {
-        // Pause the contract first
         vm.prank(pauser);
         gateway.pause();
         assertTrue(gateway.paused());
 
-        // Pauser unpauses the contract
-        vm.prank(pauser);
+        // Operator (admin at bootstrap) unpauses the contract
+        vm.prank(admin);
         gateway.unpause();
-
-        // Verify contract is unpaused
         assertFalse(gateway.paused());
     }
 
-    function testUnpauseRevertNonPauser() public {
-        // Pause the contract first
+    function testUnpauseRevertNonOperator() public {
         vm.prank(pauser);
         gateway.pause();
 
-        // Non-pauser tries to unpause
+        // Pauser cannot unpause (requires OPERATOR_ROLE)
+        vm.prank(pauser);
+        vm.expectRevert();
+        gateway.unpause();
+
+        // Attacker cannot unpause
         vm.prank(attacker);
         vm.expectRevert();
         gateway.unpause();
     }
 
     function testUnpauseRevertNotPaused() public {
-        // Contract is not paused initially
         assertFalse(gateway.paused());
 
-        // Try to unpause
-        vm.prank(pauser);
+        // Try to unpause when not paused
+        vm.prank(admin);
         vm.expectRevert();
         gateway.unpause();
     }
 
     function testAdminFunctionsWorkWhenPaused() public {
-        // Pause the contract
         vm.prank(pauser);
         gateway.pause();
-
-        // Verify that the contract is paused
         assertTrue(gateway.paused());
 
-        // Unpause should still work
-        vm.prank(pauser);
+        // Operator can unpause
+        vm.prank(admin);
         gateway.unpause();
-
         assertFalse(gateway.paused());
     }
 
@@ -1142,7 +1138,7 @@ contract UniversalGatewayPCTest is Test {
         // Attempt to set VaultPC to zero should revert
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        gateway.setVaultPC(address(0));
+        gateway.updateVaultPC(address(0));
     }
 
     function testInvalidFeeQuoteZeroGasToken() public {
@@ -2539,7 +2535,7 @@ contract UniversalGatewayPCTest is Test {
         ETHRejecter rejectingVault = new ETHRejecter();
 
         vm.prank(admin);
-        gateway.setVaultPC(address(rejectingVault));
+        gateway.updateVaultPC(address(rejectingVault));
 
         uint256 amount = 1000 * 1e6;
         prc20Token.mint(user1, amount);

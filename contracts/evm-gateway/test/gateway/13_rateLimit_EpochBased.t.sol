@@ -937,7 +937,7 @@ contract GatewayGlobalRateLimitTest is BaseTest {
         gateway.setTokenLimitThresholds(tokens, thresholds);
 
         // Unpause the contract
-        vm.prank(pauser);
+        vm.prank(admin);
         gateway.unpause();
     }
 
@@ -974,7 +974,7 @@ contract GatewayGlobalRateLimitTest is BaseTest {
         gateway.setTokenLimitThresholds(tokens, thresholds);
 
         // Unpause the contract
-        vm.prank(pauser);
+        vm.prank(admin);
         gateway.unpause();
     }
 
@@ -992,7 +992,7 @@ contract GatewayGlobalRateLimitTest is BaseTest {
         gateway.updateEpochDuration(newDuration);
 
         // Unpause the contract
-        vm.prank(pauser);
+        vm.prank(admin);
         gateway.unpause();
     }
 
@@ -1024,7 +1024,7 @@ contract GatewayGlobalRateLimitTest is BaseTest {
         vm.stopPrank();
 
         // Unpause the contract
-        vm.prank(pauser);
+        vm.prank(admin);
         gateway.unpause();
 
         // Now sending funds should work

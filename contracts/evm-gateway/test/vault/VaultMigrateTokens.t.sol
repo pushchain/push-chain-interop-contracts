@@ -90,7 +90,7 @@ contract VaultMigrateTokensTest is Test {
 
         // Point vault at real gateway
         vm.prank(admin);
-        vault.setGateway(address(gateway));
+        vault.updateGateway(address(gateway));
 
         ceaFactory.setVault(address(vault));
 
@@ -229,8 +229,8 @@ contract VaultMigrateTokensTest is Test {
         assertEq(token2.balanceOf(address(newVault)), bal2);
         assertEq(token3.balanceOf(address(newVault)), bal3);
 
-        // Step 3: Unpause gateway (new vault was never paused)
-        vm.prank(pauser);
+        // Step 3: Unpause gateway (requires OPERATOR_ROLE, held by admin at bootstrap)
+        vm.prank(admin);
         gateway.unpause();
         assertFalse(gateway.paused());
     }
