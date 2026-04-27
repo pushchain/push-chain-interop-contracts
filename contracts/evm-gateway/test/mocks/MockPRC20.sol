@@ -151,16 +151,18 @@ contract MockPRC20 {
 
     //*** GAS FEE DELEGATION TO UNIVERSAL CORE ***//
 
-    /// @notice Get the gas limit (delegates to UniversalCore)
-    function GAS_LIMIT() external view returns (uint256) {
-        return IUniversalCore(universalCore).BASE_GAS_LIMIT();
-    }
-
     /// @notice Get gas fee with custom gas limit (delegates to UniversalCore)
     function withdrawGasFeeWithGasLimit(uint256 gasLimit)
         external
         view
-        returns (address gasToken, uint256 gasFee, uint256 protocolFee, uint256 gasPrice, string memory chainNamespace)
+        returns (
+            address gasToken,
+            uint256 gasFee,
+            uint256 protocolFee,
+            uint256 gasPrice,
+            string memory chainNamespace,
+            uint256 gasLimitUsed
+        )
     {
         return IUniversalCore(universalCore).getOutboundTxGasAndFees(address(this), gasLimit);
     }

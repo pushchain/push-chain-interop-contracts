@@ -55,7 +55,7 @@ The gateway infers `TX_TYPE` from two decision variables — users never specify
 
 Fetches gas fee quote and chain metadata from `UniversalCore.getOutboundTxGasAndFees(token, gasLimitUsed)`:
 
-- **`gasLimitUsed`** — if `req.gasLimit == 0`, defaults to `UniversalCore.BASE_GAS_LIMIT()`.
+- **`gasLimitUsed`** — if `req.gasLimit == 0`, UniversalCore resolves it to the per-chain `baseGasLimitByChainNamespace` and returns the resolved value.
 - **`gasToken`** — the PRC20 gas token for the target chain (e.g., pETH for Ethereum).
 - **`gasFee`** — gas cost only: `gasPrice * gasLimit`. Excludes protocol fee.
 - **`protocolFee`** — flat protocol fee in native PC (from `UniversalCore.protocolFeeByToken` mapping).
@@ -155,8 +155,7 @@ The gateway never custodies withdrawn value — burning is the canonical on-chai
 
 | Interface        | Function                                                                      | Purpose                                                     |
 | ---------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `IUniversalCore` | `BASE_GAS_LIMIT()`                                                            | Default gas limit when user passes 0                        |
-| `IUniversalCore` | `getOutboundTxGasAndFees(token, gasLimit)`                                    | Quote gas fee, protocol fee, gas price, gas token, chain namespace |
+| `IUniversalCore` | `getOutboundTxGasAndFees(token, gasLimit)`                                    | Quote gas fee, protocol fee, gas price, gas token, chain namespace, gasLimitUsed |
 | `IUniversalCore` | `swapAndBurnGas(gasToken, fee, gasFee, deadline, caller)`                     | Swap PC → gas token, burn gasFee, refund unused PC to caller |
 | `IUniversalCore` | `getRescueFundsGasLimit(prc20)`                                               | Resolve chain and quote gas for `rescueFundsOnSourceChain`  |
 | `IPRC20`         | `transferFrom`, `burn`                                                        | Pull/burn PRC20 tokens                                      |

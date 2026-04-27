@@ -43,8 +43,8 @@ contract MockUniversalCoreReal is IUniversalCore {
     /// @notice Address of the wrapped PC to interact with Uniswap V3.
     address public wPCContractAddress;
 
-    /// @notice Base gas limit for the cross-chain outbound transactions.
-    uint256 public BASE_GAS_LIMIT = 500_000;
+    /// @notice Base gas limit per chain namespace (matches real UniversalCore)
+    mapping(string => uint256) public baseGasLimitByChainNamespace;
 
     /// @notice Protocol fee per token in native PC
     mapping(address => uint256) public protocolFeeByToken;
@@ -76,7 +76,6 @@ contract MockUniversalCoreReal is IUniversalCore {
     event SetDefaultFeeTier(address indexed token, uint24 feeTier);
     event SetSlippageTolerance(address indexed token, uint256 tolerance);
     event SetDefaultDeadlineMins(uint256 mins);
-    event BaseGasLimitUpdated(uint256 oldLimit, uint256 newLimit);
     event DepositPRC20WithAutoSwap(
         address indexed prc20, uint256 amountIn, address indexed wpc, uint256 pcOut, uint24 fee, address indexed target
     );
@@ -267,12 +266,30 @@ contract MockUniversalCoreReal is IUniversalCore {
         return amountIn;
     }
 
-    function getOutboundTxGasAndFees(address _prc20, uint256 gasLimit)
+    function getOutboundTxGasAndFees(address _prc20, uint256 gasLimitWithBaseLimit)
         public
         view
-        returns (address gasToken, uint256 gasFee, uint256 protocolFee, uint256 gasPrice, string memory chainNamespace)
+        returns (
+            address gasToken,
+            uint256 gasFee,
+            uint256 protocolFee,
+            uint256 gasPrice,
+            string memory chainNamespace,
+            uint256 gasLimitUsed
+        )
     {
         chainNamespace = MockPRC20(_prc20).SOURCE_CHAIN_NAMESPACE();
+        uint256 baseLimit = baseGasLimitByChainNamespace[chainNamespace];
+        require(baseLimit != 0, "MockUniversalCore: zero base gas limit");
+
+        if (gasLimitWithBaseLimit == 0) {
+            gasLimitWithBaseLimit = baseLimit;
+        } else {
+            require(
+                gasLimitWithBaseLimit >= baseLimit,
+                "MockUniversalCore: gas limit below base"
+            );
+        }
 
         gasToken = gasTokenPRC20ByChainNamespace[chainNamespace];
         require(gasToken != address(0), "MockUniversalCore: zero gas token");
@@ -280,8 +297,9 @@ contract MockUniversalCoreReal is IUniversalCore {
         gasPrice = gasPriceByChainNamespace[chainNamespace];
         require(gasPrice != 0, "MockUniversalCore: zero gas price");
 
-        gasFee = gasPrice * gasLimit;
+        gasFee = gasPrice * gasLimitWithBaseLimit;
         protocolFee = protocolFeeByToken[_prc20];
+        gasLimitUsed = gasLimitWithBaseLimit;
     }
 
     function getRescueFundsGasLimit(address _prc20)
@@ -309,12 +327,11 @@ contract MockUniversalCoreReal is IUniversalCore {
         gasFee = gasPrice * rescueGasLimit;
     }
 
-    /// @notice Update the base gas limit for the cross-chain outbound transactions.
-    /// @param  gasLimit New base gas limit
-    function updateBaseGasLimit(uint256 gasLimit) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        uint256 oldLimit = BASE_GAS_LIMIT;
-        BASE_GAS_LIMIT = gasLimit;
-        emit BaseGasLimitUpdated(oldLimit, gasLimit);
+    function setBaseGasLimitByChain(
+        string memory chainNamespace,
+        uint256 gasLimit
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        baseGasLimitByChainNamespace[chainNamespace] = gasLimit;
     }
 
     // ========= Swap Functions =========

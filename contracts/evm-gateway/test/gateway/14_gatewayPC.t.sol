@@ -52,7 +52,8 @@ contract UniversalGatewayPCTest is Test {
     //      TEST CONSTANTS
     // =========================
     uint256 public constant LARGE_AMOUNT = 1000000 * 1e18;
-    uint256 public constant DEFAULT_GAS_LIMIT = 500_000; // Matches UniversalCore.BASE_GAS_LIMIT
+    uint256 public constant BASE_GAS_LIMIT = 100_000; // Per-chain base in UniversalCore
+    uint256 public constant DEFAULT_GAS_LIMIT = 500_000; // Standard test gas limit (>= BASE_GAS_LIMIT)
     uint256 public constant DEFAULT_PROTOCOL_FEE = 0.01 ether;
     uint256 public constant DEFAULT_GAS_PRICE = 20 gwei;
     uint256 public constant PC_FEE = 1 ether; // Standard native PC fee for tests
@@ -1100,11 +1101,11 @@ contract UniversalGatewayPCTest is Test {
         uint256 amount = 1000 * 1e6;
         address revertRecipient = user2;
 
-        // Test specific gas limits individually
-        _testGasFeeForLimit(amount, revertRecipient, 50_000);
+        // Test specific gas limits individually (must be >= BASE_GAS_LIMIT)
         _testGasFeeForLimit(amount, revertRecipient, 100_000);
         _testGasFeeForLimit(amount, revertRecipient, 200_000);
         _testGasFeeForLimit(amount, revertRecipient, 500_000);
+        _testGasFeeForLimit(amount, revertRecipient, 1_000_000);
     }
 
     function _testGasFeeForLimit(uint256 amount, address revertRecipient, uint256 gasLimit) internal {
@@ -1160,6 +1161,7 @@ contract UniversalGatewayPCTest is Test {
 
         // Mark token as supported so the support check passes and we reach fee-quote logic
         universalCore.setSupportedToken(address(invalidToken), true);
+        universalCore.setBaseGasLimitByChain(unconfiguredChainId, BASE_GAS_LIMIT);
 
         // Setup token for user1
         invalidToken.mint(user1, amount);
@@ -1200,6 +1202,7 @@ contract UniversalGatewayPCTest is Test {
         invalidCore.setGasPrice(SOURCE_CHAIN_NAMESPACE, DEFAULT_GAS_PRICE);
         vm.prank(uem);
         invalidCore.setGasTokenPRC20(SOURCE_CHAIN_NAMESPACE, address(0)); // Zero gas token
+        invalidCore.setBaseGasLimitByChain(SOURCE_CHAIN_NAMESPACE, BASE_GAS_LIMIT);
         return invalidCore;
     }
 
@@ -1214,6 +1217,7 @@ contract UniversalGatewayPCTest is Test {
         // Configure this chain in universalCore with gas token but NO gas price
         vm.prank(uem);
         universalCore.setGasTokenPRC20(chainWithTokenNoPrice, address(gasToken));
+        universalCore.setBaseGasLimitByChain(chainWithTokenNoPrice, BASE_GAS_LIMIT);
         // Intentionally NOT setting gas price for this chain
 
         MockPRC20 invalidToken = new MockPRC20(
@@ -1256,6 +1260,7 @@ contract UniversalGatewayPCTest is Test {
         invalidCore.setGasPrice(SOURCE_CHAIN_NAMESPACE, 0); // Zero gas price
         vm.prank(uem);
         invalidCore.setGasTokenPRC20(SOURCE_CHAIN_NAMESPACE, address(gasToken));
+        invalidCore.setBaseGasLimitByChain(SOURCE_CHAIN_NAMESPACE, BASE_GAS_LIMIT);
         return invalidCore;
     }
 
@@ -1365,6 +1370,7 @@ contract UniversalGatewayPCTest is Test {
         universalCore.setGasPrice(SOURCE_CHAIN_NAMESPACE, DEFAULT_GAS_PRICE);
         vm.prank(uem);
         universalCore.setGasTokenPRC20(SOURCE_CHAIN_NAMESPACE, address(gasToken));
+        universalCore.setBaseGasLimitByChain(SOURCE_CHAIN_NAMESPACE, BASE_GAS_LIMIT);
 
         // Configure protocol fees on UniversalCore
         vm.prank(uem);
@@ -2071,19 +2077,19 @@ contract UniversalGatewayPCTest is Test {
             bytes(""),
             address(prc20Token),
             amount,
-            gasLimit, // 0 should use DEFAULT_GAS_LIMIT
+            gasLimit, // 0 → resolved to BASE_GAS_LIMIT by UniversalCore
             0,
             bytes(""),
             revertRecipient
         );
 
-        uint256 expectedGasFee = calculateExpectedGasFee(DEFAULT_GAS_LIMIT);
+        uint256 expectedGasFee = calculateExpectedGasFee(BASE_GAS_LIMIT);
         uint256 initialGasBalance = vaultPC.balance;
 
         vm.prank(user1);
         gateway.sendUniversalTxOutbound{value: PC_FEE}(req);
 
-        // Verify DEFAULT_GAS_LIMIT was used for fee calculation
+        // Verify BASE_GAS_LIMIT was used for fee calculation
         assertEq(vaultPC.balance, initialGasBalance + DEFAULT_PROTOCOL_FEE);
     }
 

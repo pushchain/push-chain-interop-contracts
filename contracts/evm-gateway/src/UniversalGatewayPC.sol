@@ -236,7 +236,8 @@ contract UniversalGatewayPC is
     }
 
     /// @dev                    Fetch gas fee quote and chain metadata from UniversalCore.
-    ///                         If gasLimit = 0, uses BASE_GAS_LIMIT from UniversalCore.
+    ///                         If gasLimit = 0, UniversalCore resolves it to the per-chain
+    ///                         baseGasLimitByChainNamespace and returns it as gasLimitUsed.
     /// @param token            PRC20 token address (used to resolve chain).
     /// @param gasLimit         Caller-requested gas limit (0 = default).
     /// @return gasToken        Gas token PRC20 address for the target chain.
@@ -257,10 +258,8 @@ contract UniversalGatewayPC is
             string memory chainNamespace
         )
     {
-        gasLimitUsed = gasLimit == 0 ? IUniversalCore(universalCore).BASE_GAS_LIMIT() : gasLimit;
-
-        (gasToken, gasFee, protocolFee, gasPrice, chainNamespace) =
-            IUniversalCore(universalCore).getOutboundTxGasAndFees(token, gasLimitUsed);
+        (gasToken, gasFee, protocolFee, gasPrice, chainNamespace, gasLimitUsed) =
+            IUniversalCore(universalCore).getOutboundTxGasAndFees(token, gasLimit);
 
         if (gasToken == address(0) || gasFee + protocolFee == 0) {
             revert Errors.InvalidData();
