@@ -469,7 +469,7 @@ When a CEA sends `FUNDS_AND_PAYLOAD` with `msg.value > req.amount` (native batch
 
 - `req.recipient` must always equal the CEA's mapped UEA — never `address(0)`, never an arbitrary address
 - All events emitted via CEA path have `fromCEA=true` and `recipient=mappedUEA`
-- Normal `sendUniversalTx` path is unchanged: still emits `fromCEA=false` and `recipient=address(0)`
+- Normal `sendUniversalTx` path emits `fromCEA=false`. Recipient is `address(0)` for GAS, GAS_AND_PAYLOAD, and FUNDS_AND_PAYLOAD paths; the FUNDS path emits `req.recipient` as-is
 - CEAs are blocked from calling `sendUniversalTx` directly (reverts `InvalidInput`)
 
 ### Related Files

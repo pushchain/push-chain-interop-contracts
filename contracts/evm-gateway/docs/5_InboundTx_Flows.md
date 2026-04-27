@@ -44,8 +44,9 @@ Inbound transactions result in PRC20 minting on Push Chain:
   (`UniversalGateway.sol:737`). TSS observes the `UniversalTx` event and mints the
   corresponding PRC20 token to the recipient UEA.
 - **`recipient == address(0)`** in `UniversalTx`: Push Chain attributes the inbound tx to
-  `sender`'s own UEA.
-- **`recipient != address(0)`** (CEA path only): Push Chain routes to that explicit UEA address.
+  `sender`'s own UEA. Used by GAS, GAS_AND_PAYLOAD, and FUNDS_AND_PAYLOAD on the normal path.
+- **`recipient != address(0)`**: Push Chain routes to that explicit UEA address. This occurs on
+  the CEA path (all TX_TYPEs) and on the normal FUNDS path (where `req.recipient` is emitted as-is).
 
 ### 1.4 TX_TYPE Reference — Inbound `_fetchTxType` (`UniversalGateway.sol:891-941`)
 
@@ -294,7 +295,7 @@ sequenceDiagram
     GW->>GW: _collectProtocolFee → forward inboundFee to TSS
     GW->>GW: _consumeRateLimit(address(0), 1ETH)
     GW->>TSS: forward 1 ETH
-    GW-->>PC: emit UniversalTx(sender=BOB, recipient=0, token=0x0, amount=1ETH, txType=FUNDS)
+    GW-->>PC: emit UniversalTx(sender=BOB, recipient=req.recipient, token=0x0, amount=1ETH, txType=FUNDS)
     Note over PC: Mints 1 PRC20-ETH to BOB's UEA
 ```
 
@@ -333,7 +334,7 @@ sequenceDiagram
     GW->>GW: _consumeRateLimit(USDC, 1000e6)
     GW->>USDC: safeTransferFrom(BOB, Vault, 1000e6)
     USDC-->>V: +1000e6 USDC
-    GW-->>PC: emit UniversalTx(sender=BOB, recipient=0, token=USDC, amount=1000e6, txType=FUNDS)
+    GW-->>PC: emit UniversalTx(sender=BOB, recipient=req.recipient, token=USDC, amount=1000e6, txType=FUNDS)
     Note over PC: Mints 1000 PRC20-USDC to BOB's UEA
 ```
 
@@ -666,7 +667,7 @@ other ETH transfers revert, preventing accidental deposits.
 event UniversalTx(
     address indexed sender,       // caller on the external chain
     address indexed recipient,    // address(0) → Push Chain credits sender's UEA
-                                  // mappedUEA  → explicit UEA routing (CEA path only)
+                                  // non-zero   → explicit UEA routing (CEA path + FUNDS path)
     address token,                // address(0) for native; ERC20 address for token
     uint256 amount,               // wei for native; token units for ERC20
     bytes payload,                // Push Chain calldata (empty for funds-only)
@@ -692,8 +693,9 @@ event RevertUniversalTx(
 
 **`recipient == address(0)` convention**: When `recipient` is `address(0)` in `UniversalTx`,
 Push Chain derives the target UEA from `sender` (i.e. BOB's UEA is looked up by his external
-chain address). When `recipient` is non-zero (CEA path), Push Chain routes directly to that
-address without derivation.
+chain address). When `recipient` is non-zero, Push Chain routes directly to that address without
+derivation. Non-zero recipients occur on the CEA path (all TX_TYPEs) and on the normal FUNDS
+path (where `req.recipient` is emitted as-is, allowing users to specify an arbitrary UEA).
 
 ---
 

@@ -74,7 +74,7 @@ Before routing, performs four checks (`UniversalGateway.sol:352-364`):
 
 Then calls `_routeUniversalTx(req, msg.value, fromCEA=true)`. All four TX_TYPEs are supported on this path. Protocol fee is skipped (`fromCEA=true`) because the fee was already paid on Push Chain.
 
-**Why `fromCEA=true` matters on the gas leg**: In FUNDS_AND_PAYLOAD Cases 2.2/2.3, the gas leg emits a separate `UniversalTx` event with a `recipient` field. On the normal path this is `address(0)` (Push Chain derives the UEA from `msg.sender`). On the CEA path, `msg.sender` is the CEA address — if `recipient` were `address(0)`, Push Chain would deploy a new UEA for the CEA's address rather than crediting BOB's UEA. The fix: `gasLegRecipient = fromCEA ? req.recipient : address(0)`.
+**Why `fromCEA=true` matters on the gas leg**: In FUNDS_AND_PAYLOAD Cases 2.2/2.3, the gas leg emits a separate `UniversalTx` event with a `recipient` field. On the normal path the gas and FUNDS_AND_PAYLOAD legs emit `address(0)` (Push Chain derives the UEA from `msg.sender`). Note: the FUNDS path is different — it emits `req.recipient` as-is on both normal and CEA paths. On the CEA path, `msg.sender` is the CEA address — if `recipient` were `address(0)`, Push Chain would deploy a new UEA for the CEA's address rather than crediting BOB's UEA. The fix: `gasLegRecipient = fromCEA ? req.recipient : address(0)`.
 
 ---
 
