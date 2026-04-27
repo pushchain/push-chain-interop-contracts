@@ -181,8 +181,8 @@ contract DeployGatewayPC is Script, GatewayPCConfig {
         UniversalGatewayPC gatewayPC = UniversalGatewayPC(gatewayPCProxy);
 
         // Verify initialization parameters
-        require(gatewayPC.UNIVERSAL_CORE() == cfg.universalCore, "UniversalCore address mismatch");
-        require(address(gatewayPC.VAULT_PC()) == cfg.vaultPC, "VaultPC address mismatch");
+        require(gatewayPC.universalCore() == cfg.universalCore, "UniversalCore address mismatch");
+        require(address(gatewayPC.vaultPC()) == cfg.vaultPC, "VaultPC address mismatch");
 
         // Verify roles
         require(gatewayPC.hasRole(gatewayPC.DEFAULT_ADMIN_ROLE(), admin), "Admin role not set");

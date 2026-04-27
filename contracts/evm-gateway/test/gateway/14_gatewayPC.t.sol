@@ -128,8 +128,8 @@ contract UniversalGatewayPCTest is Test {
         UniversalGatewayPC newGateway = UniversalGatewayPC(address(newProxy));
 
         // Verify initialization
-        assertEq(newGateway.UNIVERSAL_CORE(), address(universalCore));
-        assertEq(address(newGateway.VAULT_PC()), vaultPC);
+        assertEq(newGateway.universalCore(), address(universalCore));
+        assertEq(address(newGateway.vaultPC()), vaultPC);
         assertTrue(newGateway.hasRole(newGateway.DEFAULT_ADMIN_ROLE(), admin));
         assertTrue(newGateway.hasRole(newGateway.PAUSER_ROLE(), pauser));
     }
@@ -230,7 +230,7 @@ contract UniversalGatewayPCTest is Test {
         gateway.updateVaultPC(newVaultPC);
 
         // Verify state changes
-        assertEq(address(gateway.VAULT_PC()), newVaultPC);
+        assertEq(address(gateway.vaultPC()), newVaultPC);
     }
 
     function testSetVaultPCRevertNonAdmin() public {
@@ -263,7 +263,7 @@ contract UniversalGatewayPCTest is Test {
     // ---- setUniversalCore ----
 
     function testSetUniversalCoreSuccess() public {
-        address oldUniversalCore = gateway.UNIVERSAL_CORE();
+        address oldUniversalCore = gateway.universalCore();
         address newUniversalCore = address(0x888);
 
         vm.prank(admin);
@@ -271,7 +271,7 @@ contract UniversalGatewayPCTest is Test {
         emit IUniversalGatewayPC.UniversalCoreUpdated(oldUniversalCore, newUniversalCore);
         gateway.updateUniversalCore(newUniversalCore);
 
-        assertEq(gateway.UNIVERSAL_CORE(), newUniversalCore);
+        assertEq(gateway.universalCore(), newUniversalCore);
     }
 
     function testSetUniversalCoreRevertNonAdmin() public {
@@ -1402,8 +1402,8 @@ contract UniversalGatewayPCTest is Test {
     function _initializeGateway() internal view {
         // Gateway is already initialized via proxy constructor
         // Verify initialization
-        assertEq(gateway.UNIVERSAL_CORE(), address(universalCore));
-        assertEq(address(gateway.VAULT_PC()), vaultPC);
+        assertEq(gateway.universalCore(), address(universalCore));
+        assertEq(address(gateway.vaultPC()), vaultPC);
         assertTrue(gateway.hasRole(gateway.DEFAULT_ADMIN_ROLE(), admin));
         assertTrue(gateway.hasRole(gateway.PAUSER_ROLE(), pauser));
     }

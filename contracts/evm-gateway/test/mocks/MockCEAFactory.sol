@@ -19,7 +19,7 @@ contract MockCEAFactory is ICEAFactory {
     //           State
     // =========================
     /// @notice Address of the Vault contract that can deploy CEAs
-    address public VAULT;
+    address public vault;
 
     /// @notice Mapping from UEA on Push Chain -> CEA on this chain
     mapping(address => address) public UEA_to_CEA;
@@ -51,7 +51,7 @@ contract MockCEAFactory is ICEAFactory {
     //        Modifiers
     // =========================
     modifier onlyVault() {
-        if (msg.sender != VAULT) revert NotVault();
+        if (msg.sender != vault) revert NotVault();
         _;
     }
 
@@ -68,8 +68,8 @@ contract MockCEAFactory is ICEAFactory {
     // =========================
     /// @notice Set the Vault address (for test setup)
     /// @dev This is a test helper, not part of the real CEAFactory
-    function setVault(address vault) external {
-        VAULT = vault;
+    function setVault(address _vault) external {
+        vault = _vault;
     }
 
     /// @notice Set whether deployCEA should fail (for failure propagation tests)

@@ -105,9 +105,9 @@ contract SendUniversalTxViaCEATest is BaseTest {
     // =====================================================
 
     function test_RevertWhen_CEAFactoryNotSet() public {
-        // Zero out CEA_FACTORY via vm.store (slot 20 per storage layout)
+        // Zero out ceaFactory via vm.store (slot 20 per storage layout)
         vm.store(address(gateway), bytes32(uint256(20)), bytes32(0));
-        assertEq(gateway.CEA_FACTORY(), address(0));
+        assertEq(gateway.ceaFactory(), address(0));
 
         UniversalTxRequest memory req = _buildViaCEARequest(address(tokenA), 100 ether, _defaultPayload());
 
@@ -1094,9 +1094,9 @@ contract SendUniversalTxViaCEATest is BaseTest {
     }
 
     function test_SendUniversalTx_AllowsWhenCEAFactoryNotSet() public {
-        // Zero out CEA_FACTORY — _isCallerCEA returns false, so CEA address is allowed
+        // Zero out ceaFactory — _isCallerCEA returns false, so CEA address is allowed
         vm.store(address(gateway), bytes32(uint256(20)), bytes32(0));
-        assertEq(gateway.CEA_FACTORY(), address(0));
+        assertEq(gateway.ceaFactory(), address(0));
 
         UniversalTxRequest memory req = UniversalTxRequest({
             recipient: address(0),

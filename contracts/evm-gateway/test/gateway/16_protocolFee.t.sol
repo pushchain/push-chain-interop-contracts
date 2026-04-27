@@ -12,7 +12,7 @@ import { MockCEA } from "../mocks/MockCEA.sol";
 
 /**
  * @title ProtocolFeeTest
- * @notice Tests for INBOUND_FEE mechanics on UniversalGateway.
+ * @notice Tests for inboundFee mechanics on UniversalGateway.
  * @dev Covers: admin management, fee enforcement across all TX_TYPEs,
  *      accumulator tracking, CEA path, and ERC20 gas token path.
  */
@@ -160,7 +160,7 @@ contract ProtocolFeeTest is BaseTest {
         vm.prank(admin);
         gw.setProtocolFee(PROTOCOL_FEE_WEI);
 
-        assertEq(gw.INBOUND_FEE(), PROTOCOL_FEE_WEI);
+        assertEq(gw.inboundFee(), PROTOCOL_FEE_WEI);
     }
 
     /// @notice Non-admin cannot set protocol fee
@@ -178,7 +178,7 @@ contract ProtocolFeeTest is BaseTest {
         vm.prank(admin);
         gw.setProtocolFee(0);
 
-        assertEq(gw.INBOUND_FEE(), 0);
+        assertEq(gw.inboundFee(), 0);
         // With fee=0, GAS tx with any native value succeeds without fee deduction
         UniversalTxRequest memory req = _buildReq(address(0), 0, bytes(""));
         vm.prank(user1);
@@ -207,7 +207,7 @@ contract ProtocolFeeTest is BaseTest {
         assertEq(gw.totalProtocolFeesCollected(), PROTOCOL_FEE_WEI);
     }
 
-    /// @notice GAS tx: msg.value < INBOUND_FEE reverts with InsufficientProtocolFee
+    /// @notice GAS tx: msg.value < inboundFee reverts with InsufficientProtocolFee
     function testGAS_InsufficientFee_Reverts() public {
         vm.prank(admin);
         gw.setProtocolFee(PROTOCOL_FEE_WEI);
@@ -239,14 +239,14 @@ contract ProtocolFeeTest is BaseTest {
     //      GROUP 3: GAS_AND_PAYLOAD
     // =========================
 
-    /// @notice Payload-only GAS_AND_PAYLOAD: user must supply exactly INBOUND_FEE
+    /// @notice Payload-only GAS_AND_PAYLOAD: user must supply exactly inboundFee
     function testGAS_AND_PAYLOAD_PayloadOnly_RequiresFee() public {
         vm.prank(admin);
         gw.setProtocolFee(PROTOCOL_FEE_WEI);
 
         UniversalTxRequest memory req = _buildReq(address(0), 0, _defaultPayload());
 
-        // Sending exactly INBOUND_FEE: should succeed, gasAmount=0 after fee extraction
+        // Sending exactly inboundFee: should succeed, gasAmount=0 after fee extraction
         vm.prank(user1);
         gw.sendUniversalTx{ value: PROTOCOL_FEE_WEI }(req);
         assertEq(gw.totalProtocolFeesCollected(), PROTOCOL_FEE_WEI);
@@ -307,7 +307,7 @@ contract ProtocolFeeTest is BaseTest {
     }
 
     /// @notice FUNDS native: sending msg.value != req.amount + fee reverts with InvalidAmount
-    /// @dev req.amount is the bridge amount; msg.value must equal req.amount + INBOUND_FEE.
+    /// @dev req.amount is the bridge amount; msg.value must equal req.amount + inboundFee.
     ///      Sending msg.value = req.amount (omitting fee) passes _collectProtocolFee but fails
     ///      the Case 1.1 equality check (adjustedNative = req.amount - fee != req.amount).
     function testFUNDS_Native_WrongMsgValue_Reverts() public {
@@ -337,7 +337,7 @@ contract ProtocolFeeTest is BaseTest {
     //      GROUP 5: FUNDS (ERC20)
     // =========================
 
-    /// @notice ERC20 FUNDS: requires msg.value == INBOUND_FEE alongside ERC20 deposit
+    /// @notice ERC20 FUNDS: requires msg.value == inboundFee alongside ERC20 deposit
     function testFUNDS_ERC20_RequiresNativeFee() public {
         vm.prank(admin);
         gw.setProtocolFee(PROTOCOL_FEE_WEI);
@@ -354,7 +354,7 @@ contract ProtocolFeeTest is BaseTest {
         assertEq(gw.totalProtocolFeesCollected(), PROTOCOL_FEE_WEI);
     }
 
-    /// @notice ERC20 FUNDS: msg.value > INBOUND_FEE routes excess as gas top-up
+    /// @notice ERC20 FUNDS: msg.value > inboundFee routes excess as gas top-up
     function testFUNDS_ERC20_ExcessNative_RoutesAsGas() public {
         vm.prank(admin);
         gw.setProtocolFee(PROTOCOL_FEE_WEI);
@@ -368,7 +368,7 @@ contract ProtocolFeeTest is BaseTest {
         vm.prank(user1);
         gw.sendUniversalTx{ value: PROTOCOL_FEE_WEI + extraNative }(req);
 
-        // TSS receives: INBOUND_FEE (from fee collection) + extraNative (gas top-up)
+        // TSS receives: inboundFee (from fee collection) + extraNative (gas top-up)
         assertEq(tss.balance - tssBalBefore, PROTOCOL_FEE_WEI + extraNative);
         assertEq(gw.totalProtocolFeesCollected(), PROTOCOL_FEE_WEI);
     }
@@ -482,10 +482,10 @@ contract ProtocolFeeTest is BaseTest {
     //      GROUP 8: FEE DISABLED
     // =========================
 
-    /// @notice When INBOUND_FEE=0, GAS tx with any native value works (original behavior)
+    /// @notice When inboundFee=0, GAS tx with any native value works (original behavior)
     function testFeeDisabled_GAS_Works() public {
         // Fee is 0 by default
-        assertEq(gw.INBOUND_FEE(), 0);
+        assertEq(gw.inboundFee(), 0);
 
         UniversalTxRequest memory req = _buildReq(address(0), 0, bytes(""));
         vm.prank(user1);
@@ -494,7 +494,7 @@ contract ProtocolFeeTest is BaseTest {
         assertEq(gw.totalProtocolFeesCollected(), 0);
     }
 
-    /// @notice When INBOUND_FEE=0, ERC20 FUNDS still requires msg.value == 0
+    /// @notice When inboundFee=0, ERC20 FUNDS still requires msg.value == 0
     function testFeeDisabled_ERC20_FUNDS_ZeroMsgValue_Works() public {
         uint256 erc20Amount = 100 ether;
         UniversalTxRequest memory req = _buildReq(address(tokenA), erc20Amount, bytes(""));

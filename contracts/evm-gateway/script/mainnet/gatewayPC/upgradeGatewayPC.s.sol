@@ -156,8 +156,8 @@ contract UpgradeGatewayPC is Script, GatewayPCConfig {
 
         // Verify proxy still works (call a view function)
         UniversalGatewayPC gatewayPC = UniversalGatewayPC(cfg.gatewayPCProxy);
-        address universalCore = gatewayPC.UNIVERSAL_CORE();
-        address vaultPC = address(gatewayPC.VAULT_PC());
+        address universalCore = gatewayPC.universalCore();
+        address vaultPC = address(gatewayPC.vaultPC());
         uint256 currentNonce = gatewayPC.nonce();
 
         require(universalCore != address(0), "GatewayPC state corrupted");

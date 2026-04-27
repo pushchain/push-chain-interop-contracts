@@ -84,16 +84,16 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 | Uniswap V3 router | `ISwapRouterV3` | Executes swaps honestly within deadline | Malicious router drains token approvals granted by the gateway |
 | Uniswap V3 factory | `IUniswapV3Factory` | Returns correct pool addresses | Fake pool routes user swap to attacker-controlled contract |
 | CEAFactory | `ICEAFactory` | `isCEA()` and `getPushAccountForCEA()` are accurate | CEA spoofing; arbitrary recipient injected via `sendUniversalTxFromCEA` |
-| TSS_ADDRESS | EOA / multisig | Controlled by honest TSS committee | Compromised TSS receives and retains all deposited native ETH |
+| tssAddress | EOA / multisig | Controlled by honest TSS committee | Compromised TSS receives and retains all deposited native ETH |
 | Vault (VAULT_ROLE) | `IVault` | Calls `revertUniversalTx`/`rescueFunds` correctly | Malicious vault with VAULT_ROLE drains gateway ERC-20 balances |
 
 ### Threat Scenarios
 
 1. **Oracle price manipulation** — An attacker exploits a stale or manipulated Chainlink ETH/USD price to either bypass the minimum USD cap (depositing near-zero value) or, during a flash price spike, exceed the maximum USD cap. Mitigated by: `chainlinkStalePeriod` staleness check, L2 sequencer uptime validation, positive price assertion, and `answeredInRound >= roundId` check. Residual risk: if `ethUsdFeed == address(0)` (not yet configured), all instant-route deposits revert.
 
-2. **Rate limit exhaustion / griefing** — A well-funded attacker sends maximum-value instant-route transactions in a single block to exhaust `BLOCK_USD_CAP`, denying service to other users for that block. The cap resets per block but a sustained attacker can repeat this every block. No per-user sub-limit exists. Mitigated by: both block cap and epoch cap are enforced; economic cost of sustained attack scales with the cap value.
+2. **Rate limit exhaustion / griefing** — A well-funded attacker sends maximum-value instant-route transactions in a single block to exhaust `blockUsdCap`, denying service to other users for that block. The cap resets per block but a sustained attacker can repeat this every block. No per-user sub-limit exists. Mitigated by: both block cap and epoch cap are enforced; economic cost of sustained attack scales with the cap value.
 
-3. **CEA impersonation on `sendUniversalTxFromCEA`** — An attacker deploys a contract and calls `sendUniversalTxFromCEA()` claiming to be a CEA to bypass deposit limits or spoof a recipient. Mitigated by: `_isCallerCEA()` queries `CEAFactory.isCEA(msg.sender)` and reverts with `Unauthorized` if false. Residual risk: if `CEA_FACTORY` is `address(0)`, all calls revert (safe but unavailable).
+3. **CEA impersonation on `sendUniversalTxFromCEA`** — An attacker deploys a contract and calls `sendUniversalTxFromCEA()` claiming to be a CEA to bypass deposit limits or spoof a recipient. Mitigated by: `_isCallerCEA()` queries `CEAFactory.isCEA(msg.sender)` and reverts with `Unauthorized` if false. Residual risk: if `ceaFactory` is `address(0)`, all calls revert (safe but unavailable).
 
 4. **Recipient anti-spoof bypass via CEA path** — A legitimate CEA caller sets `req.recipient` to an arbitrary Push Chain address (not its mapped UEA). Mitigated by: `sendUniversalTxFromCEA()` validates `req.recipient == CEAFactory.getPushAccountForCEA(msg.sender)` and reverts if mismatched. Residual risk: CEAFactory returning a wrong UEA mapping (factory compromise, see §3).
 
@@ -105,7 +105,7 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 8. **Non-standard ERC-20 transfer semantics** — Supported tokens with fee-on-transfer behaviour cause revert/rescue flows to receive less than the expected `amount`, potentially locking funds in the gateway. Tokens that revert on zero-transfer can deadlock protocol fee collection. See `docs/SECURITY_ANALYSIS_v1.md` for full analysis.
 
-9. **Protocol fee DoS via non-payable TSS** — If `INBOUND_FEE > 0` and `TSS_ADDRESS` is a contract that reverts on ETH receive, every `_collectProtocolFee()` call fails, blocking all deposits. Same risk applies to `_handleDeposits()` for native ETH. Mitigated by: TSS address should be a plain EOA or a contract with a payable fallback.
+9. **Protocol fee DoS via non-payable TSS** — If `inboundFee > 0` and `tssAddress` is a contract that reverts on ETH receive, every `_collectProtocolFee()` call fails, blocking all deposits. Same risk applies to `_handleDeposits()` for native ETH. Mitigated by: TSS address should be a plain EOA or a contract with a payable fallback.
 
 10. **Storage layout corruption on upgrade** — The gateway uses an upgradeable proxy pattern (`Initializable`). Adding state variables in the wrong position during an implementation upgrade corrupts existing storage slots silently, potentially overwriting balances, roles, or configuration. Admin must follow OpenZeppelin upgrade-safe storage extension patterns (append-only, no gaps moved).
 
@@ -138,7 +138,7 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 2. **CEA reentrancy via multicall payload** — During `_finalizeUniversalTx()`, tokens are transferred to the CEA and then `CEA.executeUniversalTx()` is called. A malicious or compromised CEA multicall payload could reenter `Vault.finalizeUniversalTx()` before the first call completes. Mitigated by: `nonReentrant` modifier on `finalizeUniversalTx()`.
 
-3. **CEAFactory address replaced with attacker-controlled factory** — Admin updates `CEA_FACTORY` to a malicious contract. `finalizeUniversalTx()` calls `getCEAForPushAccount()`, receives an attacker-controlled address, and sends tokens there. Mitigated by: requires `DEFAULT_ADMIN_ROLE`. Residual risk: no timelock; single-block attack if admin is compromised.
+3. **CEAFactory address replaced with attacker-controlled factory** — Admin updates `ceaFactory` to a malicious contract. `finalizeUniversalTx()` calls `getCEAForPushAccount()`, receives an attacker-controlled address, and sends tokens there. Mitigated by: requires `DEFAULT_ADMIN_ROLE`. Residual risk: no timelock; single-block attack if admin is compromised.
 
 4. **Gateway address replaced with malicious contract** — Admin updates `gateway` to an attacker-controlled contract. Vault calls `gateway.revertUniversalTx()` or `gateway.rescueFunds()`, transferring tokens to the fake gateway which retains them. Mitigated by: requires `DEFAULT_ADMIN_ROLE`. Residual risk: no timelock.
 
@@ -185,7 +185,7 @@ The Push Chain Universal Gateway is a two-chain bridging system that routes fund
 
 3. **PRC20 burn returning false (non-standard token)** — If the PRC20 token's `burn()` returns `false` instead of reverting, UGPC checks the return value and reverts with `TokenBurnFailed`. However, `transferFrom()` has already moved tokens to UGPC before the burn call. Tokens are now held in UGPC with no on-chain withdrawal function for regular users. Mitigated by: the check exists and the transaction reverts, rolling back state. Residual risk: if `transferFrom` uses a non-reverting pattern and the `burn` check is missed, tokens could be permanently stranded.
 
-4. **Malicious VaultPC blocking protocol fee delivery** — Admin updates `VAULT_PC` to a contract that reverts on native ETH receive. All `sendUniversalTxOutbound()` calls fail when attempting to forward `protocolFee`. Mitigated by: `setVaultPC()` requires `whenNotPaused`; admin compromise is the prerequisite.
+4. **Malicious VaultPC blocking protocol fee delivery** — Admin updates `vaultPC` to a contract that reverts on native ETH receive. All `sendUniversalTxOutbound()` calls fail when attempting to forward `protocolFee`. Mitigated by: `setVaultPC()` requires `whenNotPaused`; admin compromise is the prerequisite.
 
 5. **Empty transaction gas waste prevention** — `_fetchTxType()` reverts with `InvalidInput` when both `req.amount == 0` and `req.payload.length == 0`. Gas-only spam is impossible because gas fees are charged for all transaction types including payload-only requests.
 

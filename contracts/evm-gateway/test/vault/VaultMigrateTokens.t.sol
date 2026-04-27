@@ -220,7 +220,7 @@ contract VaultMigrateTokensTest is Test {
         gateway.updateVault(address(newVault));
 
         // Verify gateway points to new vault
-        assertEq(gateway.VAULT(), address(newVault));
+        assertEq(gateway.vault(), address(newVault));
         assertTrue(gateway.hasRole(gateway.VAULT_ROLE(), address(newVault)));
         assertFalse(gateway.hasRole(gateway.VAULT_ROLE(), address(vault)));
 

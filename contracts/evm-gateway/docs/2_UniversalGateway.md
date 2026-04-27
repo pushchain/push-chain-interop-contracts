@@ -67,8 +67,8 @@ Key validations: `gasToken != address(0)`, `gasAmount > 0`, `amountOutMinETH > 0
 Dedicated entry point for CEA contracts calling back into the gateway to bridge funds or payloads toward Push Chain.
 
 Before routing, performs four checks (`UniversalGateway.sol:352-364`):
-1. `CEA_FACTORY != address(0)` — factory must be configured.
-2. `ICEAFactory(CEA_FACTORY).isCEA(msg.sender)` — caller must be a deployed CEA.
+1. `ceaFactory != address(0)` — factory must be configured.
+2. `ICEAFactory(ceaFactory).isCEA(msg.sender)` — caller must be a deployed CEA.
 3. `mappedUEA = ICEAFactory.getUEAForCEA(msg.sender)` — must not be `address(0)`.
 4. `req.recipient == mappedUEA` — anti-spoof: prevents crediting arbitrary UEAs.
 
@@ -94,8 +94,8 @@ UniversalGateway enforces two distinct rate-limit systems, aligned with differen
 **Function**: `checkUSDCaps(amount)` (`UniversalGateway.sol:722-726`)
 
 Converts the native amount to USD using the Chainlink ETH/USD oracle, then enforces:
-- `usdValue >= MIN_CAP_UNIVERSAL_TX_USD` — floor to prevent dust spam.
-- `usdValue <= MAX_CAP_UNIVERSAL_TX_USD` — ceiling to bound instant-route exposure.
+- `usdValue >= minCapUniversalTxUsd` — floor to prevent dust spam.
+- `usdValue <= maxCapUniversalTxUsd` — ceiling to bound instant-route exposure.
 
 **Skipped when `nativeValue == 0`** (payload-only `GAS_AND_PAYLOAD` transactions skip all USD cap checks).
 
@@ -106,8 +106,8 @@ Converts the native amount to USD using the Chainlink ETH/USD oracle, then enfor
 Enforces a rolling USD budget per block number:
 - On each new block, `_consumedUSDinBlock` resets to 0.
 - Each GAS/GAS_AND_PAYLOAD transaction with `nativeValue > 0` adds its USD value to `_consumedUSDinBlock`.
-- If the cumulative block spend exceeds `BLOCK_USD_CAP`, the transaction reverts `BlockCapLimitExceeded`.
-- **Disabled when `BLOCK_USD_CAP == 0`** (early exit at line 751).
+- If the cumulative block spend exceeds `blockUsdCap`, the transaction reverts `BlockCapLimitExceeded`.
+- **Disabled when `blockUsdCap == 0`** (early exit at line 751).
 
 ### 3.4 Standard Route — Per-Token Epoch Rate Limit
 
@@ -127,24 +127,24 @@ Every inbound transaction (except CEA self-calls) pays a flat protocol fee in na
 
 | Property | Value |
 |----------|-------|
-| State variable | `INBOUND_FEE` (uint256, wei). Default: 0 (disabled). |
+| State variable | `inboundFee` (uint256, wei). Default: 0 (disabled). |
 | Admin setter | `setProtocolFee(uint256)` — `DEFAULT_ADMIN_ROLE` only. |
 | Accumulator | `totalProtocolFeesCollected` — running total, incremented per-tx. |
-| Destination | Forwarded to `TSS_ADDRESS` via low-level call. |
+| Destination | Forwarded to `tssAddress` via low-level call. |
 | CEA path (`fromCEA=true`) | **Skipped** — fee is already paid on Push Chain. |
 | Insufficient fee | Reverts with `Errors.InsufficientProtocolFee()`. |
 
 **Extraction**: `_collectProtocolFee(nativeValue)` is called inside `_routeUniversalTx` **before** any routing logic. All downstream functions receive the post-fee `nativeValue`.
 
-**Fee mechanics (additive model)**: Users send `msg.value = desiredAmount + INBOUND_FEE`. After extraction, `nativeValue = msg.value - INBOUND_FEE`.
+**Fee mechanics (additive model)**: Users send `msg.value = desiredAmount + inboundFee`. After extraction, `nativeValue = msg.value - inboundFee`.
 
 | TX_TYPE | `msg.value` required | Post-fee `nativeValue` |
 |---------|---------------------|------------------------|
-| `GAS` | `gasTopUp + INBOUND_FEE` | `gasTopUp` |
-| `GAS_AND_PAYLOAD` (with gas) | `gasAmount + INBOUND_FEE` | `gasAmount` |
-| `GAS_AND_PAYLOAD` (payload-only) | `INBOUND_FEE` (or 0 if disabled) | 0 |
-| `FUNDS` (native) | `req.amount + INBOUND_FEE` | `req.amount` |
-| `FUNDS` (ERC-20, no gas batching) | `INBOUND_FEE` (or 0 if disabled) | 0 |
-| `FUNDS` (ERC-20, gas batching) | `gasTopUp + INBOUND_FEE` | `gasTopUp` |
+| `GAS` | `gasTopUp + inboundFee` | `gasTopUp` |
+| `GAS_AND_PAYLOAD` (with gas) | `gasAmount + inboundFee` | `gasAmount` |
+| `GAS_AND_PAYLOAD` (payload-only) | `inboundFee` (or 0 if disabled) | 0 |
+| `FUNDS` (native) | `req.amount + inboundFee` | `req.amount` |
+| `FUNDS` (ERC-20, no gas batching) | `inboundFee` (or 0 if disabled) | 0 |
+| `FUNDS` (ERC-20, gas batching) | `gasTopUp + inboundFee` | `gasTopUp` |
 
 > See [5_InboundTx_Flows.md](./5_InboundTx_Flows.md) for full flow diagrams showing fee extraction in context.

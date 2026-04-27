@@ -203,8 +203,8 @@ interface IUniversalGateway {
 
     /// @notice                  Computes the min and max deposit amounts in native ETH (wei) from USD caps.
     /// @dev                     Uses the current ETH/USD price from getEthUsdPrice().
-    /// @return minValue         Minimum native amount (in wei) allowed by MIN_CAP_UNIVERSAL_TX_USD
-    /// @return maxValue         Maximum native amount (in wei) allowed by MAX_CAP_UNIVERSAL_TX_USD
+    /// @return minValue         Minimum native amount (in wei) allowed by minCapUniversalTxUsd
+    /// @return maxValue         Maximum native amount (in wei) allowed by maxCapUniversalTxUsd
     function getMinMaxValueForNative() external view returns (uint256 minValue, uint256 maxValue);
 
     /// @notice                  Returns both the total token amount used and remaining in the current epoch.
@@ -214,7 +214,7 @@ interface IUniversalGateway {
     function currentTokenUsage(address token) external view returns (uint256 used, uint256 remaining);
 
     /// @notice                  Flat protocol fee in native token (wei). 0 = disabled.
-    function INBOUND_FEE() external view returns (uint256);
+    function inboundFee() external view returns (uint256);
 
     /// @notice                  Running total of protocol fees collected (native, in wei).
     function totalProtocolFeesCollected() external view returns (uint256);

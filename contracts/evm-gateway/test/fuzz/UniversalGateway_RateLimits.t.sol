@@ -16,7 +16,7 @@ contract UniversalGateway_RateLimitsFuzz is BaseTest {
     //   FG-1: BLOCK USD CAP ACCUMULATION
     // =========================================================
 
-    /// @dev Sum of accepted USD values in a block never exceeds BLOCK_USD_CAP.
+    /// @dev Sum of accepted USD values in a block never exceeds blockUsdCap.
     ///      We set a $8000 cap and send two amounts each bounded ≤ 2 ETH ($4000).
     ///      If both fit, neither individually exceeded the cap (single-tx check).
     ///      If the second reverts, it must revert with BlockCapLimitExceeded.
@@ -60,7 +60,7 @@ contract UniversalGateway_RateLimitsFuzz is BaseTest {
         // Invariant: we never reach a state where the block consumed exceeds the cap
     }
 
-    /// @dev A single GAS tx whose USD value exceeds BLOCK_USD_CAP (but is within per-tx USD caps)
+    /// @dev A single GAS tx whose USD value exceeds blockUsdCap (but is within per-tx USD caps)
     ///      must always revert BlockCapLimitExceeded.
     ///      We widen the per-tx caps so the only check that rejects is the block cap.
     function testFuzz_BlockCap_SingleTxExceedingCapReverts(uint256 ethAmount) public {

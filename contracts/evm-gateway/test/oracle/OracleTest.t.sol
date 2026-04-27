@@ -371,10 +371,10 @@ contract OracleTest is BaseTest {
         uint256 amount = 1 ether;
 
         // Fund WETH contract with ETH
-        vm.deal(address(gateway.WETH()), amount);
+        vm.deal(address(gateway.weth()), amount);
 
         // Simulate WETH unwrapping by calling receive directly
-        vm.prank(address(gateway.WETH()));
+        vm.prank(address(gateway.weth()));
         (bool success,) = address(gateway).call{ value: amount }("");
         assertTrue(success, "WETH unwrapping should succeed");
     }
@@ -406,7 +406,7 @@ contract OracleTest is BaseTest {
             10e18, // maxCapUsd
             address(0), // factory = address(0)
             address(0), // router = address(0)
-            address(gateway.WETH())
+            address(gateway.weth())
         );
         TransparentUpgradeableProxy proxy =
             new TransparentUpgradeableProxy(address(impl), admin, initData);

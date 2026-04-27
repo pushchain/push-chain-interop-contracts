@@ -16,7 +16,7 @@ pragma solidity 0.8.26;
  *         1. Revert / rescue paths (revertUniversalTx, rescueFunds) are gated by VAULT_ROLE.
  *            TSS authorization is enforced upstream in the Vault contract (Vault holds the
  *            TSS_ROLE and is the sole holder of VAULT_ROLE here). UniversalGateway itself
- *            does not manage a TSS_ROLE; it only tracks TSS_ADDRESS as the native-fee /
+ *            does not manage a TSS_ROLE; it only tracks tssAddress as the native-fee /
  *            deposit recipient.
  *         2. The token support list (tokenToLimitThreshold) is managed by DEFAULT_ADMIN_ROLE and
  *            is used for rate-limiting and bridge-support validation of ERC20 funds via
@@ -45,7 +45,9 @@ import { ISwapRouter as ISwapRouterV3 } from "@uniswap/v3-periphery/contracts/in
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import { AccessControlDefaultAdminRulesUpgradeable } from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
+import {
+    AccessControlDefaultAdminRulesUpgradeable
+} from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
 import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
@@ -67,18 +69,18 @@ contract UniversalGateway is
     ///         oracle freshness validation by setting the period to 0 or an absurdly small value.
     uint256 public constant MIN_CHAINLINK_STALE_PERIOD = 10 minutes;
 
-    /// @notice Upper bound for INBOUND_FEE. Prevents admin from configuring an absurdly high flat
+    /// @notice Upper bound for inboundFee. Prevents admin from configuring an absurdly high flat
     ///         protocol fee that would DoS or grief users.
     uint256 public constant MAX_INBOUND_FEE = 0.05 ether;
 
     /// @notice MUTABLE — admin-updatable via updateTSS.
-    address public TSS_ADDRESS;
+    address public tssAddress;
     /// @notice MUTABLE — admin-updatable via updateVault.
-    address public VAULT;
+    address public vault;
 
     /// @notice Rate-Limiting CAPS and States
     /// @dev MUTABLE — admin-updatable via setBlockUsdCap.
-    uint256 public BLOCK_USD_CAP;
+    uint256 public blockUsdCap;
     uint256 public epochDurationSec;
     uint256 private _lastBlockNumber;
     /// @dev Storage slot preserved from previous `_consumedUSDinBlock` (pre-converted USD total).
@@ -87,16 +89,16 @@ contract UniversalGateway is
     ///      across intra-block oracle updates.
     uint256 private _consumedWeiInBlock;
     /// @dev MUTABLE — admin-updatable via setCapsUSD.
-    uint256 public MIN_CAP_UNIVERSAL_TX_USD;
+    uint256 public minCapUniversalTxUsd;
     /// @dev MUTABLE — admin-updatable via setCapsUSD.
-    uint256 public MAX_CAP_UNIVERSAL_TX_USD;
+    uint256 public maxCapUniversalTxUsd;
     mapping(address => uint256) public tokenToLimitThreshold;
     mapping(address => EpochUsage) private _usage;
 
     /// @notice Uniswap V3 factory & router (chain-specific)
     /// @dev MUTABLE — set in initialize only.
     ///      (No runtime setter currently, but the slot is storage and upgradable.)
-    address public WETH;
+    address public weth;
     ISwapRouterV3 public uniV3Router;
     IUniswapV3Factory public uniV3Factory;
     uint256 public defaultSwapDeadlineSec;
@@ -112,10 +114,10 @@ contract UniversalGateway is
     mapping(bytes32 => bool) public isExecuted;
 
     /// @notice MUTABLE — admin-updatable via setCEAFactory.
-    address public CEA_FACTORY;
+    address public ceaFactory;
 
     /// @notice MUTABLE — admin-updatable via setProtocolFee.
-    uint256 public INBOUND_FEE;
+    uint256 public inboundFee;
 
     uint256 public totalProtocolFeesCollected;
 
@@ -166,12 +168,12 @@ contract UniversalGateway is
         _grantRole(PAUSER_ROLE, pauser);
         _grantRole(VAULT_ROLE, vaultAddress);
 
-        TSS_ADDRESS = tss;
-        VAULT = vaultAddress;
-        MIN_CAP_UNIVERSAL_TX_USD = minCapUsd;
-        MAX_CAP_UNIVERSAL_TX_USD = maxCapUsd;
+        tssAddress = tss;
+        vault = vaultAddress;
+        minCapUniversalTxUsd = minCapUsd;
+        maxCapUniversalTxUsd = maxCapUsd;
 
-        WETH = wethAddress;
+        weth = wethAddress;
         if ((factory == address(0)) != (router == address(0))) {
             revert Errors.ZeroAddress();
         }
@@ -204,26 +206,26 @@ contract UniversalGateway is
 
     /// @notice                Allows the admin to update the TSS address.
     /// @dev                   TSS authorization in UG is enforced via the
-    ///                        `TSS_ADDRESS` state variable (used as the native-fee / deposit
+    ///                        `tssAddress` state variable (used as the native-fee / deposit
     ///                        recipient). No `TSS_ROLE` role is managed here; TSS role
     ///                        enforcement for outbound operations lives in the Vault contract.
     /// @param newTSS          New TSS address.
     function updateTSS(address newTSS) external onlyRole(OPERATOR_ROLE) {
         if (newTSS == address(0)) revert Errors.ZeroAddress();
-        TSS_ADDRESS = newTSS;
+        tssAddress = newTSS;
     }
 
     /// @notice                Allows the admin to update the Vault address
     /// @param newVault        New Vault address
     function updateVault(address newVault) external onlyRole(OPERATOR_ROLE) {
         if (newVault == address(0)) revert Errors.ZeroAddress();
-        address old = VAULT;
+        address old = vault;
 
         // transfer role
         if (hasRole(VAULT_ROLE, old)) _revokeRole(VAULT_ROLE, old);
         _grantRole(VAULT_ROLE, newVault);
 
-        VAULT = newVault;
+        vault = newVault;
         emit VaultUpdated(old, newVault);
     }
 
@@ -233,15 +235,15 @@ contract UniversalGateway is
     function setCapsUSD(uint256 minCapUsd, uint256 maxCapUsd) external onlyRole(UG_ADMIN_ROLE) whenNotPaused {
         if (minCapUsd > maxCapUsd) revert Errors.InvalidCapRange();
 
-        MIN_CAP_UNIVERSAL_TX_USD = minCapUsd;
-        MAX_CAP_UNIVERSAL_TX_USD = maxCapUsd;
+        minCapUniversalTxUsd = minCapUsd;
+        maxCapUniversalTxUsd = maxCapUsd;
         emit CapsUpdated(minCapUsd, maxCapUsd);
     }
 
     /// @notice                Set the per-block USD cap for GAS routes (1e18 = $1). 0 disables.
     /// @param cap1e18         Per-block USD cap scaled to 1e18
     function setBlockUsdCap(uint256 cap1e18) external onlyRole(UG_ADMIN_ROLE) whenNotPaused {
-        BLOCK_USD_CAP = cap1e18;
+        blockUsdCap = cap1e18;
     }
 
     /// @notice                Set the default swap deadline window (used when caller passes deadline = 0)
@@ -342,7 +344,7 @@ contract UniversalGateway is
     /// @param newFactory      New CEAFactory address
     function updateCEAFactory(address newFactory) external onlyRole(OPERATOR_ROLE) {
         if (newFactory == address(0)) revert Errors.ZeroAddress();
-        CEA_FACTORY = newFactory;
+        ceaFactory = newFactory;
     }
 
     /// @notice                Set the flat protocol fee (in wei). 0 disables.
@@ -351,7 +353,7 @@ contract UniversalGateway is
     /// @param fee             New protocol fee in wei
     function setProtocolFee(uint256 fee) external onlyRole(UG_ADMIN_ROLE) {
         if (fee > MAX_INBOUND_FEE) revert Errors.InvalidInput();
-        INBOUND_FEE = fee;
+        inboundFee = fee;
         emit ProtocolFeeUpdated(fee);
     }
 
@@ -393,10 +395,10 @@ contract UniversalGateway is
 
     /// @inheritdoc IUniversalGateway
     function sendUniversalTxFromCEA(UniversalTxRequest calldata req) external payable nonReentrant whenNotPaused {
-        if (CEA_FACTORY == address(0)) revert Errors.InvalidInput();
+        if (ceaFactory == address(0)) revert Errors.InvalidInput();
         if (!_isCallerCEA()) revert Errors.InvalidInput();
 
-        address mappedUEA = ICEAFactory(CEA_FACTORY).getPushAccountForCEA(_msgSender());
+        address mappedUEA = ICEAFactory(ceaFactory).getPushAccountForCEA(_msgSender());
         if (mappedUEA == address(0)) revert Errors.InvalidInput();
 
         if (req.recipient != mappedUEA) revert Errors.InvalidRecipient();
@@ -455,8 +457,8 @@ contract UniversalGateway is
         if (txType == TX_TYPE.FUNDS) {
             address tokenForFunds;
             // Case 1.1: Token to bridge is Native Token -> address(0)
-            // req.amount = desired bridge amount (fee is additive: msg.value = req.amount + INBOUND_FEE).
-            // nativeValue is post-fee (= msg.value - INBOUND_FEE = req.amount).
+            // req.amount = desired bridge amount (fee is additive: msg.value = req.amount + inboundFee).
+            // nativeValue is post-fee (= msg.value - inboundFee = req.amount).
             if (_req.token == address(0)) {
                 if (_req.amount != nativeValue) revert Errors.InvalidAmount();
                 tokenForFunds = address(0);
@@ -691,8 +693,8 @@ contract UniversalGateway is
     /// @inheritdoc IUniversalGateway
     function getMinMaxValueForNative() external view returns (uint256 minValue, uint256 maxValue) {
         (uint256 ethUsdPrice,) = getEthUsdPrice(); // ETH price in USD (1e18 scaled)
-        minValue = (MIN_CAP_UNIVERSAL_TX_USD * 1e18) / ethUsdPrice;
-        maxValue = (MAX_CAP_UNIVERSAL_TX_USD * 1e18) / ethUsdPrice;
+        minValue = (minCapUniversalTxUsd * 1e18) / ethUsdPrice;
+        maxValue = (maxCapUniversalTxUsd * 1e18) / ethUsdPrice;
     }
 
     /// @notice                 Returns the ETH/USD price scaled to 1e18 (i.e., USD with 18 decimals).
@@ -782,11 +784,11 @@ contract UniversalGateway is
     // ==============================
 
     /// @dev Returns true if the caller is a CEA deployed by the configured factory.
-    ///      Returns false when CEA_FACTORY is not set, preserving backward compatibility.
+    ///      Returns false when ceaFactory is not set, preserving backward compatibility.
     ///      Used by sendUniversalTxFromCEA and sendUniversalTx to enforce CEA identity.
     function _isCallerCEA() private view returns (bool) {
-        if (CEA_FACTORY == address(0)) return false;
-        return ICEAFactory(CEA_FACTORY).isCEA(_msgSender());
+        if (ceaFactory == address(0)) return false;
+        return ICEAFactory(ceaFactory).isCEA(_msgSender());
     }
 
     /// @dev                    Check if the amount is within the USD cap range.
@@ -794,8 +796,8 @@ contract UniversalGateway is
     /// @param amount           Amount to check
     function checkUSDCaps(uint256 amount) public view {
         uint256 usdValue = quoteEthAmountInUsd1e18(amount);
-        if (usdValue < MIN_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
-        if (usdValue > MAX_CAP_UNIVERSAL_TX_USD) revert Errors.InvalidAmount();
+        if (usdValue < minCapUniversalTxUsd) revert Errors.InvalidAmount();
+        if (usdValue > maxCapUniversalTxUsd) revert Errors.InvalidAmount();
     }
 
     /// @dev                    Handle deposits of native ETH or ERC20 tokens.
@@ -806,7 +808,7 @@ contract UniversalGateway is
     function _handleDeposits(address token, uint256 amount) internal {
         if (token == address(0)) {
             // Handle native ETH deposit to TSS
-            (bool ok,) = payable(TSS_ADDRESS).call{ value: amount }("");
+            (bool ok,) = payable(tssAddress).call{ value: amount }("");
             if (!ok) revert Errors.DepositFailed();
         } else {
             // Handle ERC20 token deposit to Vault.
@@ -814,15 +816,15 @@ contract UniversalGateway is
             // fewer tokens than `amount`, accounting/rate-limiting upstream would be wrong and
             // the revert/rescue paths would later break.
             if (tokenToLimitThreshold[token] == 0) revert Errors.NotSupported();
-            uint256 balBefore = IERC20(token).balanceOf(VAULT);
-            IERC20(token).safeTransferFrom(_msgSender(), VAULT, amount);
-            uint256 received = IERC20(token).balanceOf(VAULT) - balBefore;
+            uint256 balBefore = IERC20(token).balanceOf(vault);
+            IERC20(token).safeTransferFrom(_msgSender(), vault, amount);
+            uint256 received = IERC20(token).balanceOf(vault) - balBefore;
             if (received != amount) revert Errors.InvalidAmount();
         }
     }
 
     /// @dev                    Enforce per-block USD budget for GAS routes.
-    ///                         BLOCK_USD_CAP is denominated in USD(1e18). When 0, the feature is disabled.
+    ///                         blockUsdCap is denominated in USD(1e18). When 0, the feature is disabled.
     ///                         Resets the window when a new block is observed.
     /// @dev                    Accumulates raw native wei per block and converts the
     ///                         running total to USD at the current oracle price on each check.
@@ -830,7 +832,7 @@ contract UniversalGateway is
     ///                         within the same block (mixed-price accounting).
     /// @param amountWei        Native amount (in wei) to account against the current block's USD budget
     function _checkBlockUSDCap(uint256 amountWei) private {
-        uint256 cap = BLOCK_USD_CAP;
+        uint256 cap = blockUsdCap;
         if (cap == 0) return;
 
         if (block.number != _lastBlockNumber) {
@@ -895,12 +897,12 @@ contract UniversalGateway is
         }
         if (address(uniV3Router) == address(0) || address(uniV3Factory) == address(0)) revert Errors.InvalidInput();
 
-        if (tokenIn == WETH) {
+        if (tokenIn == weth) {
             // Fast-path: pull WETH from user and unwrap to native
-            IERC20(WETH).safeTransferFrom(_msgSender(), address(this), amountIn);
+            IERC20(weth).safeTransferFrom(_msgSender(), address(this), amountIn);
 
             uint256 balanceBeforeUnwrap = address(this).balance;
-            IWETH(WETH).withdraw(amountIn);
+            IWETH(weth).withdraw(amountIn);
             ethOut = address(this).balance - balanceBeforeUnwrap;
 
             // Slippage bound still applies for a consistent interface (caller can set to amountIn)
@@ -919,7 +921,7 @@ contract UniversalGateway is
 
         ISwapRouterV3.ExactInputSingleParams memory params = ISwapRouterV3.ExactInputSingleParams({
             tokenIn: tokenIn,
-            tokenOut: WETH,
+            tokenOut: weth,
             fee: fee,
             recipient: address(this),
             deadline: deadline,
@@ -933,7 +935,7 @@ contract UniversalGateway is
         IERC20(tokenIn).forceApprove(address(uniV3Router), 0);
 
         uint256 balanceBeforeSwapUnwrap = address(this).balance;
-        IWETH(WETH).withdraw(wethOut);
+        IWETH(weth).withdraw(wethOut);
         ethOut = address(this).balance - balanceBeforeSwapUnwrap;
 
         // Defensive: enforce the bound again after unwrap
@@ -946,12 +948,12 @@ contract UniversalGateway is
     /// @return pool            The Uniswap V3 pool contract
     /// @return fee             The fee tier of the pool
     function _findV3PoolWithNative(address tokenIn) internal view returns (IUniswapV3Pool pool, uint24 fee) {
-        if (tokenIn == address(0) || WETH == address(0)) revert Errors.ZeroAddress();
+        if (tokenIn == address(0) || weth == address(0)) revert Errors.ZeroAddress();
 
         // Try fee tiers in the configured order
         for (uint256 i = 0; i < v3FeeOrder.length; i++) {
             uint24 tier = v3FeeOrder[i];
-            address p = IUniswapV3Factory(uniV3Factory).getPool(tokenIn, WETH, tier);
+            address p = IUniswapV3Factory(uniV3Factory).getPool(tokenIn, weth, tier);
             if (p != address(0)) {
                 return (IUniswapV3Pool(p), tier);
             }
@@ -995,7 +997,7 @@ contract UniversalGateway is
                 return TX_TYPE.FUNDS;
             }
             // Case 1.2: ERC-20 Funds Only.
-            // FUNDS (ERC-20) — native value may be 0 (no fee) or equal to INBOUND_FEE
+            // FUNDS (ERC-20) — native value may be 0 (no fee) or equal to inboundFee
             // The exact native amount is validated post-fee-extraction in _sendTxWithFunds
             if (!fundsIsNative) {
                 return TX_TYPE.FUNDS;
@@ -1006,7 +1008,7 @@ contract UniversalGateway is
         // For TX_TYPE.FUNDS_AND_PAYLOAD: Case 2: (Native/ERC20 Funds) + Payload
         if (hasPayload && hasFunds) {
             // Case 2.1: No batching (ERC-20 funds, user already has UEA gas)
-            // Native value may be 0 (no fee) or equal to INBOUND_FEE; resolved post-fee in _sendTxWithFunds
+            // Native value may be 0 (no fee) or equal to inboundFee; resolved post-fee in _sendTxWithFunds
             if (!fundsIsNative) {
                 return TX_TYPE.FUNDS_AND_PAYLOAD;
             }
@@ -1026,14 +1028,14 @@ contract UniversalGateway is
     /// @return adjustedNative  nativeValue minus the collected fee
     /// @return feeCollected    Amount forwarded to TSS as the protocol fee
     function _collectInboundFee(uint256 nativeValue) private returns (uint256 adjustedNative, uint256 feeCollected) {
-        uint256 fee = INBOUND_FEE;
+        uint256 fee = inboundFee;
         if (fee == 0) return (nativeValue, 0);
 
-        // Every tx must supply at least INBOUND_FEE in native
+        // Every tx must supply at least inboundFee in native
         if (nativeValue < fee) revert Errors.InsufficientProtocolFee();
 
         // Forward fee to TSS
-        (bool ok,) = payable(TSS_ADDRESS).call{ value: fee }("");
+        (bool ok,) = payable(tssAddress).call{ value: fee }("");
         if (!ok) revert Errors.DepositFailed();
 
         return (nativeValue - fee, fee);
@@ -1092,6 +1094,6 @@ contract UniversalGateway is
     /// @dev Reject plain ETH; only accept ETH via explicit deposit functions or WETH unwrapping.
     receive() external payable {
         // Allow WETH unwrapping; block unexpected sends.
-        if (msg.sender != WETH) revert Errors.DepositFailed();
+        if (msg.sender != weth) revert Errors.DepositFailed();
     }
 }

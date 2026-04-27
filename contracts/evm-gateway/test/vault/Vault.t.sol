@@ -801,7 +801,7 @@ contract VaultTest is Test {
     }
 
     function test_ExecuteUniversalTx_Setup_MockCEAFactoryVaultSet() public view {
-        assertEq(ceaFactory.VAULT(), address(vault));
+        assertEq(ceaFactory.vault(), address(vault));
     }
 
     // B. Access Control (3 tests)

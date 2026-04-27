@@ -27,7 +27,7 @@ This is the normal, expected revert path for all standard bridging operations.
 
 ### 2.2 How fees are covered
 
-The inbound protocol fee (`INBOUND_FEE`) is collected from `msg.value` at the time of the original deposit. This fee covers the cost of the revert operation — no additional payment is required from the user when their funds are returned.
+The inbound protocol fee (`inboundFee`) is collected from `msg.value` at the time of the original deposit. This fee covers the cost of the revert operation — no additional payment is required from the user when their funds are returned.
 
 ### 2.3 Unified Revert Function
 
@@ -122,7 +122,7 @@ rescueFundsOnSourceChain(bytes32 universalTxId, address prc20) external payable
 ```
 
 - `prc20` must be non-zero (identifies the token and resolves the source chain).
-- Calls `IUniversalCore(UNIVERSAL_CORE).getRescueFundsGasLimit(prc20)` to obtain: `gasToken`, `gasFee`, `rescueGasLimit`, `gasPrice`, `chainNamespace`.
+- Calls `IUniversalCore(universalCore).getRescueFundsGasLimit(prc20)` to obtain: `gasToken`, `gasFee`, `rescueGasLimit`, `gasPrice`, `chainNamespace`.
 - All of `msg.value` goes to `_swapAndCollectFees(gasToken, msg.value, gasFee)` — no protocol fee split.
 - Emits `RescueFundsOnSourceChain(universalTxId, prc20, chainNamespace, msg.sender, TX_TYPE.RESCUE_FUNDS, gasFee, gasPrice, rescueGasLimit)`.
 
@@ -169,7 +169,7 @@ sequenceDiagram
 |----------|-------------|---------------|
 | Trigger | TSS (automatic) | Anyone with `universalTxId` |
 | Applies to | All inbound `sendUniversalTx` paths | `sendUniversalTxFromCEA` edge case |
-| Fee | Covered by `INBOUND_FEE` already collected | Caller pays gas in native PC |
+| Fee | Covered by `inboundFee` already collected | Caller pays gas in native PC |
 | Protocol fee | N/A | None (no protocol fee split) |
 | Push Chain entry point | N/A (TSS-initiated directly) | `UGPC.rescueFundsOnSourceChain` |
 | Source chain entry point | `Vault.revertUniversalTx` | `Vault.rescueFunds` |

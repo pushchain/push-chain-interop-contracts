@@ -63,19 +63,19 @@ contract VerifyDeployment is Script {
         // ============================================================
         console.log("--- Category 2: Cross-Contract Consistency ---");
 
-        address gwVault = gateway.VAULT();
+        address gwVault = gateway.vault();
         address vGateway = address(vault.gateway());
-        address gwTss = gateway.TSS_ADDRESS();
-        address gwCeaFactory = gateway.CEA_FACTORY();
+        address gwTss = gateway.tssAddress();
+        address gwCeaFactory = gateway.ceaFactory();
         address vCeaFactory = address(vault.CEAFactory());
 
         failures += _check(gwVault == vaultProxy, "Gateway.VAULT == Vault proxy");
         failures += _check(vGateway == gatewayProxy, "Vault.gateway == Gateway proxy");
-        failures += _check(gwCeaFactory == vCeaFactory, "Gateway.CEA_FACTORY == Vault.CEAFactory");
-        failures += _check(vault.hasRole(vault.TSS_ROLE(), gwTss), "Vault.TSS_ROLE granted to Gateway.TSS_ADDRESS");
+        failures += _check(gwCeaFactory == vCeaFactory, "Gateway.ceaFactory == Vault.CEAFactory");
+        failures += _check(vault.hasRole(vault.TSS_ROLE(), gwTss), "Vault.TSS_ROLE granted to Gateway.tssAddress");
 
-        console.log("  TSS_ADDRESS:", gwTss);
-        console.log("  CEA_FACTORY:", gwCeaFactory);
+        console.log("  tssAddress:", gwTss);
+        console.log("  ceaFactory:", gwCeaFactory);
         console.log("");
 
         // ============================================================
@@ -105,7 +105,7 @@ contract VerifyDeployment is Script {
         failures += _check(stalePeriod <= 86400, "chainlinkStalePeriod <= 86400");
         console.log("  chainlinkStalePeriod:", stalePeriod, "sec");
 
-        address weth = gateway.WETH();
+        address weth = gateway.weth();
         failures += _check(weth != address(0), "WETH is set");
         failures += _check(_hasCode(weth), "WETH has code");
 
@@ -134,8 +134,8 @@ contract VerifyDeployment is Script {
         bytes32 tssRole = keccak256("TSS_ROLE");
 
         failures += _check(gateway.hasRole(vaultRole, gwVault), "Gateway: VAULT_ROLE granted to Vault");
-        // UG no longer manages TSS_ROLE; verify TSS_ADDRESS directly.
-        failures += _check(gateway.TSS_ADDRESS() == gwTss, "Gateway: TSS_ADDRESS set to TSS");
+        // UG no longer manages TSS_ROLE; verify tssAddress directly.
+        failures += _check(gateway.tssAddress() == gwTss, "Gateway: tssAddress set to TSS");
         failures += _check(vault.hasRole(tssRole, gwTss), "Vault: TSS_ROLE granted to TSS");
 
         // ProxyAdmin owners
@@ -158,12 +158,12 @@ contract VerifyDeployment is Script {
         // ============================================================
         console.log("--- Category 5: Rate Limits & Config ---");
 
-        uint256 minCap = gateway.MIN_CAP_UNIVERSAL_TX_USD();
-        uint256 maxCap = gateway.MAX_CAP_UNIVERSAL_TX_USD();
+        uint256 minCap = gateway.minCapUniversalTxUsd();
+        uint256 maxCap = gateway.maxCapUniversalTxUsd();
         uint256 epochDuration = gateway.epochDurationSec();
         uint256 swapDeadline = gateway.defaultSwapDeadlineSec();
 
-        failures += _check(minCap > 0, "MIN_CAP_UNIVERSAL_TX_USD > 0");
+        failures += _check(minCap > 0, "minCapUniversalTxUsd > 0");
         failures += _check(maxCap > minCap, "MAX_CAP > MIN_CAP");
         failures += _check(epochDuration > 0, "epochDurationSec > 0");
         failures += _check(swapDeadline > 0, "defaultSwapDeadlineSec > 0");
@@ -198,8 +198,8 @@ contract VerifyDeployment is Script {
         // ============================================================
         console.log("--- Category 7: CEA Factory ---");
 
-        failures += _check(gwCeaFactory != address(0), "CEA_FACTORY is set");
-        failures += _check(_hasCode(gwCeaFactory), "CEA_FACTORY has code");
+        failures += _check(gwCeaFactory != address(0), "ceaFactory is set");
+        failures += _check(_hasCode(gwCeaFactory), "ceaFactory has code");
 
         if (gwCeaFactory != address(0) && _hasCode(gwCeaFactory)) {
             (bool isCeaOk, bytes memory isCeaData) = gwCeaFactory.staticcall(
@@ -220,9 +220,9 @@ contract VerifyDeployment is Script {
         // ============================================================
         console.log("--- Category 8: Fee & Protocol (Info) ---");
 
-        uint256 inboundFee = gateway.INBOUND_FEE();
+        uint256 inboundFee = gateway.inboundFee();
         uint256 totalFees = gateway.totalProtocolFeesCollected();
-        console.log("  INBOUND_FEE:", inboundFee, "wei");
+        console.log("  inboundFee:", inboundFee, "wei");
         console.log("  totalProtocolFeesCollected:", totalFees, "wei");
         console.log("");
 

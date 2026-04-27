@@ -1087,7 +1087,7 @@ sequenceDiagram
 
 **Steps:**
 1. Validate `prc20 != address(0)`.
-2. Call `IUniversalCore(UNIVERSAL_CORE).getRescueFundsGasLimit(prc20)`, which returns `(gasToken, gasFee, rescueGasLimit, gasPrice, chainNamespace)` — UniversalCore is the single source of truth for rescue gas parameters.
+2. Call `IUniversalCore(universalCore).getRescueFundsGasLimit(prc20)`, which returns `(gasToken, gasFee, rescueGasLimit, gasPrice, chainNamespace)` — UniversalCore is the single source of truth for rescue gas parameters.
 3. Swap `msg.value` → gas token via `_swapAndCollectFees(gasToken, msg.value, gasFee)`. Excess PC refunded to caller.
 4. Emit `RescueFundsOnSourceChain` with `TX_TYPE.RESCUE_FUNDS`.
 

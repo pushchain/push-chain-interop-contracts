@@ -182,7 +182,7 @@ contract DeployVaultPC is Script, VaultPCConfig {
         console.log("========================================");
         console.log("");
         console.log("NEXT STEPS:");
-        console.log("1. Deploy UniversalGatewayPC with VAULT_PC=%s", vaultPCProxy);
+        console.log("1. Deploy UniversalGatewayPC with vaultPC=%s", vaultPCProxy);
         console.log("2. Verify contracts on block explorer");
         console.log("3. Transfer roles if needed");
         console.log("4. Test fee collection and withdrawal");

@@ -294,7 +294,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
     }
 
     /// @notice Test amount=0 fails USD cap check
-    /// @dev Zero amount results in 0 USD which is below MIN_CAP_UNIVERSAL_TX_USD
+    /// @dev Zero amount results in 0 USD which is below minCapUniversalTxUsd
     function test_SendTxWithGas_GAS_RevertOn_ZeroAmount() public {
         // Arrange
         UniversalTxRequest memory req = buildUniversalTxRequest(address(0), address(0), 0, bytes(""));
@@ -308,7 +308,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
     //      C2: PER-TX USD CAP RANGE
     // =========================
 
-    /// @notice Test amount below MIN_CAP_UNIVERSAL_TX_USD reverts
+    /// @notice Test amount below minCapUniversalTxUsd reverts
     /// @dev At $2000/ETH, $1 min = 0.0005 ETH. Test with 0.0004 ETH ($0.80)
     function test_SendTxWithGas_RevertOn_BelowMinCap() public {
         // Arrange: At $2000/ETH, 0.0004 ETH = $0.80 (below $1 min)
@@ -326,7 +326,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
         gatewayTemp.sendUniversalTx{ value: gasAmount }(req);
     }
 
-    /// @notice Test amount above MAX_CAP_UNIVERSAL_TX_USD reverts
+    /// @notice Test amount above maxCapUniversalTxUsd reverts
     /// @dev At $2000/ETH, $10 max = 0.005 ETH. Test with 0.006 ETH ($12)
     function test_SendTxWithGas_RevertOn_AboveMaxCap() public {
         // Arrange: At $2000/ETH, 0.006 ETH = $12 (above $10 max)
@@ -344,7 +344,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
         gatewayTemp.sendUniversalTx{ value: gasAmount }(req);
     }
 
-    /// @notice Test amount exactly at MIN_CAP_UNIVERSAL_TX_USD succeeds
+    /// @notice Test amount exactly at minCapUniversalTxUsd succeeds
     /// @dev At $2000/ETH, $1 min = 0.0005 ETH exactly
     function test_SendTxWithGas_SucceedsAt_ExactMinCap() public {
         // Arrange: At $2000/ETH, 0.0005 ETH = exactly $1
@@ -374,10 +374,10 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
     // NOTE: Most of these tests are already in test/gateway/5_GatewayBlockRateLimit.t.sol - Skipping here
 
     /// @notice Test block cap disabled (cap=0) allows unlimited calls
-    /// @dev With BLOCK_USD_CAP=0, should accept any number of calls in same block
+    /// @dev With blockUsdCap=0, should accept any number of calls in same block
     function test_SendTxWithGas_BlockCap_Disabled_AllowsUnlimited() public {
         // Arrange: Ensure block cap is 0 (disabled by default)
-        assertEq(gatewayTemp.BLOCK_USD_CAP(), 0, "Block cap should be 0 by default");
+        assertEq(gatewayTemp.blockUsdCap(), 0, "Block cap should be 0 by default");
 
         uint256 gasAmount = 0.002 ether; // $4 per call at $2000/ETH
 

@@ -215,7 +215,7 @@ function revertUniversalTxToken(
 **Update TSS** (`setTSS`):
 - Revokes `TSS_ROLE` from old TSS
 - Grants `TSS_ROLE` to new TSS
-- Updates `TSS_ADDRESS` state variable
+- Updates `tssAddress` state variable
 - Only `DEFAULT_ADMIN_ROLE`
 - Emits `TSSUpdated(old, new)`
 
@@ -329,8 +329,8 @@ When testing Vault operations:
 
    **A. Instant Transactions (Low Block Confirmation)**
    - Applies to: `TX_TYPE.GAS` and `TX_TYPE.GAS_AND_PAYLOAD`
-   - Per-transaction USD caps: `MIN_CAP_UNIVERSAL_TX_USD` to `MAX_CAP_UNIVERSAL_TX_USD` (enforced via `checkUSDCaps`)
-   - Per-block USD budget: `BLOCK_USD_CAP` (enforced via `_checkBlockUSDCap`)
+   - Per-transaction USD caps: `minCapUniversalTxUsd` to `maxCapUniversalTxUsd` (enforced via `checkUSDCaps`)
+   - Per-block USD budget: `blockUsdCap` (enforced via `_checkBlockUSDCap`)
    - Uses Chainlink ETH/USD oracle for USD valuation
 
    **B. Standard Transactions (High Block Confirmation)**

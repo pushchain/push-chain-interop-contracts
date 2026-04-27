@@ -5,7 +5,7 @@ import { BaseTest } from "../BaseTest.t.sol";
 import { Errors } from "../../src/libraries/Errors.sol";
 import { UniversalTxRequest } from "../../src/libraries/TypesUG.sol";
 
-/// @notice Fuzz tests for protocol fee (INBOUND_FEE) extraction and accumulation in UniversalGateway.
+/// @notice Fuzz tests for protocol fee (inboundFee) extraction and accumulation in UniversalGateway.
 contract UniversalGateway_ProtocolFeeFuzz is BaseTest {
     // GAS tx: non-empty payload, no funds, native value in [$1, $10] at $2000/ETH.
     // $1 = 5e14 wei; $10 = 5e15 wei. Use 3e15 ($6) as a safe mid-range value.
@@ -15,7 +15,7 @@ contract UniversalGateway_ProtocolFeeFuzz is BaseTest {
     //   FG-3: PROTOCOL FEE ACCUMULATION INVARIANT
     // =========================================================
 
-    /// @dev totalProtocolFeesCollected increments exactly by INBOUND_FEE per accepted tx.
+    /// @dev totalProtocolFeesCollected increments exactly by inboundFee per accepted tx.
     function testFuzz_ProtocolFee_AccumulatesCorrectly(uint64 feeWei, uint8 txCount) public {
         feeWei  = uint64(bound(feeWei,  0, 0.01 ether));
         txCount = uint8(bound(txCount, 1, 10));
@@ -41,7 +41,7 @@ contract UniversalGateway_ProtocolFeeFuzz is BaseTest {
         );
     }
 
-    /// @dev Any msg.value strictly below INBOUND_FEE must revert InsufficientProtocolFee.
+    /// @dev Any msg.value strictly below inboundFee must revert InsufficientProtocolFee.
     function testFuzz_ProtocolFee_InsufficientValueReverts(uint64 feeWei, uint64 sentWei) public {
         feeWei  = uint64(bound(feeWei,  1, 0.05 ether));
         sentWei = uint64(bound(sentWei, 0, uint256(feeWei) - 1));

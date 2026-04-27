@@ -205,23 +205,23 @@ contract DeployGateway is Script, GatewayConfig {
         UniversalGateway gateway = UniversalGateway(payable(gatewayProxy));
 
         // Verify initialization parameters
-        require(gateway.VAULT() == cfg.vault, "Vault address mismatch");
-        require(gateway.TSS_ADDRESS() == tss, "TSS address mismatch");
-        require(gateway.MIN_CAP_UNIVERSAL_TX_USD() == cfg.minCapUsd, "Min cap mismatch");
-        require(gateway.MAX_CAP_UNIVERSAL_TX_USD() == cfg.maxCapUsd, "Max cap mismatch");
-        require(gateway.WETH() == cfg.weth, "WETH mismatch");
+        require(gateway.vault() == cfg.vault, "Vault address mismatch");
+        require(gateway.tssAddress() == tss, "TSS address mismatch");
+        require(gateway.minCapUniversalTxUsd() == cfg.minCapUsd, "Min cap mismatch");
+        require(gateway.maxCapUniversalTxUsd() == cfg.maxCapUsd, "Max cap mismatch");
+        require(gateway.weth() == cfg.weth, "WETH mismatch");
         require(address(gateway.ethUsdFeed()) == cfg.ethUsdFeed, "ETH/USD feed mismatch");
         require(gateway.chainlinkStalePeriod() == cfg.chainlinkStalePeriodSec, "Staleness mismatch");
 
         // Verify roles
         require(gateway.hasRole(gateway.DEFAULT_ADMIN_ROLE(), admin), "Admin role not set");
         require(gateway.hasRole(gateway.PAUSER_ROLE(), pauser), "Pauser role not set");
-        // UG no longer manages TSS_ROLE; TSS_ADDRESS is the authority signal here.
-        require(gateway.TSS_ADDRESS() == tss, "TSS_ADDRESS not set");
+        // UG no longer manages TSS_ROLE; tssAddress is the authority signal here.
+        require(gateway.tssAddress() == tss, "tssAddress not set");
 
         // Verify CEA Factory if set
         if (cfg.ceaFactory != address(0)) {
-            require(gateway.CEA_FACTORY() == cfg.ceaFactory, "CEA_FACTORY mismatch");
+            require(gateway.ceaFactory() == cfg.ceaFactory, "ceaFactory mismatch");
         }
 
         console.log("OK: All parameters verified");

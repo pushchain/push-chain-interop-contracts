@@ -35,9 +35,9 @@ contract UniversalGatewayPC is
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     /// @notice MUTABLE — admin-updatable via updateUniversalCore.
-    address public UNIVERSAL_CORE;
+    address public universalCore;
     /// @notice MUTABLE — admin-updatable via setVaultPC.
-    IVaultPC public VAULT_PC;
+    IVaultPC public vaultPC;
     uint256 public nonce;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -50,10 +50,10 @@ contract UniversalGatewayPC is
 
     /// @param admin            Address of the admin.
     /// @param pauser           Address of the pauser.
-    /// @param universalCore    Address of the UniversalCore.
-    /// @param vaultPC          Address of the VaultPC.
-    function initialize(address admin, address pauser, address universalCore, address vaultPC) external initializer {
-        if (admin == address(0) || pauser == address(0) || universalCore == address(0) || vaultPC == address(0)) {
+    /// @param _universalCore   Address of the UniversalCore.
+    /// @param _vaultPC         Address of the VaultPC.
+    function initialize(address admin, address pauser, address _universalCore, address _vaultPC) external initializer {
+        if (admin == address(0) || pauser == address(0) || _universalCore == address(0) || _vaultPC == address(0)) {
             revert Errors.ZeroAddress();
         }
 
@@ -68,8 +68,8 @@ contract UniversalGatewayPC is
         _grantRole(OPERATOR_ROLE, admin);
         _grantRole(PAUSER_ROLE, pauser);
 
-        UNIVERSAL_CORE = universalCore;
-        VAULT_PC = IVaultPC(vaultPC);
+        universalCore = _universalCore;
+        vaultPC = IVaultPC(_vaultPC);
     }
 
     function pause() external onlyRole(PAUSER_ROLE) whenNotPaused {
@@ -81,23 +81,23 @@ contract UniversalGatewayPC is
     }
 
     /// @notice                Sets the VaultPC address.
-    /// @param vaultPC         Address of the new VaultPC.
-    function updateVaultPC(address vaultPC) external onlyRole(OPERATOR_ROLE) whenNotPaused {
-        if (vaultPC == address(0)) revert Errors.ZeroAddress();
-        address oldVaultPC = address(VAULT_PC);
-        VAULT_PC = IVaultPC(vaultPC);
-        emit VaultPCUpdated(oldVaultPC, vaultPC);
+    /// @param _vaultPC        Address of the new VaultPC.
+    function updateVaultPC(address _vaultPC) external onlyRole(OPERATOR_ROLE) whenNotPaused {
+        if (_vaultPC == address(0)) revert Errors.ZeroAddress();
+        address oldVaultPC = address(vaultPC);
+        vaultPC = IVaultPC(_vaultPC);
+        emit VaultPCUpdated(oldVaultPC, _vaultPC);
     }
 
     /// @notice                Sets the UniversalCore address.
     /// @dev                   Allows admin to re-point the UniversalCore dependency without
     ///                        requiring a proxy upgrade. Mirrors setVaultPC.
-    /// @param universalCore   Address of the new UniversalCore.
-    function updateUniversalCore(address universalCore) external onlyRole(OPERATOR_ROLE) whenNotPaused {
-        if (universalCore == address(0)) revert Errors.ZeroAddress();
-        address oldUniversalCore = UNIVERSAL_CORE;
-        UNIVERSAL_CORE = universalCore;
-        emit UniversalCoreUpdated(oldUniversalCore, universalCore);
+    /// @param _universalCore  Address of the new UniversalCore.
+    function updateUniversalCore(address _universalCore) external onlyRole(OPERATOR_ROLE) whenNotPaused {
+        if (_universalCore == address(0)) revert Errors.ZeroAddress();
+        address oldUniversalCore = universalCore;
+        universalCore = _universalCore;
+        emit UniversalCoreUpdated(oldUniversalCore, _universalCore);
     }
 
     // ==============================
@@ -113,7 +113,7 @@ contract UniversalGatewayPC is
     {
         _validateParams(req.token, req.revertRecipient);
 
-        if (!IUniversalCore(UNIVERSAL_CORE).isSupportedToken(req.token)) revert Errors.NotSupported();
+        if (!IUniversalCore(universalCore).isSupportedToken(req.token)) revert Errors.NotSupported();
 
         TX_TYPE txType = _fetchTxType(req);
 
@@ -132,7 +132,7 @@ contract UniversalGatewayPC is
 
         if (msg.value < protocolFee) revert Errors.InvalidInput();
         if (protocolFee > 0) {
-            (bool ok,) = address(VAULT_PC).call{ value: protocolFee }("");
+            (bool ok,) = address(vaultPC).call{ value: protocolFee }("");
             if (!ok) revert Errors.InvalidInput();
         }
         uint256 pcForSwap = msg.value - protocolFee;
@@ -187,7 +187,7 @@ contract UniversalGatewayPC is
             uint256 rescueGasLimit,
             uint256 gasPrice,
             string memory chainNamespace
-        ) = IUniversalCore(UNIVERSAL_CORE).getRescueFundsGasLimit(prc20);
+        ) = IUniversalCore(universalCore).getRescueFundsGasLimit(prc20);
 
         _swapAndCollectFees(gasToken, msg.value, gasFee);
 
@@ -257,10 +257,10 @@ contract UniversalGatewayPC is
             string memory chainNamespace
         )
     {
-        gasLimitUsed = gasLimit == 0 ? IUniversalCore(UNIVERSAL_CORE).BASE_GAS_LIMIT() : gasLimit;
+        gasLimitUsed = gasLimit == 0 ? IUniversalCore(universalCore).BASE_GAS_LIMIT() : gasLimit;
 
         (gasToken, gasFee, protocolFee, gasPrice, chainNamespace) =
-            IUniversalCore(UNIVERSAL_CORE).getOutboundTxGasAndFees(token, gasLimitUsed);
+            IUniversalCore(universalCore).getOutboundTxGasAndFees(token, gasLimitUsed);
 
         if (gasToken == address(0) || gasFee + protocolFee == 0) {
             revert Errors.InvalidData();
@@ -275,7 +275,7 @@ contract UniversalGatewayPC is
     function _swapAndCollectFees(address gasToken, uint256 pcAmount, uint256 gasFee) internal {
         if (pcAmount == 0) revert Errors.ZeroAmount();
 
-        IUniversalCore(UNIVERSAL_CORE).swapAndBurnGas{ value: pcAmount }(gasToken, 0, gasFee, 0, msg.sender);
+        IUniversalCore(universalCore).swapAndBurnGas{ value: pcAmount }(gasToken, 0, gasFee, 0, msg.sender);
     }
 
     /// @dev                    Pulls PRC20 from `from` into this contract, then burns them.

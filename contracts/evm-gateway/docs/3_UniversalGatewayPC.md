@@ -13,7 +13,7 @@ Gas fees are paid in native PC, swapped to the origin chain's gas token PRC20 vi
 | **UGPC_1: Admin Actions**     | `initialize`, `pause`/`unpause`, `setVaultPC` |
 | **UGPC_2: Outbound TX**       | `sendUniversalTxOutbound`, `rescueFundsOnSourceChain`                    |
 | **UGPC_3: Internal Helpers**  | TX_TYPE inference, fee quoting, swap+burn, PRC20 burn |
-| **UGPC_3: View Functions** *(interface)* | `UNIVERSAL_CORE()` view accessor           |
+| **UGPC_3: View Functions** *(interface)* | `universalCore()` view accessor           |
 
 ---
 
@@ -127,7 +127,7 @@ The gateway never custodies withdrawn value — burning is the canonical on-chai
 **Execution flow:**
 
 1. **Validate** — `prc20 != address(0)`.
-2. **Resolve chain and quote gas** — calls `IUniversalCore(UNIVERSAL_CORE).getRescueFundsGasLimit(prc20)` which returns: `gasToken`, `gasFee`, `rescueGasLimit`, `gasPrice`, `chainNamespace`.
+2. **Resolve chain and quote gas** — calls `IUniversalCore(universalCore).getRescueFundsGasLimit(prc20)` which returns: `gasToken`, `gasFee`, `rescueGasLimit`, `gasPrice`, `chainNamespace`.
 3. **Swap and burn** — all `msg.value` goes to `_swapAndCollectFees(gasToken, msg.value, gasFee)` (no protocol fee split).
 4. **Emit `RescueFundsOnSourceChain`** — TSS picks this up and calls `Vault.rescueFunds()` on the source chain.
 

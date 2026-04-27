@@ -157,15 +157,15 @@ contract UpgradeGateway is Script, GatewayConfig {
         UniversalGateway gateway = UniversalGateway(payable(cfg.gatewayProxy));
 
         // Verify all critical state preserved
-        address vault = gateway.VAULT();
-        address tssAddr = gateway.TSS_ADDRESS();
-        address ceaFactory = gateway.CEA_FACTORY();
-        uint256 minCap = gateway.MIN_CAP_UNIVERSAL_TX_USD();
-        uint256 maxCap = gateway.MAX_CAP_UNIVERSAL_TX_USD();
+        address vault = gateway.vault();
+        address tssAddr = gateway.tssAddress();
+        address ceaFactory = gateway.ceaFactory();
+        uint256 minCap = gateway.minCapUniversalTxUsd();
+        uint256 maxCap = gateway.maxCapUniversalTxUsd();
 
         require(vault != address(0), "VAULT lost after upgrade");
-        require(tssAddr != address(0), "TSS_ADDRESS lost after upgrade");
-        require(ceaFactory != address(0), "CEA_FACTORY lost after upgrade");
+        require(tssAddr != address(0), "tssAddress lost after upgrade");
+        require(ceaFactory != address(0), "ceaFactory lost after upgrade");
         require(minCap > 0, "MIN_CAP lost after upgrade");
         require(maxCap > minCap, "MAX_CAP invalid after upgrade");
         require(gateway.epochDurationSec() > 0, "epochDurationSec lost after upgrade");
@@ -176,13 +176,13 @@ contract UpgradeGateway is Script, GatewayConfig {
 
         // Verify roles preserved
         require(gateway.hasRole(gateway.VAULT_ROLE(), vault), "VAULT_ROLE lost after upgrade");
-        // UG no longer manages TSS_ROLE; verify TSS_ADDRESS instead.
-        require(gateway.TSS_ADDRESS() == tssAddr, "TSS_ADDRESS lost after upgrade");
+        // UG no longer manages TSS_ROLE; verify tssAddress instead.
+        require(gateway.tssAddress() == tssAddr, "tssAddress lost after upgrade");
 
         console.log("OK: Implementation updated successfully");
         console.log("OK: VAULT:", vault);
-        console.log("OK: TSS_ADDRESS:", tssAddr);
-        console.log("OK: CEA_FACTORY:", ceaFactory);
+        console.log("OK: tssAddress:", tssAddr);
+        console.log("OK: ceaFactory:", ceaFactory);
         console.log("OK: MIN_CAP:", minCap);
         console.log("OK: MAX_CAP:", maxCap);
         console.log("OK: Roles preserved");

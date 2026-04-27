@@ -102,5 +102,5 @@ interface IUniversalGatewayPC {
 
     /// @notice                  Returns the UniversalCore contract address.
     /// @return                  Address of the UniversalCore contract.
-    function UNIVERSAL_CORE() external view returns (address);
+    function universalCore() external view returns (address);
 }
