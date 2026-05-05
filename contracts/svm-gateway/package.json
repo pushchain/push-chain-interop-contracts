@@ -54,6 +54,7 @@
     "js-sha3": "^0.9.2"
   },
   "devDependencies": {
+    "@sqds/multisig": "^2.1.4",
     "@types/bn.js": "^5.1.0",
     "@types/chai": "^4.3.0",
     "@types/mocha": "^9.0.0",

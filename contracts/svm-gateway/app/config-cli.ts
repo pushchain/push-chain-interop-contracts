@@ -240,8 +240,6 @@ program_cli
             console.log("=== UNPAUSING GATEWAY ===\n");
 
             const configPda = deriveConfigPda();
-            const adminKeypair = pauserKeypair;
-
             const tx = await program.methods
                 .unpause()
                 .accountsPartial({
