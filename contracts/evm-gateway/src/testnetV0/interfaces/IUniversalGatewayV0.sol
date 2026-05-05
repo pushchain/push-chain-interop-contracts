@@ -14,10 +14,11 @@ interface IUniversalGatewayV0 {
     /// @param maxCapUsd             Maximum cap in USD
     event CapsUpdated(uint256 minCapUsd, uint256 maxCapUsd);
 
-    /// @notice                      Rate-limit / config events
-    /// @param oldDuration           Previous epoch duration: Duration of the epoch before the update.
-    /// @param newDuration           New epoch duration: Duration of the epoch after the update.
-    event EpochDurationUpdated(uint256 oldDuration, uint256 newDuration);
+    /// @notice                  Epoch duration updated event
+    /// @param oldDuration       Previous epoch duration
+    /// @param newDuration       New epoch duration
+    /// @param epochIndexAtChange Epoch index at the time of the change
+    event EpochDurationUpdated(uint256 oldDuration, uint256 newDuration, uint64 epochIndexAtChange);
 
     /// @notice                     Token limit threshold updated event
     /// @param token                Token address
@@ -46,17 +47,6 @@ interface IUniversalGatewayV0 {
         bool fromCEA
     );
 
-    /// @notice         Universal tx execution event
-    event UniversalTxExecuted(
-        bytes32 indexed subTxId,
-        bytes32 indexed universalTxId,
-        address indexed originCaller,
-        address target,
-        address token,
-        uint256 amount,
-        bytes data
-    );
-
     /// @notice                     Revert withdraw event: For withdrwals/actions during a revert
     /// @param subTxId                 Unique transaction identifier
     /// @param to                   Recipient address on external chain
@@ -83,6 +73,15 @@ interface IUniversalGatewayV0 {
 
     /// @notice Emitted when the Vault address is updated
     event VaultUpdated(address indexed oldVault, address indexed newVault);
+
+    /// @notice                  Uniswap V3 factory / router updated event.
+    /// @param oldFactory        Previous Uniswap V3 factory address
+    /// @param newFactory        New Uniswap V3 factory address
+    /// @param oldRouter         Previous Uniswap V3 router address
+    /// @param newRouter         New Uniswap V3 router address
+    event UniswapV3ConfigUpdated(
+        address indexed oldFactory, address indexed newFactory, address oldRouter, address newRouter
+    );
 
     /// @notice                      Protocol fee updated event
     /// @param newFee                New protocol fee in wei
@@ -206,4 +205,7 @@ interface IUniversalGatewayV0 {
     /// @notice            Set the flat protocol fee (in wei). Set to 0 to disable.
     /// @param fee         New protocol fee in wei
     function setInboundFee(uint256 fee) external;
+
+    /// @notice            Whether the gateway is currently paused.
+    function paused() external view returns (bool);
 }

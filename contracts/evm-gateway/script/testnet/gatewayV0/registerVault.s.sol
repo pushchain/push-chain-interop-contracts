@@ -74,16 +74,16 @@ contract RegisterVault is Script, GatewayConfig {
     function _registerVault() internal {
         console.log("--- Registering Vault ---");
         UniversalGatewayV0 gateway = UniversalGatewayV0(payable(cfg.gatewayProxy));
-        gateway.setVault(cfg.vault);
-        console.log("setVault() called with:", cfg.vault);
+        gateway.updateVault(cfg.vault);
+        console.log("updateVault() called with:", cfg.vault);
         console.log("");
     }
 
     function _registerCEAFactory(address ceaFactory) internal {
         console.log("--- Registering CEAFactory ---");
         UniversalGatewayV0 gateway = UniversalGatewayV0(payable(cfg.gatewayProxy));
-        gateway.setCEAFactory(ceaFactory);
-        console.log("setCEAFactory() called with:", ceaFactory);
+        gateway.updateCEAFactory(ceaFactory);
+        console.log("updateCEAFactory() called with:", ceaFactory);
         console.log("");
     }
 
