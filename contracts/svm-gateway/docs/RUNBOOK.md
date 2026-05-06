@@ -35,19 +35,33 @@ Accounts created by the bootstrap flow:
 
 ## TSS Configuration
 
+Every authority-bearing `config-cli` command supports both:
+- direct EOA execution with the role keypair flag for that command
+- Squads vault proposal mode via `--multisig <multisig-pda> --member-keypair <member.json>`
+
+This is per-role. Admin, operator, and pauser can each independently be EOA or Squads.
+
 ### Initialize TSS state
 
 ```bash
-npm run config:tss-init -- --eth 0x<40-hex-address> --chain-id <chain-id-string>
+npm run config:tss-init -- --admin-keypair <admin-keypair.json> --eth 0x<40-hex-address> --chain-id <chain-id-string>
+
+# Squads admin flow
+npm run config:tss-init -- --multisig <admin-multisig-pda> --member-keypair <member.json> --eth 0x<40-hex-address> --chain-id <chain-id-string>
+# then approve + execute the emitted tx index
 ```
 
 ### Update TSS address
 
 ```bash
-npm run config:tss-update -- --eth 0x<40-hex-address> --chain-id <chain-id-string>
+npm run config:tss-update -- --operator-keypair <operator-keypair.json> --eth 0x<40-hex-address> --chain-id <chain-id-string>
+
+# Squads operator flow
+npm run config:tss-update -- --multisig <operator-multisig-pda> --member-keypair <member.json> --eth 0x<40-hex-address> --chain-id <chain-id-string>
+# then approve + execute the emitted tx index
 ```
 
-Only the current admin can update TSS. The TSS address is stored in `TssPda` and is used for ECDSA signature verification on all outbound transactions.
+Only the current operator can update TSS. The TSS address is stored in `TssPda` and is used for ECDSA signature verification on all outbound transactions.
 
 ---
 
@@ -56,9 +70,9 @@ Only the current admin can update TSS. The TSS address is stored in `TssPda` and
 ### Propose admin and/or pauser
 
 ```bash
-npm run config:authority-propose -- --new-admin <new-admin-pubkey>
-npm run config:authority-propose -- --new-pauser <new-pauser-pubkey>
-npm run config:authority-propose -- --new-admin <new-admin-pubkey> --new-pauser <new-pauser-pubkey>
+npm run config:authority-propose -- --admin-keypair <admin-keypair.json> --new-admin <new-admin-pubkey>
+npm run config:authority-propose -- --admin-keypair <admin-keypair.json> --new-pauser <new-pauser-pubkey>
+npm run config:authority-propose -- --admin-keypair <admin-keypair.json> --new-admin <new-admin-pubkey> --new-pauser <new-pauser-pubkey>
 ```
 
 This only records a pending authority. The current admin and pauser remain active until the proposed authority accepts.
@@ -68,6 +82,10 @@ Proposing the same role again overwrites the previous pending proposal.
 
 ```bash
 npm run config:authority-accept-admin -- --keypair <path-to-new-admin-keypair.json>
+
+# Squads pending admin flow
+npm run config:authority-accept-admin -- --multisig <new-admin-multisig-pda> --member-keypair <member.json>
+# then approve + execute the emitted tx index
 ```
 
 The proposed admin keypair is both the signer and the fee payer for this transaction.
@@ -76,16 +94,32 @@ The proposed admin keypair is both the signer and the fee payer for this transac
 
 ```bash
 npm run config:authority-accept-pauser -- --keypair <path-to-new-pauser-keypair.json>
+
+# Squads pending pauser flow
+npm run config:authority-accept-pauser -- --multisig <new-pauser-multisig-pda> --member-keypair <member.json>
+# then approve + execute the emitted tx index
 ```
 
 The proposed pauser keypair is both the signer and the fee payer for this transaction.
+
+### Set operator (admin-only, immediate)
+
+```bash
+npm run config:operator-set -- --admin-keypair <admin-keypair.json> --new-operator <new-operator-pubkey>
+
+# Squads admin flow
+npm run config:operator-set -- --multisig <admin-multisig-pda> --member-keypair <member.json> --new-operator <new-operator-pubkey>
+# then approve + execute the emitted tx index
+```
+
+Operator rotation is currently one-step (no pending accept). This is intentional because the deployed `Config` layout has no extra slot for `pending_operator` without migration.
 
 After acceptance:
 - `Config.admin` or `Config.pauser` is updated
 - the corresponding pending field is cleared
 - the old authority immediately loses access
 
-After `accept_admin`, update the operator keypair used by the CLI before running any further admin commands. The default admin CLI path still reads `./upgrade-keypair.json`.
+After `accept_admin`, update the admin keypair used by the CLI before running any further admin commands. The default admin CLI path still reads `./upgrade-keypair.json`.
 
 Use `npm run config:show` to inspect current and pending authorities before and after acceptance.
 
@@ -96,7 +130,11 @@ Use `npm run config:show` to inspect current and pending authorities before and 
 Caps are in Pyth 8-decimal USD format: `1_00000000` = $1.00
 
 ```bash
-npm run config:caps-set -- --min 100000000 --max 1000000000
+npm run config:caps-set -- --admin-keypair <admin-keypair.json> --min 100000000 --max 1000000000
+
+# Squads admin flow
+npm run config:caps-set -- --multisig <admin-multisig-pda> --member-keypair <member.json> --min 100000000 --max 1000000000
+# then approve + execute the emitted tx index
 
 # Example: $1 min, $10 max
 # min = 100000000, max = 1000000000
@@ -112,9 +150,10 @@ Flat fee charged per `send_universal_tx` call, paid in SOL by the depositor.
 
 ```bash
 # Set fee (in lamports); this also creates FeeVault if needed
-npm run config:fee-init -- --fee <lamports>
+npm run config:fee-init -- --admin-keypair <admin-keypair.json> --fee <lamports>
+npm run config:fee-init -- --multisig <admin-multisig-pda> --member-keypair <member.json> --fee <lamports>
 # Example: disable fee
-npm run config:fee-init -- --fee 0
+npm run config:fee-init -- --admin-keypair <admin-keypair.json> --fee 0
 ```
 
 The protocol fee is deducted from `native_amount` before routing. It goes to `FeeVault`, not `Vault`, preserving the 1:1 bridge invariant.
@@ -129,13 +168,16 @@ There is currently no dedicated `collect_protocol_fees` instruction or CLI comma
 The Pyth price feed is used to convert SOL amounts to USD for GAS route cap enforcement.
 
 ```bash
-npm run config:pyth-set-feed -- --feed <pyth-price-feed-pubkey>
+npm run config:pyth-set-feed -- --admin-keypair <admin-keypair.json> --feed <pyth-price-feed-pubkey>
+npm run config:pyth-set-feed -- --multisig <admin-multisig-pda> --member-keypair <member.json> --feed <pyth-price-feed-pubkey>
 
 # Optional: set confidence threshold
-npm run config:pyth-set-conf -- --threshold <u64>
+npm run config:pyth-set-conf -- --admin-keypair <admin-keypair.json> --threshold <u64>
+npm run config:pyth-set-conf -- --multisig <admin-multisig-pda> --member-keypair <member.json> --threshold <u64>
 
 # Set price staleness window (seconds); default 60 at initialization
-npm run config:pyth-set-max-age -- --seconds 60
+npm run config:pyth-set-max-age -- --admin-keypair <admin-keypair.json> --seconds 60
+npm run config:pyth-set-max-age -- --multisig <admin-multisig-pda> --member-keypair <member.json> --seconds 60
 ```
 
 The program does not enforce a fixed feed — the admin can update it at any time via `set_pyth_price_feed`.
@@ -152,7 +194,8 @@ Recommended staleness window: 60–90 seconds. Values above a few minutes defeat
 Per-slot USD budget for GAS route deposits. 0 disables.
 
 ```bash
-npm run config:rate-set-block-usd-cap -- --cap <u128-8-decimal-usd>
+npm run config:rate-set-block-usd-cap -- --admin-keypair <admin-keypair.json> --cap <u128-8-decimal-usd>
+npm run config:rate-set-block-usd-cap -- --multisig <admin-multisig-pda> --member-keypair <member.json> --cap <u128-8-decimal-usd>
 ```
 
 ### Epoch duration
@@ -160,7 +203,8 @@ npm run config:rate-set-block-usd-cap -- --cap <u128-8-decimal-usd>
 Controls the period for token-based epoch rate limits.
 
 ```bash
-npm run config:rate-set-epoch -- --seconds 86400
+npm run config:rate-set-epoch -- --admin-keypair <admin-keypair.json> --seconds 86400
+npm run config:rate-set-epoch -- --multisig <admin-multisig-pda> --member-keypair <member.json> --seconds 86400
 ```
 
 Set to `0` to disable epoch-based rate limiting entirely.
@@ -188,11 +232,16 @@ For SPL tokens, a non-zero threshold now requires explicit acknowledgment if the
 Use for emergencies. All inbound and outbound operations revert when paused.
 
 ```bash
-npm run config:pause
-npm run config:unpause
+npm run config:pause -- --pauser-keypair <pauser-keypair.json>
+npm run config:unpause -- --operator-keypair <operator-keypair.json>
+
+# Squads flows
+npm run config:pause -- --multisig <pauser-multisig-pda> --member-keypair <member.json>
+npm run config:unpause -- --multisig <operator-multisig-pda> --member-keypair <member.json>
+# then approve + execute the emitted tx index
 ```
 
-Either the configured `pauser` or the current `admin` can call `pause`. Only the current `admin` can call `unpause`. Admin and pauser can be the same or different keypairs.
+Either the configured `pauser` or the current `admin` can call `pause`. Only the current `operator` can call `unpause`. Admin/operator/pauser can be the same or different keypairs.
 While paused, inbound and outbound user flows stay blocked, but the admin can still update configuration and rate-limit parameters to remediate an incident before unpausing.
 
 ---
@@ -236,11 +285,21 @@ Shows current values for:
 - Pause state
 - Block USD cap, epoch duration
 
+## Squads Proposal Lifecycle
+
+When a command is run with `--multisig`, the CLI does not execute the gateway instruction directly. It creates a Squads vault transaction proposal and prints the transaction index.
+
+```bash
+npm run config:squads-show -- --multisig <multisig-pda> --tx-index <n>
+npm run config:squads-approve -- --multisig <multisig-pda> --member-keypair <member.json> --tx-index <n>
+npm run config:squads-execute -- --multisig <multisig-pda> --member-keypair <member.json> --tx-index <n>
+```
+
 ---
 
 ## Common Issues
 
-**Deposit rejected with `Paused`:** Gateway is paused. Call `unpause` from the admin address.
+**Deposit rejected with `Paused`:** Gateway is paused. Call `unpause` from the operator address.
 
 **Deposit rejected with `BelowMinCap` / `AboveMaxCap`:** `native_amount` (after protocol fee) is outside USD cap range. Adjust caps or deposit amount.
 

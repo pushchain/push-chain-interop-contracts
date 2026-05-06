@@ -44,6 +44,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
     });
 
     let admin: Keypair;
+    let operator: Keypair;
     let pauser: Keypair;
     let recipient: Keypair;
     let user1: Keypair;
@@ -111,6 +112,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
 
     before(async () => {
         admin = sharedState.getAdmin();
+        operator = sharedState.getOperator();
         pauser = sharedState.getPauser();
         mockUSDT = sharedState.getMockUSDT();
         user1 = sharedState.getUser1(); // Use shared user1 from test-setup
@@ -473,8 +475,8 @@ describe("Universal Gateway - Withdraw Tests", () => {
 
             await program.methods
                 .unpause()
-                .accountsPartial({ admin: admin.publicKey, config: configPda })
-                .signers([admin])
+                .accountsPartial({ operator: operator.publicKey, config: configPda })
+                .signers([operator])
                 .rpc();
         });
 
@@ -1276,8 +1278,8 @@ describe("Universal Gateway - Withdraw Tests", () => {
             } finally {
                 await program.methods
                     .unpause()
-                    .accountsPartial({ admin: admin.publicKey, config: configPda })
-                    .signers([admin])
+                    .accountsPartial({ operator: operator.publicKey, config: configPda })
+                    .signers([operator])
                     .rpc();
             }
         });

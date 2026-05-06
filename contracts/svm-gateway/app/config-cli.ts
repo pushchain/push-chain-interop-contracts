@@ -6,11 +6,16 @@ import {
     PublicKey,
     Keypair,
     SystemProgram,
+    ComputeBudgetProgram,
+    TransactionInstruction,
+    TransactionMessage,
+    VersionedTransaction,
 } from "@solana/web3.js";
 import fs from "fs";
 import { Program } from "@coral-xyz/anchor";
 import type { UniversalGateway } from "../target/types/universal_gateway";
 import { Command } from "commander";
+import * as multisig from "@sqds/multisig";
 
 // Program ID from gateway-test.ts
 const PROGRAM_ID = new PublicKey("DJoFYDpgbTfxbXBv1QYhYGc9FK4J5FUKpYXAfSkHryXp");
@@ -29,26 +34,238 @@ function loadKeypair(path: string): Keypair {
     return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(path, "utf8"))));
 }
 
-const adminKeypair = loadKeypair("./upgrade-keypair.json");
-const pauserKeypair = loadKeypair("./upgrade-keypair.json");
+// Pre-parse role keypair paths and RPC from argv before Commander runs its
+// command dispatch — Commander actions fire during parse(), so module-level
+// setup must happen before that.
+function preParseArg(flag: string, defaultVal: string): string {
+    const prefix = flag + "=";
+    for (let i = 0; i < process.argv.length; i++) {
+        if (process.argv[i] === flag && i + 1 < process.argv.length) {
+            return process.argv[i + 1];      // --flag value
+        }
+        if (process.argv[i].startsWith(prefix)) {
+            return process.argv[i].slice(prefix.length); // --flag=value
+        }
+    }
+    return defaultVal;
+}
 
-// Set up connection and provider
-const connection = new anchor.web3.Connection("https://api.devnet.solana.com", "confirmed");
-const adminProvider = new anchor.AnchorProvider(connection, new anchor.Wallet(adminKeypair), {
-    commitment: "confirmed",
-});
+const adminKeypairPath    = preParseArg("--admin-keypair",    "./upgrade-keypair.json");
+const operatorKeypairPath = preParseArg("--operator-keypair", "./upgrade-keypair.json");
+const pauserKeypairPath   = preParseArg("--pauser-keypair",   "./upgrade-keypair.json");
+const rpcUrl              = preParseArg("--rpc",              "https://api.devnet.solana.com");
+const multisigPdaArg      = preParseArg("--multisig",         "");
+const memberKeypairPath   = preParseArg("--member-keypair",   "");
+const vaultIndexArg       = preParseArg("--vault-index",      "0");
 
-anchor.setProvider(adminProvider);
+const connection = new anchor.web3.Connection(rpcUrl, "confirmed");
 
-// Load IDL
-const idl = JSON.parse(fs.readFileSync("./target/idl/universal_gateway.json", "utf8"));
-const program = new Program(idl as UniversalGateway, adminProvider);
+let cachedIdl: UniversalGateway | null = null;
+let cachedAdminKeypair: Keypair | null = null;
+let cachedOperatorKeypair: Keypair | null = null;
+let cachedPauserKeypair: Keypair | null = null;
+let cachedMemberKeypair: Keypair | null = null;
+
+function getIdl(): UniversalGateway {
+    if (!cachedIdl) {
+        cachedIdl = JSON.parse(fs.readFileSync("./target/idl/universal_gateway.json", "utf8")) as UniversalGateway;
+    }
+    return cachedIdl;
+}
+
+function getAdminKeypair(): Keypair {
+    if (!cachedAdminKeypair) {
+        cachedAdminKeypair = loadKeypair(adminKeypairPath);
+    }
+    return cachedAdminKeypair;
+}
+
+function getOperatorKeypair(): Keypair {
+    if (!cachedOperatorKeypair) {
+        cachedOperatorKeypair = loadKeypair(operatorKeypairPath);
+    }
+    return cachedOperatorKeypair;
+}
+
+function getPauserKeypair(): Keypair {
+    if (!cachedPauserKeypair) {
+        cachedPauserKeypair = loadKeypair(pauserKeypairPath);
+    }
+    return cachedPauserKeypair;
+}
+
+function getMemberKeypair(): Keypair {
+    if (!memberKeypairPath) {
+        throw new Error("Squads flow requires --member-keypair <path>");
+    }
+    if (!cachedMemberKeypair) {
+        cachedMemberKeypair = loadKeypair(memberKeypairPath);
+    }
+    return cachedMemberKeypair;
+}
 
 function createProgramForKeypair(keypair: Keypair): Program<UniversalGateway> {
     const provider = new anchor.AnchorProvider(connection, new anchor.Wallet(keypair), {
         commitment: "confirmed",
     });
-    return new Program(idl as UniversalGateway, provider);
+    return new Program(getIdl(), provider);
+}
+
+function createReadOnlyProgram(): Program<UniversalGateway> {
+    const provider = new anchor.AnchorProvider(connection, new anchor.Wallet(Keypair.generate()), {
+        commitment: "confirmed",
+    });
+    return new Program(getIdl(), provider);
+}
+
+function getMultisigPda(): PublicKey | null {
+    if (!multisigPdaArg) {
+        return null;
+    }
+    return new PublicKey(multisigPdaArg);
+}
+
+function getVaultIndex(): number {
+    const parsed = Number.parseInt(vaultIndexArg, 10);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+        throw new Error("--vault-index must be a non-negative integer");
+    }
+    return parsed;
+}
+
+function getVaultPdaForMultisig(multisigPda: PublicKey): PublicKey {
+    const [vaultPda] = multisig.getVaultPda({
+        multisigPda,
+        index: getVaultIndex(),
+    });
+    return vaultPda;
+}
+
+async function sendInstructions(label: string, signer: Keypair, instructions: TransactionInstruction[]): Promise<string> {
+    const { blockhash } = await connection.getLatestBlockhash();
+    const message = new TransactionMessage({
+        payerKey: signer.publicKey,
+        recentBlockhash: blockhash,
+        instructions,
+    }).compileToV0Message();
+    const tx = new VersionedTransaction(message);
+    tx.sign([signer]);
+    const sig = await connection.sendTransaction(tx);
+    await connection.confirmTransaction(sig, "confirmed");
+    console.log(`✅ ${label} successfully!`);
+    console.log(`   Transaction: ${sig}\n`);
+    return sig;
+}
+
+async function proposeVaultTransaction(
+    member: Keypair,
+    multisigPda: PublicKey,
+    innerInstruction: TransactionInstruction,
+    label: string,
+): Promise<bigint> {
+    const msState = await multisig.accounts.Multisig.fromAccountAddress(connection, multisigPda);
+    const txIndex = BigInt(msState.transactionIndex.toString()) + 1n;
+    const vaultPda = getVaultPdaForMultisig(multisigPda);
+    const { blockhash } = await connection.getLatestBlockhash();
+    const innerMessage = new TransactionMessage({
+        payerKey: vaultPda,
+        recentBlockhash: blockhash,
+        instructions: [innerInstruction],
+    });
+
+    const createIx = multisig.instructions.vaultTransactionCreate({
+        multisigPda,
+        transactionIndex: txIndex,
+        creator: member.publicKey,
+        rentPayer: member.publicKey,
+        vaultIndex: getVaultIndex(),
+        ephemeralSigners: 0,
+        transactionMessage: innerMessage,
+    });
+    const proposalIx = multisig.instructions.proposalCreate({
+        multisigPda,
+        transactionIndex: txIndex,
+        creator: member.publicKey,
+        rentPayer: member.publicKey,
+        isDraft: false,
+    });
+
+    await sendInstructions(`${label} proposal created`, member, [createIx, proposalIx]);
+
+    console.log(`   Multisig: ${multisigPda.toBase58()}`);
+    console.log(`   Vault PDA: ${vaultPda.toBase58()}`);
+    console.log(`   Transaction Index: ${txIndex.toString()}`);
+    console.log("   Next steps:");
+    console.log(`   1. Approve: npm run config -- squads:approve --multisig ${multisigPda.toBase58()} --tx-index ${txIndex.toString()} --member-keypair <path>`);
+    console.log(`   2. Execute: npm run config -- squads:execute --multisig ${multisigPda.toBase58()} --tx-index ${txIndex.toString()} --member-keypair <path>\n`);
+
+    return txIndex;
+}
+
+async function runAuthorityAction(
+    label: string,
+    directSigner: () => Keypair,
+    buildInstruction: (program: Program<UniversalGateway>, authority: PublicKey) => Promise<TransactionInstruction>,
+): Promise<void> {
+    const multisigPda = getMultisigPda();
+    if (multisigPda) {
+        const member = getMemberKeypair();
+        const vaultPda = getVaultPdaForMultisig(multisigPda);
+        const program = createProgramForKeypair(member);
+        const ix = await buildInstruction(program, vaultPda);
+        await proposeVaultTransaction(member, multisigPda, ix, label);
+        return;
+    }
+
+    const signer = directSigner();
+    const program = createProgramForKeypair(signer);
+    const ix = await buildInstruction(program, signer.publicKey);
+    await sendInstructions(label, signer, [ix]);
+}
+
+async function showProposal(multisigPda: PublicKey, txIndex: bigint): Promise<void> {
+    const [proposalPda] = multisig.getProposalPda({ multisigPda, transactionIndex: txIndex });
+    const proposal = await multisig.accounts.Proposal.fromAccountAddress(connection, proposalPda);
+    const msState = await multisig.accounts.Multisig.fromAccountAddress(connection, multisigPda);
+    console.log(`Proposal ${txIndex.toString()}:`);
+    console.log(`   Status: ${proposal.status.__kind}`);
+    console.log(`   Approvals: ${proposal.approved.length} / ${msState.threshold}`);
+    if (proposal.approved.length > 0) {
+        console.log("   Approved by:");
+        for (const approver of proposal.approved) {
+            console.log(`   - ${approver.toBase58()}`);
+        }
+    }
+}
+
+async function approveProposal(multisigPda: PublicKey, member: Keypair, txIndex: bigint): Promise<void> {
+    const approveIx = multisig.instructions.proposalApprove({
+        multisigPda,
+        transactionIndex: txIndex,
+        member: member.publicKey,
+    });
+    await sendInstructions(`proposal ${txIndex.toString()} approved`, member, [approveIx]);
+}
+
+async function executeVaultTransaction(multisigPda: PublicKey, member: Keypair, txIndex: bigint): Promise<void> {
+    const { instruction, lookupTableAccounts } = await multisig.instructions.vaultTransactionExecute({
+        connection,
+        multisigPda,
+        transactionIndex: txIndex,
+        member: member.publicKey,
+    });
+    const { blockhash } = await connection.getLatestBlockhash();
+    const message = new TransactionMessage({
+        payerKey: member.publicKey,
+        recentBlockhash: blockhash,
+        instructions: [instruction],
+    }).compileToV0Message(lookupTableAccounts);
+    const tx = new VersionedTransaction(message);
+    tx.sign([member]);
+    const sig = await connection.sendTransaction(tx, { skipPreflight: true });
+    await connection.confirmTransaction(sig, "confirmed");
+    console.log(`✅ proposal ${txIndex.toString()} executed successfully!`);
+    console.log(`   Transaction: ${sig}\n`);
 }
 
 // Helper: Derive PDAs
@@ -121,7 +338,16 @@ const program_cli = new Command();
 program_cli
     .name("config-cli")
     .description("CLI tool for managing gateway admin/config/TSS actions")
-    .version("1.0.0");
+    .version("1.0.0")
+    // Global keypair flags — each role must use its own key in production.
+    // On devnet all three default to ./upgrade-keypair.json for convenience.
+    .option("--admin-keypair <path>",    "Admin keypair JSON path",    "./upgrade-keypair.json")
+    .option("--operator-keypair <path>", "Operator keypair JSON path", "./upgrade-keypair.json")
+    .option("--pauser-keypair <path>",   "Pauser keypair JSON path",   "./upgrade-keypair.json")
+    .option("--multisig <pda>",          "If set, create a Squads vault-transaction proposal instead of executing directly")
+    .option("--member-keypair <path>",   "Squads member keypair JSON path used to create/approve/execute proposals")
+    .option("--vault-index <n>",         "Squads vault index for the authority PDA", "0")
+    .option("--rpc <url>",               "RPC endpoint URL",           "https://api.devnet.solana.com");
 
 // ============================================
 //               TSS COMMANDS
@@ -146,19 +372,19 @@ program_cli
             console.log(`Chain ID: ${chainId}`);
             console.log(`TSS PDA: ${tssPda.toBase58()}\n`);
 
-            const tx = await program.methods
-                .initTss(ethAddress, chainId)
-                .accountsPartial({
-                    tssPda: tssPda,
-                    config: configPda,
-                    authority: adminKeypair.publicKey,
-                    systemProgram: SystemProgram.programId,
-                })
-                .signers([adminKeypair])
-                .rpc();
-
-            console.log(`✅ TSS initialized successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "TSS initialized",
+                getAdminKeypair,
+                (program, authority) => program.methods
+                    .initTss(ethAddress, chainId)
+                    .accountsPartial({
+                        tssPda: tssPda,
+                        config: configPda,
+                        authority,
+                        systemProgram: SystemProgram.programId,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error initializing TSS: ${error.message}`);
             process.exit(1);
@@ -167,7 +393,7 @@ program_cli
 
 program_cli
     .command("tss:update")
-    .description("Update TSS ETH address and/or chain ID")
+    .description("Update TSS ETH address and/or chain ID (operator-only)")
     .requiredOption("--eth <address>", "New TSS ETH address (hex, 20 bytes)")
     .requiredOption("--chain-id <id>", "New chain ID string")
     .action(async (options) => {
@@ -184,18 +410,18 @@ program_cli
             console.log(`New Chain ID: ${chainId}`);
             console.log(`TSS PDA: ${tssPda.toBase58()}\n`);
 
-            const tx = await program.methods
-                .updateTss(ethAddress, chainId)
-                .accountsPartial({
-                    tssPda: tssPda,
-                    config: configPda,
-                    authority: adminKeypair.publicKey,
-                })
-                .signers([adminKeypair])
-                .rpc();
-
-            console.log(`✅ TSS updated successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "TSS updated",
+                getOperatorKeypair,
+                (program, authority) => program.methods
+                    .updateTss(ethAddress, chainId)
+                    .accountsPartial({
+                        tssPda: tssPda,
+                        config: configPda,
+                        authority,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error updating TSS: ${error.message}`);
             process.exit(1);
@@ -215,17 +441,17 @@ program_cli
 
             const configPda = deriveConfigPda();
 
-            const tx = await program.methods
-                .pause()
-                .accountsPartial({
-                    config: configPda,
-                    pauser: pauserKeypair.publicKey,
-                })
-                .signers([pauserKeypair])
-                .rpc();
-
-            console.log(`✅ Gateway paused successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "Gateway paused",
+                getPauserKeypair,
+                (program, authority) => program.methods
+                    .pause()
+                    .accountsPartial({
+                        config: configPda,
+                        pauser: authority,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error pausing gateway: ${error.message}`);
             process.exit(1);
@@ -234,25 +460,54 @@ program_cli
 
 program_cli
     .command("unpause")
-    .description("Unpause the gateway")
+    .description("Unpause the gateway (operator-only)")
     .action(async () => {
         try {
             console.log("=== UNPAUSING GATEWAY ===\n");
 
             const configPda = deriveConfigPda();
-            const tx = await program.methods
-                .unpause()
-                .accountsPartial({
-                    config: configPda,
-                    admin: adminKeypair.publicKey,
-                })
-                .signers([adminKeypair])
-                .rpc();
-
-            console.log(`✅ Gateway unpaused successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "Gateway unpaused",
+                getOperatorKeypair,
+                (program, authority) => program.methods
+                    .unpause()
+                    .accountsPartial({
+                        config: configPda,
+                        operator: authority,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error unpausing gateway: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program_cli
+    .command("operator:set")
+    .description("Set operator authority (admin-only, immediate)")
+    .requiredOption("--new-operator <pubkey>", "New operator public key")
+    .action(async (options) => {
+        try {
+            console.log("=== SETTING OPERATOR ===\n");
+            const newOperator = new PublicKey(options.newOperator);
+            const configPda = deriveConfigPda();
+            console.log(`New operator: ${newOperator.toBase58()}`);
+            console.log(`Config PDA: ${configPda.toBase58()}\n`);
+
+            await runAuthorityAction(
+                "Operator updated",
+                getAdminKeypair,
+                (program, authority) => program.methods
+                    .setOperator(newOperator)
+                    .accountsPartial({
+                        config: configPda,
+                        admin: authority,
+                    })
+                    .instruction()
+            );
+        } catch (error: any) {
+            console.error(`❌ Error setting operator: ${error.message}`);
             process.exit(1);
         }
     });
@@ -278,7 +533,6 @@ program_cli
             const newPauser = options.newPauser ? new PublicKey(options.newPauser) : null;
             const configPda = deriveConfigPda();
 
-            console.log(`Current signer (admin): ${adminKeypair.publicKey.toBase58()}`);
             if (newAdmin) {
                 console.log(`Proposed admin: ${newAdmin.toBase58()}`);
             }
@@ -288,17 +542,17 @@ program_cli
             console.log(`Config PDA: ${configPda.toBase58()}`);
             console.log();
 
-            const tx = await program.methods
-                .proposeAuthorities(newAdmin, newPauser)
-                .accountsPartial({
-                    config: configPda,
-                    admin: adminKeypair.publicKey,
-                })
-                .signers([adminKeypair])
-                .rpc();
-
-            console.log(`✅ Authorities proposed successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "Authorities proposed",
+                getAdminKeypair,
+                (program, authority) => program.methods
+                    .proposeAuthorities(newAdmin, newPauser)
+                    .accountsPartial({
+                        config: configPda,
+                        admin: authority,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error proposing authorities: ${error.message}`);
             process.exit(1);
@@ -307,32 +561,31 @@ program_cli
 
 program_cli
     .command("authority:accept-admin")
-    .description("Accept pending admin authority using the proposed admin keypair")
-    .requiredOption("--keypair <path>", "Path to the proposed admin keypair JSON")
+    .description("Accept pending admin authority using the proposed admin signer or a Squads vault")
+    .option("--keypair <path>", "Path to the proposed admin keypair JSON")
     .action(async (options) => {
         try {
             console.log("=== ACCEPTING ADMIN AUTHORITY ===\n");
-
-            const pendingAdminKeypair = loadKeypair(options.keypair);
-            const pendingAdminProgram = createProgramForKeypair(pendingAdminKeypair);
             const configPda = deriveConfigPda();
-
-            console.log(`Pending admin signer: ${pendingAdminKeypair.publicKey.toBase58()}`);
-            console.log(`Fee payer: ${pendingAdminKeypair.publicKey.toBase58()}`);
             console.log(`Config PDA: ${configPda.toBase58()}`);
             console.log();
 
-            const tx = await pendingAdminProgram.methods
-                .acceptAdmin()
-                .accountsPartial({
-                    config: configPda,
-                    pendingAdmin: pendingAdminKeypair.publicKey,
-                })
-                .signers([pendingAdminKeypair])
-                .rpc();
+            const multisigPda = getMultisigPda();
+            if (!multisigPda && !options.keypair) {
+                throw new Error("EOA flow requires --keypair <path>; Squads flow requires --multisig and --member-keypair");
+            }
 
-            console.log(`✅ Admin authority accepted successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "Admin authority accepted",
+                () => loadKeypair(options.keypair),
+                (program, authority) => program.methods
+                    .acceptAdmin()
+                    .accountsPartial({
+                        config: configPda,
+                        pendingAdmin: authority,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error accepting admin authority: ${error.message}`);
             process.exit(1);
@@ -341,32 +594,31 @@ program_cli
 
 program_cli
     .command("authority:accept-pauser")
-    .description("Accept pending pauser authority using the proposed pauser keypair")
-    .requiredOption("--keypair <path>", "Path to the proposed pauser keypair JSON")
+    .description("Accept pending pauser authority using the proposed pauser signer or a Squads vault")
+    .option("--keypair <path>", "Path to the proposed pauser keypair JSON")
     .action(async (options) => {
         try {
             console.log("=== ACCEPTING PAUSER AUTHORITY ===\n");
-
-            const pendingPauserKeypair = loadKeypair(options.keypair);
-            const pendingPauserProgram = createProgramForKeypair(pendingPauserKeypair);
             const configPda = deriveConfigPda();
-
-            console.log(`Pending pauser signer: ${pendingPauserKeypair.publicKey.toBase58()}`);
-            console.log(`Fee payer: ${pendingPauserKeypair.publicKey.toBase58()}`);
             console.log(`Config PDA: ${configPda.toBase58()}`);
             console.log();
 
-            const tx = await pendingPauserProgram.methods
-                .acceptPauser()
-                .accountsPartial({
-                    config: configPda,
-                    pendingPauser: pendingPauserKeypair.publicKey,
-                })
-                .signers([pendingPauserKeypair])
-                .rpc();
+            const multisigPda = getMultisigPda();
+            if (!multisigPda && !options.keypair) {
+                throw new Error("EOA flow requires --keypair <path>; Squads flow requires --multisig and --member-keypair");
+            }
 
-            console.log(`✅ Pauser authority accepted successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "Pauser authority accepted",
+                () => loadKeypair(options.keypair),
+                (program, authority) => program.methods
+                    .acceptPauser()
+                    .accountsPartial({
+                        config: configPda,
+                        pendingPauser: authority,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error accepting pauser authority: ${error.message}`);
             process.exit(1);
@@ -396,19 +648,19 @@ program_cli
             console.log(`Fee Vault PDA: ${feeVaultPda.toBase58()}`);
             console.log(`Protocol Fee (lamports): ${feeLamports}\n`);
 
-            const tx = await program.methods
-                .setProtocolFee(new anchor.BN(feeLamports.toString()))
-                .accountsPartial({
-                    config: configPda,
-                    feeVault: feeVaultPda,
-                    admin: adminKeypair.publicKey,
-                    systemProgram: SystemProgram.programId,
-                })
-                .signers([adminKeypair])
-                .rpc();
-
-            console.log(`✅ Fee vault initialized/updated successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "Fee vault initialized/updated",
+                getAdminKeypair,
+                (program, authority) => program.methods
+                    .setProtocolFee(new anchor.BN(feeLamports.toString()))
+                    .accountsPartial({
+                        config: configPda,
+                        feeVault: feeVaultPda,
+                        admin: authority,
+                        systemProgram: SystemProgram.programId,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error initializing fee vault: ${error.message}`);
             process.exit(1);
@@ -431,8 +683,8 @@ program_cli
             const minCap = BigInt(options.min);
             const maxCap = BigInt(options.max);
 
-            if (minCap >= maxCap) {
-                throw new Error("Min cap must be less than max cap");
+            if (minCap > maxCap) {
+                throw new Error("Min cap must not exceed max cap");
             }
 
             const configPda = deriveConfigPda();
@@ -440,20 +692,20 @@ program_cli
             console.log(`Min Cap: ${minCap} (${Number(minCap) / 1e8} USD)`);
             console.log(`Max Cap: ${maxCap} (${Number(maxCap) / 1e8} USD)\n`);
 
-            const tx = await program.methods
-                .setCapsUsd(
-                    new anchor.BN(minCap.toString()),
-                    new anchor.BN(maxCap.toString())
-                )
-                .accountsPartial({
-                    config: configPda,
-                    admin: adminKeypair.publicKey,
-                })
-                .signers([adminKeypair])
-                .rpc();
-
-            console.log(`✅ USD caps set successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "USD caps updated",
+                getAdminKeypair,
+                (program, authority) => program.methods
+                    .setCapsUsd(
+                        new anchor.BN(minCap.toString()),
+                        new anchor.BN(maxCap.toString())
+                    )
+                    .accountsPartial({
+                        config: configPda,
+                        admin: authority,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error setting caps: ${error.message}`);
             process.exit(1);
@@ -477,17 +729,17 @@ program_cli
 
             console.log(`Pyth Feed: ${feed.toBase58()}\n`);
 
-            const tx = await program.methods
-                .setPythPriceFeed(feed)
-                .accountsPartial({
-                    config: configPda,
-                    admin: adminKeypair.publicKey,
-                })
-                .signers([adminKeypair])
-                .rpc();
-
-            console.log(`✅ Pyth price feed set successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "Pyth price feed updated",
+                getAdminKeypair,
+                (program, authority) => program.methods
+                    .setPythPriceFeed(feed)
+                    .accountsPartial({
+                        config: configPda,
+                        admin: authority,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error setting Pyth feed: ${error.message}`);
             process.exit(1);
@@ -507,17 +759,17 @@ program_cli
 
             console.log(`Max Age: ${maxAge} seconds\n`);
 
-            const tx = await program.methods
-                .setPythMaxAgeSeconds(new anchor.BN(maxAge.toString()))
-                .accountsPartial({
-                    config: configPda,
-                    admin: adminKeypair.publicKey,
-                })
-                .signers([adminKeypair])
-                .rpc();
-
-            console.log(`✅ Pyth max age set successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "Pyth max age updated",
+                getAdminKeypair,
+                (program, authority) => program.methods
+                    .setPythMaxAgeSeconds(new anchor.BN(maxAge.toString()))
+                    .accountsPartial({
+                        config: configPda,
+                        admin: authority,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error setting Pyth max age: ${error.message}`);
             process.exit(1);
@@ -537,17 +789,17 @@ program_cli
 
             console.log(`Confidence Threshold: ${threshold}\n`);
 
-            const tx = await program.methods
-                .setPythConfidenceThreshold(new anchor.BN(threshold.toString()))
-                .accountsPartial({
-                    config: configPda,
-                    admin: adminKeypair.publicKey,
-                })
-                .signers([adminKeypair])
-                .rpc();
-
-            console.log(`✅ Pyth confidence threshold set successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "Pyth confidence threshold updated",
+                getAdminKeypair,
+                (program, authority) => program.methods
+                    .setPythConfidenceThreshold(new anchor.BN(threshold.toString()))
+                    .accountsPartial({
+                        config: configPda,
+                        admin: authority,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error setting Pyth confidence: ${error.message}`);
             process.exit(1);
@@ -572,19 +824,19 @@ program_cli
 
             console.log(`Block USD Cap: ${cap} (${Number(cap) / 1e8} USD)\n`);
 
-            const tx = await program.methods
-                .setBlockUsdCap(new anchor.BN(cap.toString()))
-                .accountsPartial({
-                    config: configPda,
-                    rateLimitConfig: rateLimitConfigPda,
-                    admin: adminKeypair.publicKey,
-                    systemProgram: SystemProgram.programId,
-                })
-                .signers([adminKeypair])
-                .rpc();
-
-            console.log(`✅ Block USD cap set successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "Block USD cap updated",
+                getAdminKeypair,
+                (program, authority) => program.methods
+                    .setBlockUsdCap(new anchor.BN(cap.toString()))
+                    .accountsPartial({
+                        config: configPda,
+                        rateLimitConfig: rateLimitConfigPda,
+                        admin: authority,
+                        systemProgram: SystemProgram.programId,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error setting block USD cap: ${error.message}`);
             process.exit(1);
@@ -605,19 +857,19 @@ program_cli
 
             console.log(`Epoch Duration: ${seconds} seconds (${Number(seconds) / 60} minutes)\n`);
 
-            const tx = await program.methods
-                .updateEpochDuration(new anchor.BN(seconds.toString()))
-                .accountsPartial({
-                    config: configPda,
-                    rateLimitConfig: rateLimitConfigPda,
-                    admin: adminKeypair.publicKey,
-                    systemProgram: SystemProgram.programId,
-                })
-                .signers([adminKeypair])
-                .rpc();
-
-            console.log(`✅ Epoch duration set successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "Epoch duration updated",
+                getAdminKeypair,
+                (program, authority) => program.methods
+                    .updateEpochDuration(new anchor.BN(seconds.toString()))
+                    .accountsPartial({
+                        config: configPda,
+                        rateLimitConfig: rateLimitConfigPda,
+                        admin: authority,
+                        systemProgram: SystemProgram.programId,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error setting epoch duration: ${error.message}`);
             process.exit(1);
@@ -649,26 +901,83 @@ program_cli
             console.log(`Trusted Freeze Authority: ${Boolean(options.trustedFreezeAuthority)}`);
             console.log(`Token Rate Limit PDA: ${tokenRateLimitPda.toBase58()}\n`);
 
-            const tx = await program.methods
-                .setTokenRateLimit(
-                    new anchor.BN(threshold.toString()),
-                    Boolean(options.trustedMintAuthority),
-                    Boolean(options.trustedFreezeAuthority),
-                )
-                .accountsPartial({
-                    config: configPda,
-                    tokenRateLimit: tokenRateLimitPda,
-                    tokenMint: mint,
-                    admin: adminKeypair.publicKey,
-                    systemProgram: SystemProgram.programId,
-                })
-                .signers([adminKeypair])
-                .rpc();
-
-            console.log(`✅ Token rate limit set successfully!`);
-            console.log(`   Transaction: ${tx}\n`);
+            await runAuthorityAction(
+                "Token rate limit updated",
+                getAdminKeypair,
+                (program, authority) => program.methods
+                    .setTokenRateLimit(
+                        new anchor.BN(threshold.toString()),
+                        Boolean(options.trustedMintAuthority),
+                        Boolean(options.trustedFreezeAuthority),
+                    )
+                    .accountsPartial({
+                        config: configPda,
+                        tokenRateLimit: tokenRateLimitPda,
+                        tokenMint: mint,
+                        admin: authority,
+                        systemProgram: SystemProgram.programId,
+                    })
+                    .instruction()
+            );
         } catch (error: any) {
             console.error(`❌ Error setting token rate limit: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+// ============================================
+//           SQUADS HELPER COMMANDS
+// ============================================
+
+program_cli
+    .command("squads:show")
+    .description("Show Squads proposal status for a previously created vault transaction")
+    .requiredOption("--tx-index <index>", "Squads transaction index")
+    .action(async (options) => {
+        try {
+            const multisigPda = getMultisigPda();
+            if (!multisigPda) {
+                throw new Error("This command requires --multisig <pda>");
+            }
+            await showProposal(multisigPda, BigInt(options.txIndex));
+        } catch (error: any) {
+            console.error(`❌ Error showing proposal: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program_cli
+    .command("squads:approve")
+    .description("Approve a Squads proposal with the provided member signer")
+    .requiredOption("--tx-index <index>", "Squads transaction index")
+    .action(async (options) => {
+        try {
+            const multisigPda = getMultisigPda();
+            if (!multisigPda) {
+                throw new Error("This command requires --multisig <pda>");
+            }
+            const member = getMemberKeypair();
+            await approveProposal(multisigPda, member, BigInt(options.txIndex));
+        } catch (error: any) {
+            console.error(`❌ Error approving proposal: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program_cli
+    .command("squads:execute")
+    .description("Execute an approved Squads vault transaction")
+    .requiredOption("--tx-index <index>", "Squads transaction index")
+    .action(async (options) => {
+        try {
+            const multisigPda = getMultisigPda();
+            if (!multisigPda) {
+                throw new Error("This command requires --multisig <pda>");
+            }
+            const member = getMemberKeypair();
+            await executeVaultTransaction(multisigPda, member, BigInt(options.txIndex));
+        } catch (error: any) {
+            console.error(`❌ Error executing proposal: ${error.message}`);
             process.exit(1);
         }
     });
@@ -682,6 +991,7 @@ program_cli
     .description("Show current gateway configuration (config + tss + rate_limit + fee_vault)")
     .action(async () => {
         try {
+            const program = createReadOnlyProgram();
             console.log("=== GATEWAY CONFIGURATION ===\n");
 
             const configPda = deriveConfigPda();

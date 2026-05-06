@@ -146,11 +146,22 @@ solana program show <PROGRAM_ID> --url <RPC_URL>
 
 # ── Emergency ──────────────────────────────────────────────────────────────
 
-# Pause the gateway immediately (Config.pauser, no multisig needed)
-npm run config:pause -- --keypair <pauser-keypair.json>
+# Pause the gateway immediately (Config.pauser — use pauser key, not admin key)
+npm run config:pause -- --pauser-keypair <pauser-keypair.json>
 
-# Rotate TSS key (Phase 1: Config.admin via config multisig)
-npm run config:tss-update -- --keypair <admin-keypair.json> --new-tss <NEW_TSS_PUBKEY>
+# Unpause (Config.operator — use operator key)
+npm run config:unpause -- --operator-keypair <operator-keypair.json>
+
+# Rotate TSS key (Config.operator signer)
+npm run config:tss-update -- \
+  --operator-keypair <operator-keypair.json> \
+  --eth 0x<40-hex-address> \
+  --chain-id <chain-id-string>
+
+# Set operator authority (Config.admin — use admin key)
+npm run config:operator:set -- \
+  --admin-keypair <admin-keypair.json> \
+  --new-operator <new-operator-pubkey>
 
 # Check current config roles
 npm run config:show
@@ -174,29 +185,28 @@ This is the highest-trust layer. A holder can replace the entire program with ar
 
 ### Layer 1 — In-program Config authorities
 
-Controls who can call privileged instructions. Stored in the `Config` PDA. Four distinct roles, each with a separate recommended holder.
+Controls who can call privileged instructions. Stored in the `Config` PDA.
 
-| Role               | Instruction surface (Phase 2 design)                    | Current Phase 1 surface                        | Recommended holder                         | Notes                                                        |
-| ------------------ | ------------------------------------------------------- | ---------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------ |
-| `Config.admin`     | USD caps, oracle feed, protocol fee, authority rotation | **+ `unpause()`, `tss_update()`**              | Config multisig (separate from governance) | Economic + protocol parameters. In Phase 1 admin also owns operator surface until operator role is implemented. |
-| `Config.operator`  | `unpause()`, `tss_update()`                             | **Does not exist — field not in Config yet**   | Ops multisig                               | **Not yet implemented — Phase 2. Do not treat as in-effect during an incident.** |
-| `Config.pauser`    | `pause()` only — no unpause                             | Same                                           | Guardian multisig                          | Emergency stop; must be fast. Always active. |
-| TSS key (`TssPda`) | Authorizes all outbound fund releases via ECDSA         | Same                                           | TSS service hot wallet                     | Non-human; rotated by **Config.admin** in Phase 1 |
-
-> ⚠️ **Phase 1 incident note:** If you need to pause or rotate TSS right now, the signer is **Config.admin** — not a dedicated operator. There is no `Config.operator` field in the live program. Anyone consulting this table during an incident should check the current phase before deciding who to call.
+| Role               | Current instruction surface                  | Recommended holder                         | Notes                                                        |
+| ------------------ | -------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------ |
+| `Config.admin`     | USD caps, oracle feed, protocol fee, authority rotation, `set_operator`, **`pause()`** | Config multisig (separate from governance) | Economic + protocol parameters. Admin can pause as an emergency fallback if the guardian key is unavailable — see note below. |
+| `Config.operator`  | `unpause()`, `tss_update()`                 | Ops multisig                               | Operational actions. Stored in a reused legacy storage slot for layout compatibility. |
+| `Config.pauser`    | `pause()` — no unpause                      | Guardian multisig                          | Primary pause path; must be fast. Admin is a secondary pause path. |
+| TSS key (`TssPda`) | Authorizes all outbound fund releases via ECDSA | TSS service hot wallet                  | Non-human; rotated by **Config.operator**. |
 
 **Critical distinctions:**
 
 - The governance multisig (upgrade authority) and the config multisig (Config.admin) are **different signers with different members and thresholds**. A single multisig holding both powers creates a concentration risk — a quorum can drain the vault AND hide the evidence by upgrading the program.
-- `Config.pauser` has no `unpause()` power. Unpause is an operator action (intentional — avoids a guardian key being used to resume operations after an incident without proper review).
-- In Phase 1 (current), `Config.admin` still controls unpause and TSS rotation. The operator role does not exist yet in the program.
+- `Config.pauser` has no `unpause()` power. Unpause is an operator action — avoids a guardian key being used to resume operations after an incident without proper review.
+- `Config.admin` can also call `pause()` as an emergency fallback (on-chain constraint accepts either pauser or admin as the signer). This is intentional: if the guardian key is compromised or unavailable, admin can pause. **Do not treat admin as the primary pause path** — admin is a slower multisig.
+- `Config.admin` and `Config.operator` must be separate signers in production. An attacker who compromises admin cannot unpause or rotate TSS without also controlling operator.
 
 ### Rollout Phases (from SVM-Access-Control-PoC.md)
 
 | Phase   | What changes                                                                   | Status                          |
 | ------- | ------------------------------------------------------------------------------ | ------------------------------- |
 | Phase 1 | Move upgrade authority from hot key to governance multisig                     | **Complete — devnet verified**  |
-| Phase 2 | Add `operator` role in-program; split unpause + TSS rotation out of admin      | Pending implementation          |
+| Phase 2 | Add `operator` role in-program; split unpause + TSS rotation out of admin      | **Complete**                    |
 | Phase 3 | Ceremony: verify all roles held by correct signers, no personal keys remaining | Pending                         |
 
 ---
@@ -326,6 +336,12 @@ The standard upgrade script wraps `BPFLoaderUpgradeable::Upgrade`; a separate sc
 npm run config:authority-propose -- --new-pauser <GUARDIAN_PUBKEY>
 # Accepted by the guardian keypair directly (it can sign normally)
 npm run config:authority-accept-pauser -- --keypair <guardian-keypair.json>
+```
+
+**Config.operator → Ops multisig or dedicated operator signer:**
+
+```bash
+npm run config:operator-set -- --new-operator <OPS_SIGNER_PUBKEY>
 ```
 
 **Do not rotate Config.admin to the same Vault PDA that holds upgrade authority.** If the same signer controls both, a compromised quorum can drain the vault and then upgrade the program to erase the evidence. These must remain distinct signers.
@@ -529,9 +545,26 @@ solana-verify get-program-hash <PROGRAM_ID> --url <RPC_URL>
 
 > ⚠️ A log marker inside `initialize` (or any `#[account(init, ...)]` instruction) is **not** a valid upgrade marker. Anchor validates account constraints before the function body runs, so on an already-initialized deployment the function body is never reached. Use hash verification instead.
 
-### Step 9 — Clean up buffers
+### Step 9 — Set operator (required on first upgrade from pre-operator binary)
 
-Once the upgrade is verified, the old buffer account has been closed (its lamports went to the spill address during upgrade). Close any orphaned buffers from earlier failed attempts:
+If this upgrade adds the `operator` field for the first time (migrating from a binary that had `tss_address` in that Config slot), the `operator` field now contains whatever `tss_address` was at initialization. It may or may not be the intended operator key.
+
+**Always verify and explicitly set the operator after this class of upgrade:**
+
+```bash
+# Check what is currently in the operator slot
+npm run config:show
+# → "operator: <address>"
+
+# If it is not the intended operator key, set it immediately
+npm run config:operator:set -- --new-operator <INTENDED_OPERATOR_PUBKEY>
+```
+
+`set_operator` is admin-only and takes effect immediately. Until it is called, `unpause` and `tss_update` use whichever key is in the slot. On mainnet, this step must happen in the same upgrade window before operators resume normal operations.
+
+### Step 10 — Clean up buffers
+
+Once the upgrade is verified and the operator is confirmed correct, the old buffer account has been closed (its lamports went to the spill address during upgrade). Close any orphaned buffers from earlier failed attempts:
 
 ```bash
 solana program close --buffers \
@@ -638,9 +671,7 @@ The script lives at `app/squads-upgrade.ts`. It uses `@sqds/multisig` v2.1.4 dir
 
 **Risk:** TSS key signs all outbound fund releases. A compromised TSS key can drain the `Vault` PDA. This is independent of the upgrade authority.
 
-**Mitigation (Phase 1 — current):** TSS rotation is gated to `Config.admin`. Compromised TSS → config multisig proposes `tss-update`. If funds are draining actively → guardian calls `pause` immediately (does not require multisig).
-
-**Mitigation (Phase 2 — after operator role is added):** TSS rotation moves to `Config.operator`. The ops multisig can rotate the TSS key without involving the config multisig.
+**Mitigation (current):** TSS rotation is gated to `Config.operator`. Compromised TSS → ops multisig rotates TSS quickly. If funds are draining actively → guardian calls `pause` immediately (does not require multisig).
 
 The pauser must always be capable of pausing faster than a TSS drain completes.
 
@@ -763,10 +794,9 @@ For a 3-of-5 setup: losing 2 keys simultaneously locks the multisig. Keep encryp
 - [ ] Binary hash verified: `solana-verify get-program-hash` matches `solana-verify get-executable-hash` of local build
 - [ ] Orphaned buffers closed: `solana program close --buffers --keypair ./upgrade-keypair.json --url mainnet-beta`
 
-### Phase 2 — Operator role (when implemented in-program)
+### Operator ceremony (current in-program surface)
 
 - [ ] Create **ops multisig** (Config.operator): members who respond to incidents
-- [ ] Deploy Phase 2 upgrade (adds operator field) via governance multisig upgrade flow
-- [ ] Set operator field to ops multisig Vault PDA via admin
+- [ ] Set operator field to ops multisig Vault PDA via admin (`config:operator-set`)
 - [ ] Verify operator controls unpause and TSS rotation; admin no longer does
 - [ ] Run Phase 3 ceremony from SVM-Access-Control-PoC.md: all 4 roles distinct, no personal keys remaining

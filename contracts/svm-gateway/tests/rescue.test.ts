@@ -55,6 +55,7 @@ describe("Universal Gateway - Rescue Tests", () => {
     });
 
     let admin: Keypair;
+    let operator: Keypair;
     let pauser: Keypair;
     let recipient: Keypair;
     let relayer: Keypair;
@@ -114,6 +115,7 @@ describe("Universal Gateway - Rescue Tests", () => {
 
     before(async () => {
         admin = sharedState.getAdmin();
+        operator = sharedState.getOperator();
         pauser = sharedState.getPauser();
         mockUSDT = sharedState.getMockUSDT();
         user1 = sharedState.getUser1();
@@ -500,8 +502,8 @@ describe("Universal Gateway - Rescue Tests", () => {
 
             await program.methods
                 .unpause()
-                .accountsPartial({ admin: admin.publicKey, config: configPda })
-                .signers([admin])
+                .accountsPartial({ operator: operator.publicKey, config: configPda })
+                .signers([operator])
                 .rpc();
         });
 

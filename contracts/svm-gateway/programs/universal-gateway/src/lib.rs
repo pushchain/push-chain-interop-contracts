@@ -37,7 +37,7 @@ pub mod universal_gateway {
         ctx: Context<Initialize>,
         admin: Pubkey,
         pauser: Pubkey,
-        tss: Pubkey,
+        operator: Pubkey,
         min_cap_usd: u128,
         max_cap_usd: u128,
         pyth_price_feed: Pubkey,
@@ -46,7 +46,7 @@ pub mod universal_gateway {
             ctx,
             admin,
             pauser,
-            tss,
+            operator,
             min_cap_usd,
             max_cap_usd,
             pyth_price_feed,
@@ -61,6 +61,11 @@ pub mod universal_gateway {
     /// @notice Unpause the gateway
     pub fn unpause(ctx: Context<UnpauseAction>) -> Result<()> {
         instructions::admin::unpause(ctx)
+    }
+
+    /// @notice Set operator authority
+    pub fn set_operator(ctx: Context<AdminAction>, new_operator: Pubkey) -> Result<()> {
+        instructions::admin::set_operator(ctx, new_operator)
     }
 
     /// @notice Propose new admin and/or pauser authority.

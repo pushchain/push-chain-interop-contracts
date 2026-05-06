@@ -42,7 +42,7 @@ pub fn initialize(
     ctx: Context<Initialize>,
     admin: Pubkey,
     pauser: Pubkey,
-    tss: Pubkey,
+    operator: Pubkey,
     min_cap_usd: u128,
     max_cap_usd: u128,
     pyth_price_feed: Pubkey,
@@ -56,7 +56,11 @@ pub fn initialize(
         crate::errors::GatewayError::ZeroAddress
     );
     require!(
-        tss != Pubkey::default(),
+        operator != Pubkey::default(),
+        crate::errors::GatewayError::ZeroAddress
+    );
+    require!(
+        pauser != Pubkey::default(),
         crate::errors::GatewayError::ZeroAddress
     );
     require!(
@@ -67,7 +71,7 @@ pub fn initialize(
     let config = &mut ctx.accounts.config;
     config.admin = admin;
     config.pauser = pauser;
-    config.tss_address = tss;
+    config.operator = operator;
     config.min_cap_universal_tx_usd = min_cap_usd;
     config.max_cap_universal_tx_usd = max_cap_usd;
     config.paused = false;
@@ -77,6 +81,6 @@ pub fn initialize(
     config.pyth_confidence_threshold = 1000000; // Default confidence threshold (1e6)
     config.pyth_max_age_seconds = 60; // Default staleness window (60 seconds)
 
-    msg!("Gateway initialized with admin: {}, TSS: {}", admin, tss);
+    msg!("Gateway initialized with admin: {}, operator: {}", admin, operator);
     Ok(())
 }

@@ -20,7 +20,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
     // Test accounts
     let admin: Keypair;
     let newAdmin: Keypair;
-    let tssAddress: Keypair;
+    let operator: Keypair;
     let pauser: Keypair;
     let newPauser: Keypair;
     let unauthorizedUser: Keypair;
@@ -36,7 +36,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
     let mockUSDT: any;
     before(async () => {
         admin = sharedState.getAdmin();
-        tssAddress = sharedState.getTssAddress();
+        operator = sharedState.getOperator();
         pauser = sharedState.getPauser();
         mockUSDT = sharedState.getMockUSDT();
         mockPriceFeed = sharedState.getMockPriceFeed();
@@ -81,7 +81,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
         const config = await program.account.config.fetch(configPda);
         expect(config.admin.toString()).to.equal(admin.publicKey.toString());
         expect(config.pauser.toString()).to.equal(pauser.publicKey.toString());
-        expect(config.tssAddress.toString()).to.equal(tssAddress.publicKey.toString());
+        expect(config.operator.toString()).to.equal(operator.publicKey.toString());
 
     });
 
@@ -91,12 +91,152 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             const config = await program.account.config.fetch(configPda);
 
             expect(config.admin.toString()).to.equal(admin.publicKey.toString());
-            expect(config.tssAddress.toString()).to.equal(tssAddress.publicKey.toString());
+            expect(config.operator.toString()).to.equal(operator.publicKey.toString());
             expect(config.pauser.toString()).to.equal(pauser.publicKey.toString());
             expect(config.pendingAdmin.toString()).to.equal(PublicKey.default.toString());
             expect(config.pendingPauser.toString()).to.equal(PublicKey.default.toString());
             expect(config.paused).to.be.false;
 
+        });
+
+        it("Updates operator authority and emits OperatorChanged", async () => {
+            const newOperator = Keypair.generate();
+            await provider.connection.requestAirdrop(
+                newOperator.publicKey,
+                2 * anchor.web3.LAMPORTS_PER_SOL
+            );
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            let rotated = false;
+            let config = await program.account.config.fetch(configPda);
+
+            try {
+                const txSig = await program.methods
+                    .setOperator(newOperator.publicKey)
+                    .accountsPartial({
+                        admin: admin.publicKey,
+                        config: configPda,
+                    })
+                    .signers([admin])
+                    .rpc();
+                rotated = true;
+
+                config = await program.account.config.fetch(configPda);
+                expect(config.operator.toString()).to.equal(newOperator.publicKey.toString());
+
+                const tx = await provider.connection.getTransaction(txSig, {
+                    commitment: "confirmed",
+                    maxSupportedTransactionVersion: 0,
+                });
+                expect(tx?.meta?.logMessages).to.exist;
+
+                const eventCoder = new anchor.BorshEventCoder(program.idl);
+                const events = (tx?.meta?.logMessages ?? [])
+                    .filter((log) => log.includes("Program data:"))
+                    .map((log) => {
+                        try {
+                            return eventCoder.decode(log.split("Program data: ")[1]);
+                        } catch {
+                            return null;
+                        }
+                    })
+                    .filter((event) => event !== null);
+
+                const operatorChanged = events.find(event => event.name === "operatorChanged");
+                expect(operatorChanged).to.exist;
+                expect((operatorChanged!.data as any).oldOperator.toString()).to.equal(operator.publicKey.toString());
+                expect((operatorChanged!.data as any).newOperator.toString()).to.equal(newOperator.publicKey.toString());
+
+                await program.methods
+                    .pause()
+                    .accountsPartial({
+                        pauser: pauser.publicKey,
+                        config: configPda,
+                    })
+                    .signers([pauser])
+                    .rpc();
+
+                await program.methods
+                    .unpause()
+                    .accountsPartial({
+                        operator: operator.publicKey,
+                        config: configPda,
+                    })
+                    .signers([operator])
+                    .rpc();
+                expect.fail("Old operator should not retain unpause access after rotation");
+            } catch (error: any) {
+                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                expect(errorCode).to.equal("Unauthorized");
+            } finally {
+                if (rotated) {
+                    const latestConfig = await program.account.config.fetch(configPda);
+                    if (latestConfig.paused) {
+                        await program.methods
+                            .unpause()
+                            .accountsPartial({
+                                operator: newOperator.publicKey,
+                                config: configPda,
+                            })
+                            .signers([newOperator])
+                            .rpc();
+                    }
+
+                    await program.methods
+                        .setOperator(operator.publicKey)
+                        .accountsPartial({
+                            admin: admin.publicKey,
+                            config: configPda,
+                        })
+                        .signers([admin])
+                        .rpc();
+                }
+            }
+
+            config = await program.account.config.fetch(configPda);
+            expect(config.operator.toString()).to.equal(operator.publicKey.toString());
+        });
+
+        it("Rejects operator updates from non-admin", async () => {
+            const anotherOperator = Keypair.generate();
+
+            try {
+                await program.methods
+                    .setOperator(anotherOperator.publicKey)
+                    .accountsPartial({
+                        admin: unauthorizedUser.publicKey,
+                        config: configPda,
+                    })
+                    .signers([unauthorizedUser])
+                    .rpc();
+                expect.fail("Unauthorized set_operator should have failed");
+            } catch (error: any) {
+                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                expect(errorCode).to.equal("Unauthorized");
+            }
+
+            const config = await program.account.config.fetch(configPda);
+            expect(config.operator.toString()).to.equal(operator.publicKey.toString());
+        });
+
+        it("Rejects zero-address operator updates", async () => {
+            try {
+                await program.methods
+                    .setOperator(PublicKey.default)
+                    .accountsPartial({
+                        admin: admin.publicKey,
+                        config: configPda,
+                    })
+                    .signers([admin])
+                    .rpc();
+                expect.fail("Zero-address operator update should have failed");
+            } catch (error: any) {
+                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                expect(errorCode).to.equal("ZeroAddress");
+            }
+
+            const config = await program.account.config.fetch(configPda);
+            expect(config.operator.toString()).to.equal(operator.publicKey.toString());
         });
 
         it("Rotates admin authority", async () => {
@@ -226,10 +366,10 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             await program.methods
                 .unpause()
                 .accountsPartial({
-                    admin: admin.publicKey,
+                    operator: operator.publicKey,
                     config: configPda,
                 })
-                .signers([admin])
+                .signers([operator])
                 .rpc();
 
             try {
@@ -369,15 +509,50 @@ describe("Universal Gateway - Admin Functions Tests", () => {
 
         });
 
+        it("Allows admin to pause as emergency fallback", async () => {
+            await program.methods
+                .unpause()
+                .accountsPartial({
+                    operator: operator.publicKey,
+                    config: configPda,
+                })
+                .signers([operator])
+                .rpc();
+
+            await program.methods
+                .pause()
+                .accountsPartial({
+                    pauser: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            let config = await program.account.config.fetch(configPda);
+            expect(config.paused).to.be.true;
+
+            await program.methods
+                .unpause()
+                .accountsPartial({
+                    operator: operator.publicKey,
+                    config: configPda,
+                })
+                .signers([operator])
+                .rpc();
+
+            config = await program.account.config.fetch(configPda);
+            expect(config.paused).to.be.false;
+        });
+
         it("Unpauses the contract", async () => {
 
             await program.methods
                 .unpause()
                 .accountsPartial({
-                    admin: admin.publicKey,
+                    operator: operator.publicKey,
                     config: configPda,
                 })
-                .signers([admin])
+                .signers([operator])
                 .rpc();
 
             const config = await program.account.config.fetch(configPda);
@@ -399,7 +574,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 await program.methods
                     .unpause()
                     .accountsPartial({
-                        admin: pauser.publicKey,
+                        operator: pauser.publicKey,
                         config: configPda,
                     })
                     .signers([pauser])
@@ -415,10 +590,10 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             await program.methods
                 .unpause()
                 .accountsPartial({
-                    admin: admin.publicKey,
+                    operator: operator.publicKey,
                     config: configPda,
                 })
-                .signers([admin])
+                .signers([operator])
                 .rpc();
 
             const config = await program.account.config.fetch(configPda);
@@ -447,7 +622,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 await program.methods
                     .unpause()
                     .accountsPartial({
-                        admin: unauthorizedUser.publicKey,
+                        operator: unauthorizedUser.publicKey,
                         config: configPda,
                     })
                     .signers([unauthorizedUser])
@@ -653,10 +828,10 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             await program.methods
                 .unpause()
                 .accountsPartial({
-                    admin: admin.publicKey,
+                    operator: operator.publicKey,
                     config: configPda,
                 })
-                .signers([admin])
+                .signers([operator])
                 .rpc();
 
             const pausedConfig = await program.account.config.fetch(configPda);
@@ -745,10 +920,10 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             await program.methods
                 .unpause()
                 .accountsPartial({
-                    admin: admin.publicKey,
+                    operator: operator.publicKey,
                     config: configPda,
                 })
-                .signers([admin])
+                .signers([operator])
                 .rpc();
 
             const pausedRateLimitConfig = await program.account.rateLimitConfig.fetch(rateLimitConfigPda);
@@ -896,10 +1071,10 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             await program.methods
                 .unpause()
                 .accountsPartial({
-                    admin: admin.publicKey,
+                    operator: operator.publicKey,
                     config: configPda,
                 })
-                .signers([admin])
+                .signers([operator])
                 .rpc();
 
             const pausedTokenRateLimit = await program.account.tokenRateLimit.fetch(tokenRateLimitPda);
@@ -1019,11 +1194,11 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             await program.methods
                 .updateTss(newTssEthAddress, newChainId)
                 .accountsPartial({
-                    authority: admin.publicKey,
+                    authority: operator.publicKey,
                     tssPda: tssPda,
                     config: configPda,
                 })
-                .signers([admin])
+                .signers([operator])
                 .rpc();
 
             const tss = await program.account.tssPda.fetch(tssPda);
@@ -1080,9 +1255,9 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             .accountsPartial({
                 tssPda,
                 config: configPda,
-                authority: admin.publicKey,
+                authority: operator.publicKey,
             })
-            .signers([admin])
+            .signers([operator])
             .rpc();
 
     });

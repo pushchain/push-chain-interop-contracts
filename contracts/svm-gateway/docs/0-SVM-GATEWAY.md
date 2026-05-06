@@ -22,7 +22,7 @@ The program uses PDAs for all protocol state. No external signers or owner keys 
 
 | Account | Seeds | What it holds |
 |---------|-------|---------------|
-| `Config` | `["config"]` | Admin/pauser pubkeys, pending authority pubkeys, USD caps, Pyth oracle config; legacy `tss_address` field (unused for auth) |
+| `Config` | `["config"]` | Admin/operator/pauser pubkeys, pending admin/pauser pubkeys, USD caps, Pyth oracle config (operator reuses legacy `tss_address` storage slot for layout compatibility) |
 | `Vault` | `["vault"]` | Native SOL bridge balance; also the authority for all SPL vault ATAs |
 | `FeeVault` | `["fee_vault"]` | Protocol fees and UV gas reimbursement pool |
 | `TssPda` | `["tsspda_v2"]` | Active TSS Ethereum address (`tss_eth_address`), `chain_id` — this is the account verified against on every outbound call |
@@ -144,7 +144,7 @@ See `5-RESCUE.md`.
 
 **Outbound (all):** TSS ECDSA secp256k1 signature. The program reconstructs the message, hashes it with keccak256, recovers the Ethereum address from the signature, and compares it to `TssPda.tss_eth_address`. No `onlyRole` or key-based auth — the signature is the only gate.
 
-**Admin:** config changes require the current admin pubkey to sign. `pause` can be called by either the configured pauser or the admin; `unpause` is admin-only. Authority handover is two-step: the current admin proposes a new admin/pauser, and the proposed key must accept. These are Solana `Pubkey` fields stored in `Config`, not Ethereum addresses.
+**Admin:** config changes require the current admin pubkey to sign. `pause` can be called by either the configured pauser or the admin; `unpause` is operator-only. Authority handover is two-step for admin/pauser: the current admin proposes and the proposed key accepts. Operator is admin-set in one step (no extra pending slot in current layout). These are Solana `Pubkey` fields stored in `Config`, not Ethereum addresses.
 
 ---
 

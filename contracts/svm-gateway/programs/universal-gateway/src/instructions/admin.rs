@@ -75,11 +75,11 @@ pub struct UnpauseAction<'info> {
         mut,
         seeds = [CONFIG_SEED],
         bump = config.bump,
-        constraint = config.admin == admin.key() @ GatewayError::Unauthorized
+        constraint = config.operator == operator.key() @ GatewayError::Unauthorized
     )]
     pub config: Account<'info, Config>,
 
-    pub admin: Signer<'info>,
+    pub operator: Signer<'info>,
 }
 
 pub fn pause(ctx: Context<PauseAction>) -> Result<()> {
@@ -89,6 +89,15 @@ pub fn pause(ctx: Context<PauseAction>) -> Result<()> {
 
 pub fn unpause(ctx: Context<UnpauseAction>) -> Result<()> {
     ctx.accounts.config.paused = false;
+    Ok(())
+}
+
+/// Set operator authority (admin-only, available while paused).
+pub fn set_operator(ctx: Context<AdminAction>, new_operator: Pubkey) -> Result<()> {
+    require!(new_operator != Pubkey::default(), GatewayError::ZeroAddress);
+    let old_operator = ctx.accounts.config.operator;
+    ctx.accounts.config.operator = new_operator;
+    emit!(crate::state::OperatorChanged { old_operator, new_operator });
     Ok(())
 }
 

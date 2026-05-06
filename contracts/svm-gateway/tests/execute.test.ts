@@ -149,6 +149,7 @@ describe("Universal Gateway - Execute Tests", () => {
   });
 
   let admin: Keypair;
+  let operator: Keypair;
   let recipient: Keypair; // Recipient for test-counter
 
   let configPda: PublicKey;
@@ -229,6 +230,7 @@ describe("Universal Gateway - Execute Tests", () => {
 
   before(async () => {
     admin = sharedState.getAdmin();
+    operator = sharedState.getOperator();
     mockUSDT = sharedState.getMockUSDT();
 
     recipient = Keypair.generate();
@@ -2233,8 +2235,8 @@ describe("Universal Gateway - Execute Tests", () => {
       } finally {
         await gatewayProgram.methods
           .unpause()
-          .accountsPartial({ admin: admin.publicKey, config: configPda })
-          .signers([admin])
+          .accountsPartial({ operator: operator.publicKey, config: configPda })
+          .signers([operator])
           .rpc();
       }
     });

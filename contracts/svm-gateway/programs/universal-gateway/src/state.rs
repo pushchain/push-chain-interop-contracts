@@ -65,9 +65,9 @@ pub struct UniversalTxRequest {
 #[account]
 pub struct Config {
     pub admin: Pubkey,
-    /// Legacy field — reserved for account layout compatibility.
-    /// Cannot be removed without a migration because it is part of the deployed on-chain layout.
-    pub tss_address: Pubkey,
+    /// Operator authority (reusing legacy slot to preserve deployed account layout).
+    /// This field previously held an unused legacy value (`tss_address`).
+    pub operator: Pubkey,
     pub pauser: Pubkey,
     pub min_cap_universal_tx_usd: u128, // 1e8 = $1 (Pyth format)
     pub max_cap_universal_tx_usd: u128, // 1e8 = $10 (Pyth format)
@@ -140,8 +140,8 @@ impl TokenRateLimit {
 pub struct TssPda {
     pub tss_eth_address: [u8; 20],
     pub chain_id: String, // Solana cluster pubkey (e.g., "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d" for mainnet)
-    /// Legacy field — set at init_tss but no longer used for authorization.
-    /// update_tss now checks config.admin. Kept for account layout compatibility.
+    /// Legacy field — zero-initialized and no longer used for authorization.
+    /// update_tss now checks config.operator. Kept for account layout compatibility.
     pub authority: Pubkey,
     pub bump: u8,
 }
@@ -215,6 +215,12 @@ pub struct RevertUniversalTx {
     pub token: Pubkey,             // Token address (Pubkey::default() for native SOL)
     pub amount: u64,               // Amount
     pub revert_instruction: RevertInstructions,
+}
+
+#[event]
+pub struct OperatorChanged {
+    pub old_operator: Pubkey,
+    pub new_operator: Pubkey,
 }
 
 #[event]

@@ -40,11 +40,23 @@ npm run token:list            # list whitelisted tokens
 
 # Gateway configuration
 npm run config:show           # display current config
-npm run config:tss-init       # initialize TSS
-npm run config:tss-update     # update TSS address
-npm run config:pause          # pause gateway
-npm run config:unpause        # unpause gateway
+npm run config:tss-init       -- --admin-keypair <admin-keypair.json> --eth 0x<40-hex-address> --chain-id <chain-id>
+npm run config:tss-update     -- --operator-keypair <operator-keypair.json> --eth 0x<40-hex-address> --chain-id <chain-id>
+npm run config:operator-set   -- --admin-keypair <admin-keypair.json> --new-operator <operator-pubkey>
+npm run config:pause          -- --pauser-keypair <pauser-keypair.json>
+npm run config:unpause        -- --operator-keypair <operator-keypair.json>
+
+# Same commands, but wrapped into a Squads vault proposal instead of direct execution
+npm run config:tss-update     -- --multisig <multisig-pda> --member-keypair <member.json> --eth 0x<40-hex-address> --chain-id <chain-id>
+npm run config:squads-approve -- --multisig <multisig-pda> --member-keypair <member.json> --tx-index <n>
+npm run config:squads-execute -- --multisig <multisig-pda> --member-keypair <member.json> --tx-index <n>
 ```
+
+Each authority-bearing `config-cli` command supports both models:
+- EOA: pass the role keypair flag for that command, such as `--admin-keypair`, `--operator-keypair`, or `--pauser-keypair`
+- Squads vault: pass `--multisig <multisig-pda>` and `--member-keypair <member.json>` to create a vault transaction proposal instead of executing directly
+
+This is role-local. Admin can be Squads while operator is an EOA, or vice versa.
 
 ---
 

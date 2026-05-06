@@ -469,7 +469,7 @@ async function run() {
       .initialize(
         admin, // admin
         admin, // pauser
-        admin, // tss (using admin for simplicity)
+        admin, // operator (using admin for simplicity)
         new anchor.BN(100_000_000), // min_cap_usd ($1 with 8 decimals = 1e8)
         new anchor.BN(1_000_000_000), // max_cap_usd ($10 with 8 decimals = 10e8)
         new PublicKey("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE") // pyth_price_feed (SOL/USD feed ID)
@@ -1659,7 +1659,7 @@ async function run() {
       .unpause()
       .accountsPartial({
         config: configPda,
-        admin,
+        operator: admin,
       })
       .rpc();
     console.log(`✅ Gateway unpaused: ${unpauseTx}\n`);
@@ -2049,7 +2049,7 @@ async function run() {
       .initialize(new anchor.BN(0))
       .accountsPartial({
         counter: counterPda,
-        authority: admin, // Admin is authority, but relayer signs execute txs
+        authority: admin, // Operator signer (admin used as operator in this script), relayer signs execute txs
         systemProgram: SystemProgram.programId,
       })
       .signers([adminKeypair])
@@ -2090,7 +2090,7 @@ async function run() {
       .increment(new anchor.BN(3))
       .accountsPartial({
         counter: counterPda,
-        authority: admin, // Admin is authority, but relayer signs the execute tx
+        authority: admin, // Operator signer (admin used as operator in this script), relayer signs the execute tx
       })
       .instruction();
 
@@ -2275,7 +2275,10 @@ async function run() {
       .instruction();
 
     // Check CEA ATA existence BEFORE calculating fees (ceaAtaForSpl already calculated above)
-    const { gasFee } = await calculateSplExecuteFees(connection, ceaAtaForSpl);
+    const { gasFee, gasUsed } = await calculateSplExecuteFees(
+      connection,
+      ceaAtaForSpl
+    );
 
     // Encode payload with execution data (accounts, ixData, targetProgram)
     const payloadFields = instructionToPayloadFields({
@@ -2418,7 +2421,9 @@ async function run() {
     assert.isAtLeast(
       relayerNetChangeSpl,
       expectedRelayerNetSpl - computeFeeToleranceSpl,
-      `Relayer net should be ~${expectedRelayerNetSpl} (receives ${relayerFeeReceivedSpl}, pays ${executedTxRentSpl} rent + compute fees)`
+      `Relayer net should be ~${expectedRelayerNetSpl} (receives gas_used=${Number(
+        gasUsed
+      )}, pays ${executedTxRentSpl} rent + compute fees)`
     );
 
     const executedTxExistsAfterSpl =

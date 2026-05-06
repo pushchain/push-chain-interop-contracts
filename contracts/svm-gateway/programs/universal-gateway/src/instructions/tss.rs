@@ -35,12 +35,11 @@ pub fn init_tss(ctx: Context<InitTss>, tss_eth_address: [u8; 20], chain_id: Stri
     let tss = &mut ctx.accounts.tss_pda;
     tss.tss_eth_address = tss_eth_address;
     tss.chain_id = chain_id;
-    tss.authority = ctx.accounts.authority.key();
     tss.bump = ctx.bumps.tss_pda;
     Ok(())
 }
 
-/// Update TSS ETH address / chain id (admin-only)
+/// Update TSS ETH address / chain id (operator-only)
 #[derive(Accounts)]
 pub struct UpdateTss<'info> {
     #[account(
@@ -53,7 +52,7 @@ pub struct UpdateTss<'info> {
     #[account(
         seeds = [CONFIG_SEED],
         bump = config.bump,
-        constraint = config.admin == authority.key() @ GatewayError::Unauthorized
+        constraint = config.operator == authority.key() @ GatewayError::Unauthorized
     )]
     pub config: Account<'info, Config>,
 

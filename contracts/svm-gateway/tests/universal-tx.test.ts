@@ -24,7 +24,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
   });
 
   let admin: Keypair;
-  let tssAddress: Keypair;
+  let operator: Keypair;
   let pauser: Keypair;
   let user1: Keypair;
   let user2: Keypair;
@@ -132,7 +132,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
   before(async () => {
     admin = sharedState.getAdmin();
-    tssAddress = sharedState.getTssAddress();
+    operator = sharedState.getOperator();
     pauser = sharedState.getPauser();
     user1 = Keypair.generate();
     user2 = Keypair.generate();
@@ -1063,8 +1063,8 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
       await program.methods
         .unpause()
-        .accountsPartial({ admin: admin.publicKey, config: configPda })
-        .signers([admin])
+        .accountsPartial({ operator: operator.publicKey, config: configPda })
+        .signers([operator])
         .rpc();
     });
 
@@ -1433,8 +1433,8 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       if (config.paused) {
         await program.methods
           .unpause()
-          .accountsPartial({ admin: admin.publicKey, config: configPda })
-          .signers([admin])
+          .accountsPartial({ operator: operator.publicKey, config: configPda })
+          .signers([operator])
           .rpc();
       }
     } catch (error) {
