@@ -13,3 +13,15 @@ struct UniversalOutboundTxRequest {
     bytes   payload;                 // ABI-encoded calldata to execute on origin chain (empty for funds-only)
     address revertRecipient;         // address to receive funds in case of revert
 }
+
+/// @notice PC20 export request — lock Push-native tokens for cross-chain wrapped representation.
+struct PC20ExportRequest {
+    bytes   recipient;               // destination address (bytes for cross-VM compat)
+    address token;                   // PC20 token on Push Chain
+    uint256 amount;                  // amount to lock and export (must be > 0)
+    string  destChainNamespace;      // destination chain (CAIP-2, e.g., "eip155:1")
+    uint256 gasLimit;                // gas limit for destination (0 = per-chain default)
+    uint256 maxPCForGas;             // max native PC for gas swap (0 = no cap)
+    bytes   payload;                 // optional: ABI-encoded calldata for dest execution
+    address revertRecipient;         // fund recipient on revert (receives PC20 back on Push Chain)
+}

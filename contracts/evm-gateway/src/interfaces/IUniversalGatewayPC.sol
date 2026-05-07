@@ -2,7 +2,7 @@
 pragma solidity 0.8.26;
 
 import { TX_TYPE } from "../libraries/Types.sol";
-import { UniversalOutboundTxRequest } from "../libraries/TypesUGPC.sol";
+import { UniversalOutboundTxRequest, PC20ExportRequest } from "../libraries/TypesUGPC.sol";
 
 /**
  * @title  IUniversalGatewayPC
@@ -78,6 +78,33 @@ interface IUniversalGatewayPC {
     );
 
     // ==============================
+    //    UGPC_1b: PC20 EVENTS
+    // ==============================
+
+    /// @notice                  Emitted when a PC20 token export is initiated.
+    event PC20ExportInitiated(
+        bytes32 indexed subTxId,
+        address indexed sender,
+        string  destChainNamespace,
+        address indexed token,
+        bytes   recipient,
+        uint256 amount,
+        address gasToken,
+        uint256 gasFee,
+        uint256 gasLimitUsed,
+        bytes   payload,
+        uint256 protocolFee,
+        address revertRecipient,
+        uint256 gasPrice
+    );
+
+    /// @notice                  Emitted when VaultPC20 address is updated
+    event VaultPC20Updated(
+        address indexed oldVaultPC20,
+        address indexed newVaultPC20
+    );
+
+    // ==============================
     //    UGPC_2: OUTBOUND TX
     // ==============================
 
@@ -105,4 +132,17 @@ interface IUniversalGatewayPC {
     /// @notice                  Returns the UniversalCore contract address.
     /// @return                  Address of the UniversalCore contract.
     function universalCore() external view returns (address);
+
+    // ==============================
+    //    UGPC_4: PC20 EXPORT
+    // ==============================
+
+    /// @notice                  Export a PC20 token from Push Chain to an external chain.
+    /// @dev                     Locks tokens in VaultPC20, pays fees, emits PC20ExportInitiated.
+    /// @param req               PC20ExportRequest struct containing export parameters.
+    function exportPC20(PC20ExportRequest calldata req) external payable;
+
+    /// @notice                  Update the VaultPC20 contract address.
+    /// @param _vaultPC20        New VaultPC20 address.
+    function updateVaultPC20(address _vaultPC20) external;
 }

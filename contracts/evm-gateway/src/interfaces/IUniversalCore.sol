@@ -46,4 +46,21 @@ interface IUniversalCore {
             uint256 gasPrice,
             string memory chainNamespace
         );
+
+    function getPC20ExportGasAndFees(
+        string memory destChainNamespace,
+        uint256 gasLimit,
+        address pc20Token
+    )
+        external
+        view
+        returns (
+            address gasToken,
+            uint256 gasFee,
+            uint256 protocolFee,
+            uint256 gasPrice,
+            string memory chainNamespace,
+            uint256 gasLimitUsed,
+            bool isFirstExport
+        );
 }

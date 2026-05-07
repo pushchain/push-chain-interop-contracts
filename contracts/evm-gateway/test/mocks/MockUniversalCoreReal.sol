@@ -52,6 +52,9 @@ contract MockUniversalCoreReal is IUniversalCore {
     /// @notice Rescue funds gas limit per chain namespace
     mapping(string => uint256) public rescueFundsGasLimitByChainNamespace;
 
+    /// @notice PC20 deployment gas overhead per chain namespace
+    mapping(string => uint256) public pc20DeploymentGasOverhead;
+
     /// @notice Role for managing gas-related configurations
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
     bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
@@ -313,6 +316,57 @@ contract MockUniversalCoreReal is IUniversalCore {
         require(gasPrice != 0, "MockUniversalCore: zero gas price");
 
         gasFee = gasPrice * rescueGasLimit;
+    }
+
+    function getPC20ExportGasAndFees(
+        string memory destChainNamespace,
+        uint256 gasLimit,
+        address pc20Token
+    )
+        public
+        view
+        returns (
+            address gasToken,
+            uint256 gasFee,
+            uint256 protocolFee,
+            uint256 gasPrice,
+            string memory chainNamespace,
+            uint256 gasLimitUsed,
+            bool isFirstExport
+        )
+    {
+        gasToken = gasTokenPRC20ByChainNamespace[destChainNamespace];
+        require(gasToken != address(0), "MockUniversalCore: zero gas token");
+
+        gasPrice = gasPriceByChainNamespace[destChainNamespace];
+        require(gasPrice != 0, "MockUniversalCore: zero gas price");
+
+        uint256 baseLimit = baseGasLimitByChainNamespace[destChainNamespace];
+        require(baseLimit != 0, "MockUniversalCore: zero base gas limit");
+
+        if (gasLimit == 0) {
+            gasLimitUsed = baseLimit;
+        } else {
+            require(gasLimit >= baseLimit, "MockUniversalCore: gas limit below base");
+            gasLimitUsed = gasLimit;
+        }
+
+        uint256 deployOverhead = pc20DeploymentGasOverhead[destChainNamespace];
+        if (deployOverhead > 0) {
+            isFirstExport = true;
+            gasLimitUsed += deployOverhead;
+        }
+
+        gasFee = gasPrice * gasLimitUsed;
+        protocolFee = protocolFeeByToken[pc20Token];
+        chainNamespace = destChainNamespace;
+    }
+
+    function setPC20DeploymentGasOverhead(
+        string memory chainNamespace,
+        uint256 overhead
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        pc20DeploymentGasOverhead[chainNamespace] = overhead;
     }
 
     function setBaseGasLimitByChain(

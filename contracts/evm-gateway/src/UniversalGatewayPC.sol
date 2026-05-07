@@ -13,11 +13,16 @@ pragma solidity 0.8.26;
 
 import { Errors } from "./libraries/Errors.sol";
 import { IPRC20 } from "./interfaces/IPRC20.sol";
+import { IPC20 } from "./interfaces/IPC20.sol";
 import { IVaultPC } from "./interfaces/IVaultPC.sol";
+import { IVaultPC20 } from "./interfaces/IVaultPC20.sol";
 import { IUniversalCore } from "./interfaces/IUniversalCore.sol";
 import { IUniversalGatewayPC } from "./interfaces/IUniversalGatewayPC.sol";
 import { TX_TYPE } from "./libraries/Types.sol";
-import { UniversalOutboundTxRequest } from "./libraries/TypesUGPC.sol";
+import { UniversalOutboundTxRequest, PC20ExportRequest } from "./libraries/TypesUGPC.sol";
+
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 
 import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
@@ -30,15 +35,19 @@ contract UniversalGatewayPC is
     PausableUpgradeable,
     IUniversalGatewayPC
 {
+    using SafeERC20 for IERC20;
+
     bytes32 public constant ROLE_MANAGER_ROLE = keccak256("ROLE_MANAGER_ROLE");
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     /// @notice MUTABLE — admin-updatable via updateUniversalCore.
     address public universalCore;
-    /// @notice MUTABLE — admin-updatable via setVaultPC.
+    /// @notice MUTABLE — admin-updatable via updateVaultPC.
     IVaultPC public vaultPC;
     uint256 public nonce;
+    /// @notice MUTABLE — admin-updatable via updateVaultPC20.
+    IVaultPC20 public vaultPC20;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -98,6 +107,14 @@ contract UniversalGatewayPC is
         address oldUniversalCore = universalCore;
         universalCore = _universalCore;
         emit UniversalCoreUpdated(oldUniversalCore, _universalCore);
+    }
+
+    /// @inheritdoc IUniversalGatewayPC
+    function updateVaultPC20(address _vaultPC20) external onlyRole(OPERATOR_ROLE) whenNotPaused {
+        if (_vaultPC20 == address(0)) revert Errors.ZeroAddress();
+        address oldVaultPC20 = address(vaultPC20);
+        vaultPC20 = IVaultPC20(_vaultPC20);
+        emit VaultPC20Updated(oldVaultPC20, _vaultPC20);
     }
 
     // ==============================
@@ -208,6 +225,94 @@ contract UniversalGatewayPC is
     }
 
     // ==============================
+    //    UGPC_4: PC20 EXPORT
+    // ==============================
+
+    /// @inheritdoc IUniversalGatewayPC
+    function exportPC20(PC20ExportRequest calldata req)
+        external
+        payable
+        whenNotPaused
+        nonReentrant
+    {
+        // 1. VALIDATION
+        if (req.token == address(0)) revert Errors.ZeroAddress();
+        if (req.amount == 0) revert Errors.ZeroAmount();
+        if (req.revertRecipient == address(0)) revert Errors.InvalidRecipient();
+        if (req.recipient.length == 0) revert Errors.InvalidRecipient();
+        if (bytes(req.destChainNamespace).length == 0) revert Errors.InvalidData();
+        IPC20(req.token).pc20Metadata();
+
+        // 2. FEE QUOTE
+        (
+            address gasToken,
+            uint256 gasFee,
+            uint256 protocolFee,
+            uint256 gasPrice,
+            uint256 gasLimitUsed
+        ) = _fetchPC20ExportGasAndFees(req.destChainNamespace, req.gasLimit, req.token);
+
+        // 3. LOCK PC20 IN VAULTPC20
+        IERC20(req.token).safeTransferFrom(msg.sender, address(vaultPC20), req.amount);
+        vaultPC20.recordLock(req.token, req.amount);
+
+        // 4. PROTOCOL FEE COLLECTION
+        if (msg.value < protocolFee) revert Errors.InvalidInput();
+        if (protocolFee > 0) {
+            (bool ok,) = address(vaultPC).call{value: protocolFee}("");
+            if (!ok) revert Errors.InvalidInput();
+        }
+        uint256 pcForSwap = msg.value - protocolFee;
+
+        // 5. GAS SWAP CAP (maxPCForGas)
+        if (req.maxPCForGas != 0) {
+            if (req.maxPCForGas > pcForSwap) revert Errors.InvalidAmount();
+            uint256 excess = pcForSwap - req.maxPCForGas;
+            pcForSwap = req.maxPCForGas;
+            if (excess > 0) {
+                (bool refundOk,) = msg.sender.call{value: excess}("");
+                if (!refundOk) revert Errors.WithdrawFailed();
+            }
+        }
+
+        // 6. GAS SWAP AND BURN
+        _swapAndCollectFees(gasToken, pcForSwap, gasFee);
+
+        // 7. NONCE AND SUBTXID
+        uint256 currentNonce = nonce;
+        nonce = currentNonce + 1;
+
+        bytes32 subTxId = keccak256(
+            abi.encode(
+                msg.sender,
+                req.recipient,
+                req.token,
+                req.amount,
+                keccak256(req.payload),
+                req.destChainNamespace,
+                currentNonce
+            )
+        );
+
+        // 8. EVENT EMISSION
+        emit PC20ExportInitiated(
+            subTxId,
+            msg.sender,
+            req.destChainNamespace,
+            req.token,
+            req.recipient,
+            req.amount,
+            gasToken,
+            gasFee,
+            gasLimitUsed,
+            req.payload,
+            protocolFee,
+            req.revertRecipient,
+            gasPrice
+        );
+    }
+
+    // ==============================
     //   UGPC_3: INTERNAL HELPERS
     // ==============================
 
@@ -279,6 +384,33 @@ contract UniversalGatewayPC is
         if (pcAmount == 0) revert Errors.ZeroAmount();
 
         IUniversalCore(universalCore).swapAndBurnGas{ value: pcAmount }(gasToken, 0, gasFee, 0, msg.sender);
+    }
+
+    /// @dev                    Fetch gas fee quote for a PC20 export from UniversalCore.
+    /// @param destChainNamespace Destination chain (CAIP-2)
+    /// @param gasLimit          Caller-requested gas limit (0 = default)
+    /// @param pc20Token         PC20 token address (for protocol fee lookup)
+    function _fetchPC20ExportGasAndFees(
+        string calldata destChainNamespace,
+        uint256 gasLimit,
+        address pc20Token
+    )
+        internal
+        view
+        returns (
+            address gasToken,
+            uint256 gasFee,
+            uint256 protocolFee,
+            uint256 gasPrice,
+            uint256 gasLimitUsed
+        )
+    {
+        (gasToken, gasFee, protocolFee, gasPrice,, gasLimitUsed,) =
+            IUniversalCore(universalCore).getPC20ExportGasAndFees(destChainNamespace, gasLimit, pc20Token);
+
+        if (gasToken == address(0) || gasFee + protocolFee == 0) {
+            revert Errors.InvalidData();
+        }
     }
 
     /// @dev                    Pulls PRC20 from `from` into this contract, then burns them.
