@@ -38,6 +38,7 @@ contract MockReentrantContract {
             token: prc20Token,
             amount: amount,
             gasLimit: gasLimit,
+            gasPrice: 0,
             maxPCForGas: 0,
             payload: bytes(""),
             revertRecipient: revertRecipient
@@ -56,6 +57,7 @@ contract MockReentrantContract {
             token: prc20Token,
             amount: amount,
             gasLimit: gasLimit,
+            gasPrice: 0,
             maxPCForGas: 0,
             payload: payload,
             revertRecipient: revertRecipient
