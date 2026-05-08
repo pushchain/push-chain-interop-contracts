@@ -36,7 +36,9 @@ import { ICEAFactory } from "./interfaces/ICEAFactory.sol";
 import { IUniversalGateway } from "./interfaces/IUniversalGateway.sol";
 import { IWETH } from "./interfaces/IWETH.sol";
 import { RevertInstructions, TX_TYPE, EpochUsage } from "./libraries/Types.sol";
-import { UniversalTxRequest, UniversalTokenTxRequest } from "./libraries/TypesUG.sol";
+import { UniversalTxRequest, UniversalTokenTxRequest, PC20BurnRequest } from "./libraries/TypesUG.sol";
+import { IPC20Factory } from "./interfaces/IPC20Factory.sol";
+import { PC20Wrapper } from "./PC20Wrapper.sol";
 
 import { AggregatorV3Interface } from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import { IUniswapV3Factory } from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
@@ -120,6 +122,8 @@ contract UniversalGateway is
     uint256 public inboundFee;
 
     uint256 public totalProtocolFeesCollected;
+
+    IPC20Factory public pc20Factory;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -347,6 +351,14 @@ contract UniversalGateway is
         ceaFactory = newFactory;
     }
 
+    /// @inheritdoc IUniversalGateway
+    function updatePC20Factory(address newFactory) external onlyRole(OPERATOR_ROLE) {
+        if (newFactory == address(0)) revert Errors.ZeroAddress();
+        address old = address(pc20Factory);
+        pc20Factory = IPC20Factory(newFactory);
+        emit PC20FactoryUpdated(old, newFactory);
+    }
+
     /// @notice                Set the flat protocol fee (in wei). 0 disables.
     /// @dev                   Must be <= MAX_INBOUND_FEE to prevent misconfiguration or governance
     ///                        abuse.
@@ -404,6 +416,43 @@ contract UniversalGateway is
         if (req.recipient != mappedUEA) revert Errors.InvalidRecipient();
 
         _routeUniversalTx(req, _msgSender(), msg.value, true);
+    }
+
+    // ==============================
+    //  UG_2b: PC20 BURN (INBOUND)
+    // ==============================
+
+    /// @inheritdoc IUniversalGateway
+    function sendPC20UniversalTx(
+        PC20BurnRequest calldata req
+    ) external payable nonReentrant whenNotPaused {
+        if (req.wrapper == address(0)) revert Errors.ZeroAddress();
+        if (req.amount == 0) revert Errors.ZeroAmount();
+        if (req.recipient.length == 0) revert Errors.InvalidRecipient();
+        if (req.revertRecipient == address(0)) {
+            revert Errors.InvalidRecipient();
+        }
+        if (!pc20Factory.isPC20Wrapper(req.wrapper)) {
+            revert Errors.NotSupported();
+        }
+
+        address sourceAsset = PC20Wrapper(req.wrapper).SOURCE_ASSET();
+
+        (, uint256 feeCollected) = _collectInboundFee(msg.value);
+        totalProtocolFeesCollected += feeCollected;
+
+        pc20Factory.burnFrom(sourceAsset, _msgSender(), req.amount);
+
+        emit PC20UniversalTx(
+            _msgSender(),
+            sourceAsset,
+            req.wrapper,
+            req.amount,
+            req.recipient,
+            req.payload,
+            req.revertRecipient,
+            feeCollected
+        );
     }
 
     // ==============================

@@ -15,6 +15,7 @@ import { IVault } from "./interfaces/IVault.sol";
 import { ICEA } from "./interfaces/ICEA.sol";
 import { ICEAFactory } from "./interfaces/ICEAFactory.sol";
 import { IUniversalGateway } from "./interfaces/IUniversalGateway.sol";
+import { IPC20Factory } from "./interfaces/IPC20Factory.sol";
 import { RevertInstructions } from "./libraries/Types.sol";
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -39,6 +40,8 @@ contract Vault is
 
     IUniversalGateway public gateway;
     ICEAFactory public CEAFactory;
+    IPC20Factory public pc20Factory;
+    mapping(bytes32 => bool) public isPC20Executed;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -105,6 +108,14 @@ contract Vault is
         address old = address(CEAFactory);
         CEAFactory = ICEAFactory(newCEAFactory);
         emit CEAFactoryUpdated(old, newCEAFactory);
+    }
+
+    /// @inheritdoc IVault
+    function updatePC20Factory(address newFactory) external onlyRole(OPERATOR_ROLE) {
+        if (newFactory == address(0)) revert Errors.ZeroAddress();
+        address old = address(pc20Factory);
+        pc20Factory = IPC20Factory(newFactory);
+        emit PC20FactoryUpdated(old, newFactory);
     }
 
     /// @notice                Migrates ERC20 balances and any native ETH to a new vault.
@@ -225,6 +236,49 @@ contract Vault is
         emit FundsRescued(
             subTxId, universalTxId, token, amount, revertInstruction
         );
+    }
+
+    // ==============================
+    //    Vault_2b: PC20 EXPORT
+    // ==============================
+
+    /// @inheritdoc IVault
+    function finalizePC20Export(
+        bytes32 subTxId,
+        bytes32 universalTxId,
+        address pushAccount,
+        address recipient,
+        address sourceAsset,
+        uint256 amount,
+        string calldata name,
+        string calldata symbol,
+        uint8 decimals,
+        bytes calldata userData
+    ) external nonReentrant whenNotPaused onlyRole(TSS_ROLE) {
+        if (isPC20Executed[subTxId]) revert Errors.PayloadExecuted();
+        isPC20Executed[subTxId] = true;
+
+        if (pushAccount == address(0)) revert Errors.ZeroAddress();
+        if (sourceAsset == address(0)) revert Errors.ZeroAddress();
+        if (amount == 0) revert Errors.ZeroAmount();
+        if (recipient == address(0)) revert Errors.ZeroAddress();
+
+        if (pc20Factory.getWrapper(sourceAsset) == address(0)) {
+            pc20Factory.deployWrapper(sourceAsset, name, symbol, decimals);
+        }
+
+        if (userData.length == 0) {
+            pc20Factory.mintFor(sourceAsset, recipient, amount);
+        } else {
+            (address cea, bool isDeployed) = CEAFactory.getCEAForPushAccount(pushAccount);
+            if (!isDeployed) {
+                cea = CEAFactory.deployCEA(pushAccount);
+            }
+            pc20Factory.mintFor(sourceAsset, cea, amount);
+            ICEA(cea).executeUniversalTx(subTxId, universalTxId, pushAccount, recipient, userData);
+        }
+
+        emit PC20ExportFinalized(subTxId, universalTxId, pushAccount, recipient, sourceAsset, amount, userData);
     }
 
     // ==============================

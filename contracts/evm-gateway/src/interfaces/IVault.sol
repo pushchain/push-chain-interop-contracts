@@ -140,6 +140,40 @@ interface IVault {
     ) external payable;
 
     // =========================
+    //  V_2b: PC20 EXPORT
+    // =========================
+
+    event PC20ExportFinalized(
+        bytes32 indexed subTxId,
+        bytes32 indexed universalTxId,
+        address indexed pushAccount,
+        address recipient,
+        address sourceAsset,
+        uint256 amount,
+        bytes userData
+    );
+
+    event PC20FactoryUpdated(
+        address indexed oldFactory,
+        address indexed newFactory
+    );
+
+    function finalizePC20Export(
+        bytes32 subTxId,
+        bytes32 universalTxId,
+        address pushAccount,
+        address recipient,
+        address sourceAsset,
+        uint256 amount,
+        string calldata name,
+        string calldata symbol,
+        uint8 decimals,
+        bytes calldata userData
+    ) external;
+
+    function updatePC20Factory(address newFactory) external;
+
+    // =========================
     //    V_3: MIGRATION
     // =========================
 
