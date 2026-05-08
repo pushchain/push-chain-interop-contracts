@@ -45,7 +45,7 @@ import { signTssMessage, buildWithdrawAdditionalData, TssInstruction, generateUn
 const PROGRAM_ID = new PublicKey("DJoFYDpgbTfxbXBv1QYhYGc9FK4J5FUKpYXAfSkHryXp");
 
 const CONFIG_SEED = Buffer.from("config");
-const TSS_SEED = Buffer.from("tsspda_v2");
+const TSS_SEED = Buffer.from("final_tss_pda");
 const VAULT_SEED = Buffer.from("vault");
 const CEA_SEED = Buffer.from("push_identity");
 const EXECUTED_SUB_TX_SEED = Buffer.from("executed_sub_tx");

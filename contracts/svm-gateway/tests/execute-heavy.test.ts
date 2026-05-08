@@ -89,7 +89,7 @@ describe("Universal Gateway - Heavy Transaction Benchmarking", () => {
     );
 
     [tssPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("tsspda_v2")],
+      [Buffer.from("final_tss_pda")],
       gatewayProgram.programId
     );
 

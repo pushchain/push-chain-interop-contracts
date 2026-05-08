@@ -347,7 +347,7 @@ async function run() {
     PROGRAM_ID
   );
   const [tssPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("tsspda_v2")],
+    [Buffer.from("final_tss_pda")],
     PROGRAM_ID
   );
   const [rateLimitConfigPda] = PublicKey.findProgramAddressSync(

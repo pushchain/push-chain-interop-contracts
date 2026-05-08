@@ -416,8 +416,8 @@ Final: [0xAC, 0x80] (2 bytes)
 ### 3.6 Getting TSS Chain ID
 
 **Fetch from on-chain TSS PDA**:
-- PDA seeds: `["tsspda_v2"]`
-- Account contains: `{ tss_eth_address, chain_id, authority, bump }`
+- PDA seeds: `["final_tss_pda"]`
+- Account contains: `{ tss_eth_address, chain_id, bump }`
 - Read `chain_id` (Rust `String`)
 - **CRITICAL**: Use `chain_id` exactly as stored (UTF-8 bytes, no modification)
   - This should match the event's `chainId` field (source chain identifier)
@@ -456,7 +456,7 @@ This single entrypoint handles both withdraw (instruction_id=1) and execute (ins
 - `config`: PDA `["config"]`
 - `vault_sol`: PDA `["vault"]` (uses config.vault_bump)
 - `cea_authority`: PDA `["push_identity", push_account]`
-- `tss_pda`: PDA `["tsspda_v2"]`
+- `tss_pda`: PDA `["final_tss_pda"]`
 - `executed_sub_tx`: PDA `["executed_sub_tx", sub_tx_id]` (will be created)
 - `system_program`: System program
 
@@ -594,7 +594,7 @@ All PDAs use `findProgramAddressSync` with gateway program ID.
 **PDAs**:
 - `config`: `["config"]`
 - `vault`: `["vault"]` (bump stored in config)
-- `tss_pda`: `["tsspda_v2"]`
+- `tss_pda`: `["final_tss_pda"]`
 - `cea_authority`: `["push_identity", push_account]` (push_account = 20-byte EVM address)
 - `executed_sub_tx`: `["executed_sub_tx", sub_tx_id]` (sub_tx_id = 32 bytes)
 - `rate_limit_config`: `["rate_limit_config"]`
@@ -662,7 +662,7 @@ gas_fee = executed_sub_tx_rent + cea_ata_rent_if_created + compute_buffer
    - `1` = Withdraw (unified SOL/SPL)
    - `2` = Execute (unified SOL/SPL)
 2. Fetch TSS PDA from Solana:
-   - Derive TSS PDA: `["tsspda_v2"]`
+   - Derive TSS PDA: `["final_tss_pda"]`
    - Read account: get `chain_id` (string)
 3. Build message hash based on instruction_id (common fields first):
    - **Withdraw (1)**:
@@ -800,7 +800,7 @@ gas_fee = executed_sub_tx_rent + cea_ata_rent_if_created + compute_buffer
    - Verify `instructionId == 2` (execute mode)
 2. **Decode payload**: extract `instructionId`, `targetProgram`, `accounts[]`, `ixData`
 3. **Derive PDAs**: CEA authority, executed_sub_tx, config, vault, tss_pda
-4. **Fetch TSS state**: Get `chain_id` from TSS PDA (`["tsspda_v2"]`)
+4. **Fetch TSS state**: Get `chain_id` from TSS PDA (`["final_tss_pda"]`)
 5. **Build writable flags**: Convert `accounts[]` to bitpacked `writable_flags` (1 bit per account, MSB first)
 6. **Build TSS message**:
    - Use `buildExecuteAdditionalData()` helper (see `tests/helpers/tss.ts`)
@@ -829,7 +829,7 @@ gas_fee = executed_sub_tx_rent + cea_ata_rent_if_created + compute_buffer
 2. **Decode payload** (if present): Extract `instructionId`
    - Verify `instructionId == 1` (withdraw mode)
 3. **Derive PDAs**: Same as execute (see section 5)
-4. **Fetch TSS state**: Get `chain_id` from TSS PDA (`["tsspda_v2"]`)
+4. **Fetch TSS state**: Get `chain_id` from TSS PDA (`["final_tss_pda"]`)
 5. **Build TSS message**:
    - Use `buildWithdrawAdditionalData()` helper (see `tests/helpers/tss.ts`)
    - instruction_id = 1
@@ -1003,7 +1003,7 @@ Before production:
 **State Structures** (see `state.rs`):
 - `GatewayAccountMeta` - Account metadata (pubkey + is_writable)
 - `Config` - Gateway configuration (min/max caps, paused state, etc.)
-- `TssPda` - TSS state (chain_id, tss_eth_address, authority, bump)
+- `TssPda` - TSS state (chain_id, tss_eth_address, bump)
 - `ExecutedSubTx` - Replay protection tracker (8-byte discriminator only)
 
 ---

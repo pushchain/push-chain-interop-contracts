@@ -25,7 +25,7 @@ The program uses PDAs for all protocol state. No external signers or owner keys 
 | `Config` | `["config"]` | Admin/operator/pauser pubkeys, pending admin/pauser pubkeys, USD caps, Pyth oracle config (operator reuses legacy `tss_address` storage slot for layout compatibility) |
 | `Vault` | `["vault"]` | Native SOL bridge balance; also the authority for all SPL vault ATAs |
 | `FeeVault` | `["fee_vault"]` | Protocol fees and UV gas reimbursement pool |
-| `TssPda` | `["tsspda_v2"]` | Active TSS Ethereum address (`tss_eth_address`), `chain_id` — this is the account verified against on every outbound call |
+| `TssPda` | `["final_tss_pda"]` | Active TSS Ethereum address (`tss_eth_address`), `chain_id` — this is the account verified against on every outbound call |
 | `CEA` | `["push_identity", push_account[20]]` | Per-user signing authority; no private key — gateway signs via `invoke_signed` |
 | `ExecutedSubTx` | `["executed_sub_tx", sub_tx_id[32]]` | Replay protection; existence = executed |
 | `RateLimitConfig` | `["rate_limit_config"]` | Block USD cap, epoch duration |

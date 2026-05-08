@@ -132,7 +132,7 @@ describe("Universal Gateway - Rescue Tests", () => {
         [configPda] = PublicKey.findProgramAddressSync([Buffer.from("config")], program.programId);
         [vaultPda] = PublicKey.findProgramAddressSync([Buffer.from("vault")], program.programId);
         [feeVaultPda] = PublicKey.findProgramAddressSync([Buffer.from("fee_vault")], program.programId);
-        [tssPda] = PublicKey.findProgramAddressSync([Buffer.from("tsspda_v2")], program.programId);
+        [tssPda] = PublicKey.findProgramAddressSync([Buffer.from("final_tss_pda")], program.programId);
         [rateLimitConfigPda] = PublicKey.findProgramAddressSync(
             [Buffer.from("rate_limit_config")], program.programId
         );

@@ -13,6 +13,16 @@ describe("Universal Gateway - Admin Functions Tests", () => {
     const provider = anchor.getProvider() as anchor.AnchorProvider;
     const program = anchor.workspace.UniversalGateway as Program<UniversalGateway>;
 
+    const getErrorCode = (error: any): string | undefined => {
+        return (
+            error?.error?.errorCode?.code ||
+            error?.errorCode?.code ||
+            error?.error?.errorCode ||
+            error?.code ||
+            /Error Code: ([A-Za-z0-9_]+)/.exec(String(error))?.[1]
+        );
+    };
+
     before(async () => {
         await ensureTestSetup();
     });
@@ -69,7 +79,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
         );
 
         [tssPda] = PublicKey.findProgramAddressSync(
-            [Buffer.from("tsspda_v2")],
+            [Buffer.from("final_tss_pda")],
             program.programId
         );
 
@@ -156,18 +166,20 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                     .signers([pauser])
                     .rpc();
 
-                await program.methods
-                    .unpause()
-                    .accountsPartial({
-                        operator: operator.publicKey,
-                        config: configPda,
-                    })
-                    .signers([operator])
-                    .rpc();
-                expect.fail("Old operator should not retain unpause access after rotation");
-            } catch (error: any) {
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
-                expect(errorCode).to.equal("Unauthorized");
+                try {
+                    await program.methods
+                        .unpause()
+                        .accountsPartial({
+                            operator: operator.publicKey,
+                            config: configPda,
+                        })
+                        .signers([operator])
+                        .rpc();
+                    expect.fail("Old operator should not retain unpause access after rotation");
+                } catch (error: any) {
+                    const errorCode = getErrorCode(error);
+                    expect(errorCode).to.equal("Unauthorized");
+                }
             } finally {
                 if (rotated) {
                     const latestConfig = await program.account.config.fetch(configPda);
@@ -211,7 +223,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                     .rpc();
                 expect.fail("Unauthorized set_operator should have failed");
             } catch (error: any) {
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
 
@@ -231,7 +243,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                     .rpc();
                 expect.fail("Zero-address operator update should have failed");
             } catch (error: any) {
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("ZeroAddress");
             }
 
@@ -265,7 +277,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                     .rpc();
                 expect.fail("Only the proposed admin should be able to accept");
             } catch (error: any) {
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
 
@@ -294,7 +306,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                     .rpc();
                 expect.fail("Old admin should not have access after rotation");
             } catch (error: any) {
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
 
@@ -383,7 +395,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                     .rpc();
                 expect.fail("Old pauser should not have access after acceptance");
             } catch (error: any) {
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
 
@@ -447,7 +459,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                     .rpc();
                 expect.fail("Unauthorized propose_authorities should have failed");
             } catch (error: any) {
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
         });
@@ -464,7 +476,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                     .rpc();
                 expect.fail("propose_authorities with both null should have failed");
             } catch (error: any) {
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("InvalidInput");
             }
         });
@@ -486,7 +498,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 expect.fail("Unauthorized TSS update should have failed");
             } catch (error: any) {
                 expect(error).to.exist;
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
         });
@@ -583,7 +595,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 expect.fail("Pauser unpause should have failed");
             } catch (error: any) {
                 expect(error).to.exist;
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
 
@@ -614,7 +626,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 expect.fail("Unauthorized pause should have failed");
             } catch (error: any) {
                 expect(error).to.exist;
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
 
@@ -631,7 +643,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 expect.fail("Unauthorized unpause should have failed");
             } catch (error: any) {
                 expect(error).to.exist;
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
         });
@@ -724,7 +736,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                     .rpc();
                 expect.fail("Zero max age should have been rejected");
             } catch (error: any) {
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("InvalidAmount");
             }
 
@@ -1033,7 +1045,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
 
                     expect.fail("Missing authority acknowledgment should have failed");
                 } catch (error: any) {
-                    const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                    const errorCode = getErrorCode(error);
                     expect(errorCode).to.equal("InvalidMint");
                 }
             }
@@ -1098,7 +1110,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
         it("Rejects TSS initialization by non-admin", async () => {
             // Use the correct TSS PDA seed (just "tss", not with extra bytes)
             const [actualTssPda] = PublicKey.findProgramAddressSync(
-                [Buffer.from("tsspda_v2")],
+                [Buffer.from("final_tss_pda")],
                 program.programId
             );
 
@@ -1128,7 +1140,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                     expect.fail("Unauthorized TSS update should have failed");
                 } catch (error: any) {
                     expect(error).to.exist;
-                    const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                    const errorCode = getErrorCode(error);
                     expect(errorCode).to.equal("Unauthorized");
                 }
             } else {
@@ -1153,7 +1165,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 } catch (error: any) {
                     expect(error).to.exist;
                     // Constraint returns ConstraintRaw when validation fails
-                    const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                    const errorCode = getErrorCode(error);
                     expect(errorCode).to.equal("ConstraintRaw");
                 }
             }
@@ -1241,7 +1253,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 expect.fail("Invalid caps should have been rejected");
             } catch (error: any) {
                 expect(error).to.exist;
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("InvalidCapRange");
             }
         });

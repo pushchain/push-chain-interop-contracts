@@ -28,7 +28,7 @@ import fs from "fs";
 
 const PROGRAM_ID = new PublicKey(idl.address);
 const CONFIG_SEED = Buffer.from("config");
-const TSS_SEED = Buffer.from("tsspda_v2");
+const TSS_SEED = Buffer.from("final_tss_pda");
 const VAULT_SEED = Buffer.from("vault");
 
 const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");

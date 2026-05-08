@@ -200,7 +200,7 @@ export async function ensureTestSetup(): Promise<void> {
         }
 
         // Step 7: Initialize or update TSS
-        const [tssPda] = PublicKey.findProgramAddressSync([Buffer.from("tsspda_v2")], program.programId);
+        const [tssPda] = PublicKey.findProgramAddressSync([Buffer.from("final_tss_pda")], program.programId);
         const expectedTssEthAddress = getTssEthAddress();
         const expectedChainId = TSS_CHAIN_ID; // String: Solana cluster pubkey
 

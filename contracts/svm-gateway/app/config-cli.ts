@@ -22,7 +22,7 @@ const PROGRAM_ID = new PublicKey("DJoFYDpgbTfxbXBv1QYhYGc9FK4J5FUKpYXAfSkHryXp")
 
 // PDA Seeds
 const CONFIG_SEED = "config";
-const TSS_SEED = "tsspda_v2";
+const TSS_SEED = "final_tss_pda";
 const VAULT_SEED = "vault";
 const FEE_VAULT_SEED = "fee_vault";
 const RATE_LIMIT_CONFIG_SEED = "rate_limit_config";
