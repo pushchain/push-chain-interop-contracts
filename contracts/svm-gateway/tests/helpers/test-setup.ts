@@ -247,7 +247,7 @@ export async function ensureTestSetup(): Promise<void> {
 
         // Step 9: Ensure fee_vault exists (devnet-safe path) and starts disabled
         await program.methods
-            .setProtocolFee(new anchor.BN(0))
+            .setInboundFee(new anchor.BN(0))
             .accountsPartial({
                 config: configPda,
                 feeVault: feeVaultPda,

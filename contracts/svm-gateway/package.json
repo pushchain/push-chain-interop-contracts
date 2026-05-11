@@ -20,6 +20,7 @@
     "config:pause": " ts-node app/config-cli.ts pause",
     "config:unpause": " ts-node app/config-cli.ts unpause",
     "config:fee-init": " ts-node app/config-cli.ts fee:init",
+    "config:fee-withdraw": " ts-node app/config-cli.ts fee:withdraw",
     "config:caps-set": " ts-node app/config-cli.ts caps:set",
     "config:pyth-set-feed": " ts-node app/config-cli.ts pyth:set-feed",
     "config:pyth-set-conf": " ts-node app/config-cli.ts pyth:set-conf",

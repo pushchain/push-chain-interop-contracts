@@ -27,7 +27,7 @@ const VAULT_SEED = "vault";
 const FEE_VAULT_SEED = "fee_vault";
 const RATE_LIMIT_CONFIG_SEED = "rate_limit_config";
 const RATE_LIMIT_SEED = "rate_limit";
-const MAX_PROTOCOL_FEE_LAMPORTS = 2_000_000n;
+const MAX_INBOUND_FEE_LAMPORTS = 2_000_000n;
 
 // Load keypairs (same style as token-cli.ts)
 function loadKeypair(path: string): Keypair {
@@ -631,28 +631,28 @@ program_cli
 
 program_cli
     .command("fee:init")
-    .description("Initialize fee vault PDA (idempotent); optionally set initial protocol fee")
-    .option("--fee <lamports>", "Initial protocol fee in lamports (u64)", "0")
+    .description("Initialize fee vault PDA (idempotent); optionally set initial inbound fee")
+    .option("--fee <lamports>", "Initial inbound fee in lamports (u64)", "0")
     .action(async (options) => {
         try {
             console.log("=== INITIALIZING FEE VAULT ===\n");
 
             const feeLamports = BigInt(options.fee);
-            if (feeLamports > MAX_PROTOCOL_FEE_LAMPORTS) {
-                throw new Error(`Protocol fee must be <= ${MAX_PROTOCOL_FEE_LAMPORTS.toString()} lamports`);
+            if (feeLamports > MAX_INBOUND_FEE_LAMPORTS) {
+                throw new Error(`Inbound fee must be <= ${MAX_INBOUND_FEE_LAMPORTS.toString()} lamports`);
             }
             const configPda = deriveConfigPda();
             const feeVaultPda = deriveFeeVaultPda();
 
             console.log(`Config PDA: ${configPda.toBase58()}`);
             console.log(`Fee Vault PDA: ${feeVaultPda.toBase58()}`);
-            console.log(`Protocol Fee (lamports): ${feeLamports}\n`);
+            console.log(`Inbound Fee (lamports): ${feeLamports}\n`);
 
             await runAuthorityAction(
                 "Fee vault initialized/updated",
                 getAdminKeypair,
                 (program, authority) => program.methods
-                    .setProtocolFee(new anchor.BN(feeLamports.toString()))
+                    .setInboundFee(new anchor.BN(feeLamports.toString()))
                     .accountsPartial({
                         config: configPda,
                         feeVault: feeVaultPda,
@@ -663,6 +663,44 @@ program_cli
             );
         } catch (error: any) {
             console.error(`❌ Error initializing fee vault: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program_cli
+    .command("fee:withdraw")
+    .description("Withdraw accumulated inbound fee surplus from fee vault to a recipient (admin-only)")
+    .requiredOption("--amount <lamports>", "Amount to withdraw in lamports (u64)")
+    .requiredOption("--recipient <pubkey>", "Recipient public key")
+    .action(async (options) => {
+        try {
+            console.log("=== WITHDRAWING INBOUND FEE SURPLUS ===\n");
+
+            const amount = BigInt(options.amount);
+            const recipient = new PublicKey(options.recipient);
+            const configPda = deriveConfigPda();
+            const feeVaultPda = deriveFeeVaultPda();
+
+            console.log(`Config PDA:     ${configPda.toBase58()}`);
+            console.log(`Fee Vault PDA:  ${feeVaultPda.toBase58()}`);
+            console.log(`Recipient:      ${recipient.toBase58()}`);
+            console.log(`Amount:         ${amount} lamports\n`);
+
+            await runAuthorityAction(
+                "Inbound fee surplus withdrawn",
+                getAdminKeypair,
+                (program, authority) => program.methods
+                    .withdrawInboundFees(new anchor.BN(amount.toString()))
+                    .accountsPartial({
+                        config: configPda,
+                        feeVault: feeVaultPda,
+                        recipient,
+                        admin: authority,
+                    })
+                    .instruction()
+            );
+        } catch (error: any) {
+            console.error(`❌ Error withdrawing inbound fees: ${error.message}`);
             process.exit(1);
         }
     });

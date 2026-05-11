@@ -28,7 +28,7 @@ After `initialize(...)` succeeds, configure the remaining state with the CLI com
 Accounts created by the bootstrap flow:
 - `Config` PDA
 - `Vault` PDA
-- `FeeVault` PDA (created lazily when `set_protocol_fee` is first called)
+- `FeeVault` PDA (created lazily when `set_inbound_fee` is first called)
 - `RateLimitConfig` PDA (created lazily when any rate-limit config command is first called: `set_block_usd_cap` or `update_epoch_duration`)
 
 ---
@@ -144,9 +144,9 @@ Caps apply only to the instant GAS / GAS_AND_PAYLOAD routes. FUNDS routes are go
 
 ---
 
-## Protocol Fee
+## Inbound Fee
 
-Flat fee charged per `send_universal_tx` call, paid in SOL by the depositor.
+Flat fee charged per `send_universal_tx` call, paid in SOL by the depositor. Collected into `FeeVault` to fund UV reimbursements for automated reverts and rescues.
 
 ```bash
 # Set fee (in lamports); this also creates FeeVault if needed
@@ -154,12 +154,13 @@ npm run config:fee-init -- --admin-keypair <admin-keypair.json> --fee <lamports>
 npm run config:fee-init -- --multisig <admin-multisig-pda> --member-keypair <member.json> --fee <lamports>
 # Example: disable fee
 npm run config:fee-init -- --admin-keypair <admin-keypair.json> --fee 0
+
+# Withdraw accumulated surplus from FeeVault to a treasury address (admin-only)
+npm run config:fee-withdraw -- --admin-keypair <admin-keypair.json> --amount <lamports> --recipient <pubkey>
 ```
 
-The protocol fee is deducted from `native_amount` before routing. It goes to `FeeVault`, not `Vault`, preserving the 1:1 bridge invariant.
-The fee is capped on-chain at `2_000_000` lamports (`0.002 SOL`). This bound is sized for revert/rescue reimbursement, not revenue extraction.
-
-There is currently no dedicated `collect_protocol_fees` instruction or CLI command in this program.
+The inbound fee is deducted from `native_amount` before routing. It goes to `FeeVault`, not `Vault`, preserving the 1:1 bridge invariant.
+The fee is capped on-chain at `2_000_000` lamports (`0.002 SOL`). Only txs that are reverted on Push Chain consume from `FeeVault` — surplus from successful txs accumulates and can be swept via `withdraw_inbound_fees`.
 
 ---
 
@@ -281,7 +282,7 @@ Shows current values for:
 - Pending admin, pending pauser addresses
 - USD caps
 - Pyth feed
-- Protocol fee
+- Inbound fee
 - Pause state
 - Block USD cap, epoch duration
 
@@ -301,7 +302,7 @@ npm run config:squads-execute -- --multisig <multisig-pda> --member-keypair <mem
 
 **Deposit rejected with `Paused`:** Gateway is paused. Call `unpause` from the operator address.
 
-**Deposit rejected with `BelowMinCap` / `AboveMaxCap`:** `native_amount` (after protocol fee) is outside USD cap range. Adjust caps or deposit amount.
+**Deposit rejected with `BelowMinCap` / `AboveMaxCap`:** `native_amount` (after inbound fee) is outside USD cap range. Adjust caps or deposit amount.
 
 **Outbound rejected with `TssAuthFailed`:** TSS address mismatch or wrong message format. Verify `TssPda.tss_eth_address` matches the current TSS signer and message construction follows [2-WITHDRAW-EXECUTE.md](./2-WITHDRAW-EXECUTE.md).
 

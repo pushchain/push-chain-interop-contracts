@@ -137,9 +137,9 @@ describe("Universal Gateway - Rescue Tests", () => {
             [Buffer.from("rate_limit_config")], program.programId
         );
 
-        // Disable protocol fee so vault seeding is deterministic.
+        // Disable inbound fee so vault seeding is deterministic.
         await program.methods
-            .setProtocolFee(new anchor.BN(0))
+            .setInboundFee(new anchor.BN(0))
             .accountsPartial({ config: configPda, feeVault: feeVaultPda, admin: admin.publicKey, systemProgram: SystemProgram.programId })
             .signers([admin])
             .rpc();

@@ -46,7 +46,7 @@ event UniversalTxOutbound(
     uint256 gasFee,                // Gas fee
     uint256 gasLimit,              // Gas limit (for EVM; not used on Solana)
     bytes payload,                 // Encoded payload (see section 2)
-    uint256 protocolFee,           // Protocol fee
+    uint256 inboundFee,            // Inbound fee
     address revertRecipient,       // Revert recipient address
     TX_TYPE txType                 // Transaction type
 );
@@ -879,7 +879,7 @@ gas_fee = executed_sub_tx_rent + cea_ata_rent_if_created + compute_buffer
 6. **Events emitted**:
    - `FundsRescued { sub_tx_id, universal_tx_id, token, amount, revert_instruction }`
    - For rescue, `revert_instruction.revert_recipient = recipient` and `revert_instruction.revert_msg = []`
-   - `ProtocolFeeReimbursed { sub_tx_id, relayer, amount_lamports }`
+   - `InboundFeeReimbursed { sub_tx_id, relayer, amount_lamports }`
 
 ---
 

@@ -107,7 +107,7 @@ FundsRescued {
 }
 ```
 
-### `ProtocolFeeReimbursed`
+### `InboundFeeReimbursed`
 Emitted after UV gas reimbursement from `FeeVault`.
 
 ---

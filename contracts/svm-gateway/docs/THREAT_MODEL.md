@@ -31,7 +31,7 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 | Actor | Trust Level | Capability |
 |---|---|---|
-| `Config.admin` | High | Update config, oracle feed, rate limits, authorities, bounded protocol fee |
+| `Config.admin` | High | Update config, oracle feed, rate limits, authorities, bounded inbound fee |
 | `Config.operator` | High | Unpause gateway, rotate TSS signer |
 | `Config.pauser` | Medium | Pause gateway |
 | TSS | High | Authorize all outbound releases with signatures |
@@ -41,7 +41,7 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 **Boundary summary:**
 - UV cannot change signed outbound content without failing signature validation.
-- `Vault` stores bridge funds; `FeeVault` stores protocol fees and revert/rescue reimbursements.
+- `Vault` stores bridge funds; `FeeVault` stores inbound fees and revert/rescue reimbursements.
 - Replay protection is on-chain via `ExecutedSubTx` PDA (`sub_tx_id` uniqueness).
 
 ---
@@ -52,7 +52,7 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 | Authority | Protected Surface |
 |---|---|
-| `Config.admin` | all `set_*` admin setters, `propose_authorities`, `set_protocol_fee`, `init_tss`, `set_operator` |
+| `Config.admin` | all `set_*` admin setters, `propose_authorities`, `set_inbound_fee`, `withdraw_inbound_fees`, `init_tss`, `set_operator` |
 | `Config.operator` | `unpause`, `update_tss` |
 | `Config.pending_admin` | `accept_admin` |
 | `Config.pending_pauser` | `accept_pauser` |
@@ -110,9 +110,13 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Risk: revert/rescue fail due to reimbursement shortfall.  
    Control: reimbursement checks available lamports above rent and fails safely (`InsufficientFeePool`).
 
-12. **Protocol fee misconfiguration**  
+12. **Inbound fee misconfiguration**  
    Risk: admin sets an excessive inbound fee and griefs users.  
-   Control: `set_protocol_fee` is hard-capped at `2_000_000` lamports (`0.002 SOL`).
+   Control: `set_inbound_fee` is hard-capped at `2_000_000` lamports (`0.002 SOL`).
+
+13. **FeeVault surplus locked**  
+   Risk: inbound fees from successful txs accumulate with no exit path.  
+   Control: `withdraw_inbound_fees` (admin-only) allows sweeping surplus above rent-exemption to a treasury address.
 
 10. **Pause griefing**  
    Risk: pauser halts flows.  

@@ -180,14 +180,61 @@ pub struct FeeVaultAdminAction<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn set_protocol_fee(ctx: Context<FeeVaultAdminAction>, fee_lamports: u64) -> Result<()> {
-    require!(fee_lamports <= MAX_PROTOCOL_FEE_LAMPORTS, GatewayError::InvalidInput);
+pub fn set_inbound_fee(ctx: Context<FeeVaultAdminAction>, fee_lamports: u64) -> Result<()> {
+    require!(fee_lamports <= MAX_INBOUND_FEE_LAMPORTS, GatewayError::InvalidInput);
     // Keep bump persisted so seeded constraints continue to validate consistently.
     ctx.accounts.fee_vault.bump = ctx.bumps.fee_vault;
-    ctx.accounts.fee_vault.protocol_fee_lamports = fee_lamports;
-    emit!(ProtocolFeeUpdated {
+    ctx.accounts.fee_vault.inbound_fee_lamports = fee_lamports;
+    emit!(InboundFeeUpdated {
         new_fee_lamports: fee_lamports
     });
+    Ok(())
+}
+
+/// Recover accumulated inbound fee surplus from the fee vault to a recipient address.
+/// Only lamports above rent-exemption are withdrawable — the account stays alive.
+#[derive(Accounts)]
+pub struct WithdrawInboundFees<'info> {
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        constraint = config.admin == admin.key() @ GatewayError::Unauthorized
+    )]
+    pub config: Account<'info, Config>,
+
+    #[account(
+        mut,
+        seeds = [FEE_VAULT_SEED],
+        bump = fee_vault.bump,
+    )]
+    pub fee_vault: Account<'info, FeeVault>,
+
+    /// CHECK: Recipient is chosen by the admin; no program-ownership constraint is required
+    #[account(mut)]
+    pub recipient: AccountInfo<'info>,
+
+    pub admin: Signer<'info>,
+}
+
+pub fn withdraw_inbound_fees(ctx: Context<WithdrawInboundFees>, amount: u64) -> Result<()> {
+    require!(amount > 0, GatewayError::InvalidAmount);
+
+    let fee_vault_info = ctx.accounts.fee_vault.to_account_info();
+    let min_balance = Rent::get()?.minimum_balance(FeeVault::LEN);
+    let available = fee_vault_info
+        .lamports()
+        .checked_sub(min_balance)
+        .ok_or(error!(GatewayError::InsufficientFeePool))?;
+    require!(available >= amount, GatewayError::InsufficientFeePool);
+
+    **fee_vault_info.try_borrow_mut_lamports()? -= amount;
+    **ctx.accounts.recipient.try_borrow_mut_lamports()? += amount;
+
+    emit!(InboundFeesWithdrawn {
+        recipient: ctx.accounts.recipient.key(),
+        amount,
+    });
+
     Ok(())
 }
 

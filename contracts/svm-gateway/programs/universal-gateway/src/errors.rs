@@ -85,8 +85,8 @@ pub enum GatewayError {
     #[msg("Invalid instruction")]
     InvalidInstruction,
 
-    #[msg("Insufficient protocol fee")]
-    InsufficientProtocolFee,
+    #[msg("Insufficient inbound fee")]
+    InsufficientInboundFee,
 
     #[msg("Fee vault has insufficient balance to reimburse relayer")]
     InsufficientFeePool,

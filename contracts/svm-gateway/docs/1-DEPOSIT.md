@@ -20,11 +20,11 @@ The gateway infers `TX_TYPE` automatically from the request structure. Users nev
 | `FundsAndPayload` (SPL) | > 0 | non-empty | mint | any |
 
 `native_amount` mirrors `msg.value` on EVM — total native SOL sent by the user.
-Routing checks run on `adjusted_native_amount = native_amount - protocol_fee_lamports`.
+Routing checks run on `adjusted_native_amount = native_amount - inbound_fee_lamports`.
 
 ---
 
-## Protocol Fee
+## Inbound Fee
 
 A flat fee in lamports is deducted from `native_amount` before routing. The adjusted amount is what all routing and cap checks see. Fee goes to `FeeVault`, not `Vault`, preserving the 1:1 bridge invariant. Fee of 0 disables it.
 
@@ -65,7 +65,7 @@ For `FundsAndPayload`, if there is excess `native_amount` beyond `req.amount`, t
 |---------|-------|
 | `config` | Required |
 | `vault` | Required |
-| `fee_vault` | Required — receives protocol fee; must exist (run `set_protocol_fee(0)` once on new deployments) |
+| `fee_vault` | Required — receives inbound fee; must exist (run `set_inbound_fee(0)` once on new deployments) |
 | `rate_limit_config` | Required |
 | `token_rate_limit` | Required (even for Gas route) |
 | `price_update` | Required; must match `config.pyth_price_feed` exactly |
@@ -96,5 +96,5 @@ For `FundsAndPayload`, if there is excess `native_amount` beyond `req.amount`, t
 | `RateLimitExceeded` | Epoch limit reached for token |
 | `InvalidOwner` | SPL token account owner mismatch |
 | `InvalidMint` | SPL token account mint mismatch |
-| `InsufficientProtocolFee` | `native_amount < protocol_fee` |
+| `InsufficientInboundFee` | `native_amount < inbound_fee` |
 | `Paused` | Gateway is paused |

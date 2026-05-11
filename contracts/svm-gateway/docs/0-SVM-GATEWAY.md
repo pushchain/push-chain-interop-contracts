@@ -24,14 +24,14 @@ The program uses PDAs for all protocol state. No external signers or owner keys 
 |---------|-------|---------------|
 | `Config` | `["config"]` | Admin/operator/pauser pubkeys, pending admin/pauser pubkeys, USD caps, Pyth oracle config (operator reuses legacy `tss_address` storage slot for layout compatibility) |
 | `Vault` | `["vault"]` | Native SOL bridge balance; also the authority for all SPL vault ATAs |
-| `FeeVault` | `["fee_vault"]` | Protocol fees and UV gas reimbursement pool |
+| `FeeVault` | `["fee_vault"]` | Inbound fees and UV gas reimbursement pool |
 | `TssPda` | `["final_tss_pda"]` | Active TSS Ethereum address (`tss_eth_address`), `chain_id` — this is the account verified against on every outbound call |
 | `CEA` | `["push_identity", push_account[20]]` | Per-user signing authority; no private key — gateway signs via `invoke_signed` |
 | `ExecutedSubTx` | `["executed_sub_tx", sub_tx_id[32]]` | Replay protection; existence = executed |
 | `RateLimitConfig` | `["rate_limit_config"]` | Block USD cap, epoch duration |
 | `TokenRateLimit` | `["rate_limit", mint]` | Per-token epoch usage |
 
-**Vault vs FeeVault separation:** `Vault` holds only user-deposited bridge funds, keeping it 1:1 backed. `FeeVault` holds protocol fees and funds UV reimbursement for `revert_universal_tx` and `rescue_funds`. `finalize_universal_tx` reimburses only `gas_used` from `Vault`; any signed surplus (`gas_to_refund = gas_fee - gas_used`) remains in `Vault` and is refunded to the user on Push Chain using the `UniversalTxFinalized` event. The inbound protocol fee is hard-capped at `2_000_000` lamports (`0.002 SOL`) so protocol fee flow stays bounded.
+**Vault vs FeeVault separation:** `Vault` holds only user-deposited bridge funds, keeping it 1:1 backed. `FeeVault` holds inbound fees and funds UV reimbursement for `revert_universal_tx` and `rescue_funds`. `finalize_universal_tx` reimburses only `gas_used` from `Vault`; any signed surplus (`gas_to_refund = gas_fee - gas_used`) remains in `Vault` and is refunded to the user on Push Chain using the `UniversalTxFinalized` event. The inbound fee is hard-capped at `2_000_000` lamports (`0.002 SOL`). Only reverted txs consume from `FeeVault`; accumulated surplus from successful txs is recoverable by admin via `withdraw_inbound_fees`.
 
 **CEA vs EVM:** On EVM, CEA is a deployed contract per user. On SVM, CEA is a system-owned PDA. No deployment step is needed — the Solana runtime creates it on first lamport transfer.
 
@@ -56,7 +56,7 @@ The program uses PDAs for all protocol state. No external signers or owner keys 
 ## Inbound: TX_TYPE Routing
 
 `send_universal_tx` never takes an explicit `TX_TYPE`. The program infers it from the fee-adjusted native amount:
-`adjusted_native_amount = native_amount - protocol_fee_lamports`.
+`adjusted_native_amount = native_amount - inbound_fee_lamports`.
 
 | TX_TYPE | req.amount | req.payload | adjusted_native_amount |
 |---------|------------|-------------|------------------------|

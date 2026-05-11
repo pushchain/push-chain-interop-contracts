@@ -26,22 +26,22 @@ pub fn send_universal_tx(
         GatewayError::InsufficientBalance
     );
 
-    // Collect protocol fee first so all downstream routing sees post-fee native amount.
-    let adjusted_native_amount = collect_protocol_fee(&mut ctx, native_amount)?;
+    // Collect inbound fee first so all downstream routing sees post-fee native amount.
+    let adjusted_native_amount = collect_inbound_fee(&mut ctx, native_amount)?;
 
     let tx_type = fetch_tx_type(&req, adjusted_native_amount)?;
     route_universal_tx(&mut ctx, req, adjusted_native_amount, tx_type)
 }
 
-fn collect_protocol_fee(ctx: &mut Context<SendUniversalTx>, native_amount: u64) -> Result<u64> {
-    let fee_lamports = ctx.accounts.fee_vault.protocol_fee_lamports;
+fn collect_inbound_fee(ctx: &mut Context<SendUniversalTx>, native_amount: u64) -> Result<u64> {
+    let fee_lamports = ctx.accounts.fee_vault.inbound_fee_lamports;
     if fee_lamports == 0 {
         return Ok(native_amount);
     }
 
     require!(
         native_amount >= fee_lamports,
-        GatewayError::InsufficientProtocolFee
+        GatewayError::InsufficientInboundFee
     );
 
     // Transfer fee from user → fee_vault (keeps bridge vault strictly 1:1 backed)
@@ -56,7 +56,7 @@ fn collect_protocol_fee(ctx: &mut Context<SendUniversalTx>, native_amount: u64) 
 
     let adjusted_native_amount = native_amount - fee_lamports;
 
-    emit!(ProtocolFeeCollected {
+    emit!(InboundFeeCollected {
         payer: ctx.accounts.user.key(),
         amount_lamports: fee_lamports,
         native_amount_before: native_amount,

@@ -134,9 +134,9 @@ describe("Universal Gateway - Withdraw Tests", () => {
         [tssPda] = PublicKey.findProgramAddressSync([Buffer.from("final_tss_pda")], program.programId);
         [rateLimitConfigPda] = PublicKey.findProgramAddressSync([Buffer.from("rate_limit_config")], program.programId);
 
-        // Ensure protocol fee is disabled for deterministic seeding in this suite.
+        // Ensure inbound fee is disabled for deterministic seeding in this suite.
         await program.methods
-            .setProtocolFee(new anchor.BN(0))
+            .setInboundFee(new anchor.BN(0))
             .accountsPartial({
                 config: configPda,
                 feeVault: feeVaultPda,

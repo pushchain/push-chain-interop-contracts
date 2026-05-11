@@ -9,7 +9,7 @@ pub const RATE_LIMIT_CONFIG_SEED: &[u8] = b"rate_limit_config";
 pub const RATE_LIMIT_SEED: &[u8] = b"rate_limit";
 pub const EXECUTED_SUB_TX_SEED: &[u8] = b"executed_sub_tx";
 pub const CEA_SEED: &[u8] = b"push_identity";
-pub const MAX_PROTOCOL_FEE_LAMPORTS: u64 = 2_000_000;
+pub const MAX_INBOUND_FEE_LAMPORTS: u64 = 2_000_000;
 
 // Price feed ID (Pyth SOL/USD), same as locker for now
 pub const FEED_ID: &str = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
@@ -96,7 +96,7 @@ impl Config {
 /// Vault (bridge funds) is never touched by fee logic — 1:1 invariant is structurally enforced.
 #[account]
 pub struct FeeVault {
-    pub protocol_fee_lamports: u64, // Flat fee charged per inbound send_universal_tx; 0 disables
+    pub inbound_fee_lamports: u64, // Flat fee charged per inbound send_universal_tx; 0 disables
     pub bump: u8,
 }
 
@@ -244,12 +244,12 @@ pub struct TokenRateLimitUpdated {
 }
 
 #[event]
-pub struct ProtocolFeeUpdated {
+pub struct InboundFeeUpdated {
     pub new_fee_lamports: u64,
 }
 
 #[event]
-pub struct ProtocolFeeCollected {
+pub struct InboundFeeCollected {
     pub payer: Pubkey,
     pub amount_lamports: u64,
     pub native_amount_before: u64,
@@ -257,10 +257,16 @@ pub struct ProtocolFeeCollected {
 }
 
 #[event]
-pub struct ProtocolFeeReimbursed {
+pub struct InboundFeeReimbursed {
     pub sub_tx_id: [u8; 32],
     pub relayer: Pubkey,
     pub amount_lamports: u64,
+}
+
+#[event]
+pub struct InboundFeesWithdrawn {
+    pub recipient: Pubkey,
+    pub amount: u64,
 }
 
 /// Emitted when locked funds are rescued back to recipient via TSS-verified rescue instruction.

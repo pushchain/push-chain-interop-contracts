@@ -92,11 +92,21 @@ pub mod universal_gateway {
         instructions::admin::set_caps_usd(ctx, min_cap, max_cap)
     }
 
-    /// @notice Set flat protocol fee (lamports) for inbound send_universal_tx.
-    /// Must be <= `MAX_PROTOCOL_FEE_LAMPORTS`.
+    /// @notice Set flat inbound fee (lamports) charged per send_universal_tx.
+    /// Must be <= `MAX_INBOUND_FEE_LAMPORTS`.
     /// Not gated by `!config.paused` so the admin can disable fees during an emergency pause.
-    pub fn set_protocol_fee(ctx: Context<FeeVaultAdminAction>, fee_lamports: u64) -> Result<()> {
-        instructions::admin::set_protocol_fee(ctx, fee_lamports)
+    pub fn set_inbound_fee(ctx: Context<FeeVaultAdminAction>, fee_lamports: u64) -> Result<()> {
+        instructions::admin::set_inbound_fee(ctx, fee_lamports)
+    }
+
+    /// @notice Withdraw accumulated inbound fee surplus from the fee vault to a recipient.
+    /// Only lamports above rent-exemption are withdrawable.
+    /// Admin-only — involves fund movement out of the fee vault.
+    pub fn withdraw_inbound_fees(
+        ctx: Context<WithdrawInboundFees>,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::admin::withdraw_inbound_fees(ctx, amount)
     }
 
     /// @notice Set Pyth price feed
@@ -278,7 +288,7 @@ pub struct GetSolPrice<'info> {
 // Re-export account structs and types
 pub use instructions::admin::{
     AdminAction, FeeVaultAdminAction, PauseAction, ProposeAuthoritiesAction, RateLimitConfigAction,
-    TokenRateLimitAction,
+    TokenRateLimitAction, WithdrawInboundFees,
 };
 pub use instructions::deposit::SendUniversalTx;
 pub use instructions::execute::FinalizeUniversalTx;
@@ -295,9 +305,10 @@ pub use state::{
     FeeVault,
     FundsRescued,
     GatewayAccountMeta,
-    ProtocolFeeCollected,
-    ProtocolFeeReimbursed,
-    ProtocolFeeUpdated,
+    InboundFeeCollected,
+    InboundFeeReimbursed,
+    InboundFeeUpdated,
+    InboundFeesWithdrawn,
     RevertInstructions,
     TxType,
     UniversalTx,
