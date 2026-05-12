@@ -85,6 +85,8 @@ interface IUniversalGatewayPC {
     /// @dev                     Unified function for all outbound transaction types
     ///                          (FUNDS, FUNDS_AND_PAYLOAD, GAS_AND_PAYLOAD).
     ///                          TX_TYPE is automatically inferred based on the presence of payload and amount.
+    ///                          When req.gasPrice > 0, the gateway uses the caller's gas price
+    ///                          (must be >= base from UniversalCore) and recalculates gasFee.
     ///                          When req.maxPCForGas > 0, the gateway caps native PC forwarded to the gas
     ///                          swap at that amount and refunds any excess to msg.sender before the swap.
     /// @param req               UniversalOutboundTxRequest struct containing all transaction parameters.
