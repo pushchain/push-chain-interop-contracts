@@ -68,7 +68,7 @@ contract Vault is PausableUpgradeable, ReentrancyGuardUpgradeable, AccessControl
 
         __Pausable_init();
         __ReentrancyGuard_init();
-        __AccessControlDefaultAdminRules_init(1 days, admin);
+        __AccessControlDefaultAdminRules_init(1 minutes, admin);
 
         _setRoleAdmin(VAULT_ADMIN_ROLE, ROLE_MANAGER_ROLE);
         _setRoleAdmin(OPERATOR_ROLE, ROLE_MANAGER_ROLE);
@@ -92,7 +92,7 @@ contract Vault is PausableUpgradeable, ReentrancyGuardUpgradeable, AccessControl
     function initializeV2(address admin) external reinitializer(2) {
         if (!hasRole(DEFAULT_ADMIN_ROLE, admin)) revert Errors.Unauthorized();
 
-        __AccessControlDefaultAdminRules_init(1 days, admin);
+        __AccessControlDefaultAdminRules_init(1 minutes, admin);
 
         _setRoleAdmin(VAULT_ADMIN_ROLE, ROLE_MANAGER_ROLE);
         _setRoleAdmin(OPERATOR_ROLE, ROLE_MANAGER_ROLE);
