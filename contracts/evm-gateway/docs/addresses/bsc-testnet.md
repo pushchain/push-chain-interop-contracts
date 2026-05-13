@@ -12,14 +12,13 @@
 
 ## Vault System
 
-| Contract                         | Address                                      |
-| -------------------------------- | -------------------------------------------- |
-| Vault Proxy                      | `0xE52AC4f8DD3e0263bDF748F3390cdFA1f02be881` |
-| Vault ProxyAdmin                 | `0xc34eF3cA76d1C18c35AbF5C3664d183B57382AbC` |
-| Vault Implementation 1 (old)     | `0xb8A0ee314E3F986f162C5071bf9A8d0C4b723Bd4` |
-| Vault Implementation 2 (current) | `0xc1CD9c126e1F38Ffe016d448FaF563e825eb60CA` |
-| CEAFactory (old)                 | `0xf882C49A3E3d90640bFbAAf992a04c0712A9Af5C` |
-| CEAFactory (current)             | `0xe2182dae2dc11cBF6AA6c8B1a7f9c8315A6B0719` |
+| Contract                       | Address                                      |
+| ------------------------------ | -------------------------------------------- |
+| Vault Proxy                    | `0xE52AC4f8DD3e0263bDF748F3390cdFA1f02be881` |
+| Vault ProxyAdmin               | `0xc34eF3cA76d1C18c35AbF5C3664d183B57382AbC` |
+| Vault Implementation (current) | `0x5507C668B7CDf8dD672F23646eC4c4e2Aec40e22` |
+| Vault Implementation (old)     | `0xc1CD9c126e1F38Ffe016d448FaF563e825eb60CA` |
+| CEAFactory (current)           | `0x3f1B16e0B072d472951C4563d29d3da6a3EE3Ce8` |
 
 ## External / Token Addresses
 

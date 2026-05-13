@@ -62,7 +62,7 @@ abstract contract VaultConfig {
         return Config({
             deployer: 0x6dD2cA20ec82E819541EB43e1925DbE46a441970,
             gateway: 0x44aFFC61983F4348DdddB886349eb992C061EaC0,
-            ceaFactory: 0xe2182dae2dc11cBF6AA6c8B1a7f9c8315A6B0719,
+            ceaFactory: 0x3f1B16e0B072d472951C4563d29d3da6a3EE3Ce8,
             vaultProxy: 0xE52AC4f8DD3e0263bDF748F3390cdFA1f02be881
         });
     }

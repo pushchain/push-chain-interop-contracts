@@ -190,7 +190,6 @@ contract UniversalGateway is
     }
 
     /// @notice One-time migration: seeds AccessControlDefaultAdminRules storage and sets up
-    ///         the granular role hierarchy. Called during upgradeAndCall from V1 → V2.
     /// @param admin The current DEFAULT_ADMIN_ROLE holder (must already have the role)
     function initializeV2(address admin) external reinitializer(2) {
         if (!hasRole(DEFAULT_ADMIN_ROLE, admin)) revert Errors.Unauthorized();
