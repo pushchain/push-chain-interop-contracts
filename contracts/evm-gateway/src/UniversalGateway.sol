@@ -136,59 +136,6 @@ contract UniversalGateway is
         _disableInitializers();
     }
 
-    /// @param admin             DEFAULT_ADMIN_ROLE holder
-    /// @param pauser            PAUSER_ROLE holder
-    /// @param tss               Initial TSS address
-    /// @param minCapUsd         Min USD cap (1e18 decimals)
-    /// @param maxCapUsd         Max USD cap (1e18 decimals)
-    /// @param factory           UniswapV3 factory
-    /// @param router            UniswapV3 router
-    /// @param _wethAddress      WETH address
-    /// @param _usdtAddress      USDT address (legacy, kept for storage layout)
-    /// @param _usdtUsdPriceFeed USDT/USD price feed (legacy, kept for storage layout)
-    /// @param _ethUsdPriceFeed  ETH/USD price feed
-    function initialize(
-        address admin,
-        address pauser,
-        address tss,
-        uint256 minCapUsd,
-        uint256 maxCapUsd,
-        address factory,
-        address router,
-        address _wethAddress,
-        address _usdtAddress,
-        address _usdtUsdPriceFeed,
-        address _ethUsdPriceFeed
-    ) external initializer {
-        if (admin == address(0) || pauser == address(0) || tss == address(0) || _wethAddress == address(0)) revert Errors.ZeroAddress();
-
-        __Pausable_init();
-        __ReentrancyGuard_init();
-        __AccessControlDefaultAdminRules_init(1 minutes, admin);
-
-        _grantRole(PAUSER_ROLE, pauser);
-
-        TSS_ADDRESS = tss;
-        MIN_CAP_UNIVERSAL_TX_USD = minCapUsd;
-        MAX_CAP_UNIVERSAL_TX_USD = maxCapUsd;
-
-        WETH = _wethAddress;
-        v3FeeOrder = [uint24(500), uint24(3000), uint24(10000)];
-        POOL_FEE = 3000;
-        if (factory != address(0) && router != address(0)) {
-            uniV3Factory = IUniswapV3Factory(factory);
-            uniV3Router = ISwapRouterSepolia(router);
-        }
-        // Default swap deadline window (industry common ~10 minutes)
-        defaultSwapDeadlineSec = 10 minutes;
-
-        // Set a sane default for Chainlink staleness (can be tuned by admin)
-        chainlinkStalePeriod = 1 hours;
-        usdtUsdPriceFeed = AggregatorV3Interface(_usdtUsdPriceFeed);
-        ethUsdFeed = AggregatorV3Interface(_ethUsdPriceFeed);
-        USDT = _usdtAddress;
-    }
-
     /// @notice One-time migration: seeds AccessControlDefaultAdminRules storage and sets up
     /// @param admin The current DEFAULT_ADMIN_ROLE holder (must already have the role)
     function initializeV2(address admin) external reinitializer(2) {

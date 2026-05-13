@@ -4,11 +4,12 @@
 
 ## Gateway System
 
-| Contract                          | Address                                      |
-| --------------------------------- | -------------------------------------------- |
-| UniversalGatewayV0 Proxy          | `0x44aFFC61983F4348DdddB886349eb992C061EaC0` |
-| UniversalGatewayV0 ProxyAdmin     | `0x5Cef317D8392dF9F8C8E8a696c6893FD4112542C` |
-| UniversalGatewayV0 Impl (current) | `0x5FCC4BF63CB6DeFC2375c7FA3462A1828427B9A5` |
+| Contract                              | Address                                      |
+| ------------------------------------- | -------------------------------------------- |
+| UniversalGateway Proxy                | `0x44aFFC61983F4348DdddB886349eb992C061EaC0` |
+| UniversalGateway ProxyAdmin           | `0x5Cef317D8392dF9F8C8E8a696c6893FD4112542C` |
+| UniversalGateway Implementation (current) | `0x035b50DC1e7309eB04FA4D3c407D8c9e1eC5C8C7` |
+| UniversalGateway Implementation (old)     | `0x5FCC4BF63CB6DeFC2375c7FA3462A1828427B9A5` |
 
 ## Vault System
 
