@@ -80,13 +80,18 @@ contract VaultMigrateTokensTest is Test {
         bytes memory gwInitData = abi.encodeWithSelector(
             UniversalGateway.initialize.selector,
             admin, pauser, tss,
-            address(vault),
             1e18, 10e18,
             address(0), address(0),
-            weth
+            weth,
+            address(0), address(0), address(0)
         );
         ERC1967Proxy gwProxy = new ERC1967Proxy(address(gwImpl), gwInitData);
         gateway = UniversalGateway(payable(address(gwProxy)));
+        vm.startPrank(admin);
+        gateway.grantRole(gateway.ROLE_MANAGER_ROLE(), admin);
+        gateway.grantRole(gateway.UG_ADMIN_ROLE(), admin);
+        gateway.grantRole(gateway.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
 
         // Point vault at real gateway
         vm.prank(admin);
@@ -220,7 +225,7 @@ contract VaultMigrateTokensTest is Test {
         gateway.updateVault(address(newVault));
 
         // Verify gateway points to new vault
-        assertEq(gateway.vault(), address(newVault));
+        assertEq(gateway.VAULT(), address(newVault));
         assertTrue(gateway.hasRole(gateway.VAULT_ROLE(), address(newVault)));
         assertFalse(gateway.hasRole(gateway.VAULT_ROLE(), address(vault)));
 

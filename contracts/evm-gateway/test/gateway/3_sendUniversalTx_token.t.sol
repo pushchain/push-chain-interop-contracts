@@ -137,16 +137,24 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             admin,
             pauser,
             tss,
-            address(this),
             MIN_CAP_USD,
             MAX_CAP_USD,
             address(mockFactory), // Use mock factory
             address(mockRouter), // Use mock router
-            address(weth)
+            address(weth),
+            address(0),
+            address(0),
+            address(0)
         );
 
         gatewayProxy = new TransparentUpgradeableProxy(address(implementation), address(proxyAdmin), initData);
         gatewayTemp = UniversalGateway(payable(address(gatewayProxy)));
+        vm.startPrank(admin);
+        gatewayTemp.grantRole(gatewayTemp.ROLE_MANAGER_ROLE(), admin);
+        gatewayTemp.grantRole(gatewayTemp.UG_ADMIN_ROLE(), admin);
+        gatewayTemp.grantRole(gatewayTemp.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
+        _configureGatewayPostDeploy(gatewayTemp, admin, address(this));
 
         vm.label(address(gatewayTemp), "UniversalGateway");
     }
@@ -287,16 +295,23 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             admin,
             pauser,
             tss,
-            address(this),
             MIN_CAP_USD,
             MAX_CAP_USD,
             address(0), // No factory
             address(0), // No router
-            address(weth)
+            address(weth),
+            address(0),
+            address(0),
+            address(0)
         );
         TransparentUpgradeableProxy proxy2 =
             new TransparentUpgradeableProxy(address(implementation2), address(proxyAdmin), initData2);
         UniversalGateway gatewayNoUniswap = UniversalGateway(payable(address(proxy2)));
+        vm.startPrank(admin);
+        gatewayNoUniswap.grantRole(gatewayNoUniswap.ROLE_MANAGER_ROLE(), admin);
+        gatewayNoUniswap.grantRole(gatewayNoUniswap.UG_ADMIN_ROLE(), admin);
+        gatewayNoUniswap.grantRole(gatewayNoUniswap.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
 
         UniversalTokenTxRequest memory req = _buildMinimalTokenGasRequest(address(tokenA), 1 ether, 0.001 ether);
 

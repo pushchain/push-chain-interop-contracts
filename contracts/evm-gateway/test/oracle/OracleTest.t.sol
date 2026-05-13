@@ -331,7 +331,6 @@ contract OracleTest is BaseTest {
                 admin,
                 pauser,
                 tss,
-                address(this), // vault address
                 100e18, // minCapUsd
                 10000e18, // maxCapUsd
                 address(0x123), // factory
@@ -341,6 +340,11 @@ contract OracleTest is BaseTest {
         );
 
         UniversalGateway gatewayInstance = UniversalGateway(payable(address(proxy)));
+        vm.startPrank(admin);
+        gatewayInstance.grantRole(gatewayInstance.ROLE_MANAGER_ROLE(), admin);
+        gatewayInstance.grantRole(gatewayInstance.UG_ADMIN_ROLE(), admin);
+        gatewayInstance.grantRole(gatewayInstance.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
 
         // Create a mock feed with 0 decimals to trigger the fallback logic
         MockAggregatorV3 mockFeed = new MockAggregatorV3(0); // 0 decimals!
@@ -371,10 +375,10 @@ contract OracleTest is BaseTest {
         uint256 amount = 1 ether;
 
         // Fund WETH contract with ETH
-        vm.deal(address(gateway.weth()), amount);
+        vm.deal(address(gateway.WETH()), amount);
 
         // Simulate WETH unwrapping by calling receive directly
-        vm.prank(address(gateway.weth()));
+        vm.prank(address(gateway.WETH()));
         (bool success,) = address(gateway).call{ value: amount }("");
         assertTrue(success, "WETH unwrapping should succeed");
     }
@@ -401,16 +405,20 @@ contract OracleTest is BaseTest {
             admin,
             pauser,
             tss,
-            address(this), // vault address
             1e18, // minCapUsd
             10e18, // maxCapUsd
             address(0), // factory = address(0)
             address(0), // router = address(0)
-            address(gateway.weth())
+            address(gateway.WETH())
         );
         TransparentUpgradeableProxy proxy =
             new TransparentUpgradeableProxy(address(impl), admin, initData);
         UniversalGateway newGateway = UniversalGateway(payable(address(proxy)));
+        vm.startPrank(admin);
+        newGateway.grantRole(newGateway.ROLE_MANAGER_ROLE(), admin);
+        newGateway.grantRole(newGateway.UG_ADMIN_ROLE(), admin);
+        newGateway.grantRole(newGateway.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
 
         // Should not revert and should have zero addresses
         assertEq(address(newGateway.uniV3Factory()), address(0));

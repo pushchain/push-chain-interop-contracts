@@ -3,12 +3,12 @@ pragma solidity 0.8.26;
 
 import { Script } from "forge-std/Script.sol";
 import { console } from "forge-std/console.sol";
-import { UniversalGatewayV0 } from "../../../src/testnetV0/UniversalGatewayV0.sol";
+import { UniversalGateway } from "../../../src/UniversalGateway.sol";
 import { GatewayConfig } from "../../config/testnet/GatewayConfig.sol";
 
 /**
  * @title RegisterVault
- * @notice Registers the Vault and CEAFactory addresses on the upgraded UniversalGatewayV0.
+ * @notice Registers the Vault and CEAFactory addresses on the upgraded UniversalGateway.
  *         Reads gatewayProxy and vault from GatewayConfig.
  *         CEAFactory address is passed as a CLI argument.
  *
@@ -73,7 +73,7 @@ contract RegisterVault is Script, GatewayConfig {
 
     function _registerVault() internal {
         console.log("--- Registering Vault ---");
-        UniversalGatewayV0 gateway = UniversalGatewayV0(payable(cfg.gatewayProxy));
+        UniversalGateway gateway = UniversalGateway(payable(cfg.gatewayProxy));
         gateway.updateVault(cfg.vault);
         console.log("updateVault() called with:", cfg.vault);
         console.log("");
@@ -81,7 +81,7 @@ contract RegisterVault is Script, GatewayConfig {
 
     function _registerCEAFactory(address ceaFactory) internal {
         console.log("--- Registering CEAFactory ---");
-        UniversalGatewayV0 gateway = UniversalGatewayV0(payable(cfg.gatewayProxy));
+        UniversalGateway gateway = UniversalGateway(payable(cfg.gatewayProxy));
         gateway.updateCEAFactory(ceaFactory);
         console.log("updateCEAFactory() called with:", ceaFactory);
         console.log("");
@@ -89,7 +89,7 @@ contract RegisterVault is Script, GatewayConfig {
 
     function _verifyRegistration(address ceaFactory) internal view {
         console.log("--- Registration Verification ---");
-        UniversalGatewayV0 gateway = UniversalGatewayV0(payable(cfg.gatewayProxy));
+        UniversalGateway gateway = UniversalGateway(payable(cfg.gatewayProxy));
 
         address vault = gateway.VAULT();
         address factory = gateway.CEA_FACTORY();

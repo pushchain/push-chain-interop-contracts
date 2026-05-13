@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import { IUniswapV3Factory } from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 import { IUniswapV3Pool } from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
-import { ISwapRouter } from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
+import { ISwapRouterSepolia } from "../../src/interfaces/ISwapRouterSepolia.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IWETH } from "../../src/interfaces/IWETH.sol";
 
@@ -55,7 +55,7 @@ contract MockUniswapV3Factory is IUniswapV3Factory {
  * @notice Simple mock for Uniswap V3 Router for testing
  * @dev Simulates swaps by transferring tokens and returning WETH
  */
-contract MockUniswapV3Router is ISwapRouter {
+contract MockUniswapV3Router is ISwapRouterSepolia {
     address public weth;
     mapping(address => uint256) public swapRates; // token -> ETH rate (1e18 = 1:1)
 

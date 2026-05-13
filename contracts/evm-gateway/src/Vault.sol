@@ -4,6 +4,8 @@ pragma solidity 0.8.26;
 /**
  * @title  Vault
  * @notice Token custody vault for outbound flows (withdraw / withdraw+call) managed by TSS.
+ *         Retains the TSS_ADDRESS state variable for storage layout compatibility with
+ *         the deployed proxy.
  * @dev    - TransparentUpgradeable (OZ Initializable pattern)
  *         - Handles both ERC20 and native tokens
  *         - Routes withdrawals (empty payload) and executions (non-empty payload) through CEA contracts
@@ -20,15 +22,12 @@ import { RevertInstructions } from "./libraries/Types.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import { AccessControlDefaultAdminRulesUpgradeable } from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
+import {
+    AccessControlDefaultAdminRulesUpgradeable
+} from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
 import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
-contract Vault is
-    PausableUpgradeable,
-    ReentrancyGuardUpgradeable,
-    AccessControlDefaultAdminRulesUpgradeable,
-    IVault
-{
+contract Vault is PausableUpgradeable, ReentrancyGuardUpgradeable, AccessControlDefaultAdminRulesUpgradeable, IVault {
     using SafeERC20 for IERC20;
 
     bytes32 public constant ROLE_MANAGER_ROLE = keccak256("ROLE_MANAGER_ROLE");
@@ -38,6 +37,11 @@ contract Vault is
     bytes32 public constant TSS_ROLE = keccak256("TSS_ROLE");
 
     IUniversalGateway public gateway;
+
+    /// @dev Deprecated in mainnet Vault (audit F-2026-15642: redundant with TSS_ROLE).
+    ///      Retained here for storage layout compatibility with the deployed testnet proxy.
+    address public TSS_ADDRESS;
+
     ICEAFactory public CEAFactory;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -45,7 +49,7 @@ contract Vault is
         _disableInitializers();
     }
 
-    receive() external payable {}
+    receive() external payable { }
 
     // ==============================
     //     Vault_1: ADMIN ACTIONS
@@ -78,7 +82,26 @@ contract Vault is
         _grantRole(TSS_ROLE, tss);
 
         gateway = IUniversalGateway(gw);
+        TSS_ADDRESS = tss;
         CEAFactory = ICEAFactory(ceaFactory);
+    }
+
+    /// @notice One-time migration: seeds AccessControlDefaultAdminRules storage and sets up
+    ///         the granular role hierarchy. Called during upgradeAndCall from V1 → V2.
+    /// @param admin The current DEFAULT_ADMIN_ROLE holder (must already have the role)
+    function initializeV2(address admin) external reinitializer(2) {
+        if (!hasRole(DEFAULT_ADMIN_ROLE, admin)) revert Errors.Unauthorized();
+
+        __AccessControlDefaultAdminRules_init(1 days, admin);
+
+        _setRoleAdmin(VAULT_ADMIN_ROLE, ROLE_MANAGER_ROLE);
+        _setRoleAdmin(OPERATOR_ROLE, ROLE_MANAGER_ROLE);
+        _setRoleAdmin(PAUSER_ROLE, ROLE_MANAGER_ROLE);
+        _setRoleAdmin(TSS_ROLE, ROLE_MANAGER_ROLE);
+
+        _grantRole(ROLE_MANAGER_ROLE, admin);
+        _grantRole(VAULT_ADMIN_ROLE, admin);
+        _grantRole(OPERATOR_ROLE, admin);
     }
 
     function pause() external whenNotPaused onlyRole(PAUSER_ROLE) {
@@ -107,16 +130,31 @@ contract Vault is
         emit CEAFactoryUpdated(old, newCEAFactory);
     }
 
+    /// @dev Deprecated in mainnet Vault (audit F-2026-15642: redundant with TSS_ROLE).
+    ///      Retained here for testnet compatibility. Updates TSS_ADDRESS and transfers TSS_ROLE.
+    /// @param newTss          New TSS address.
+    function setTSS(address newTss) external onlyRole(OPERATOR_ROLE) {
+        if (newTss == address(0)) revert Errors.ZeroAddress();
+        address old = TSS_ADDRESS;
+
+        if (hasRole(TSS_ROLE, old)) _revokeRole(TSS_ROLE, old);
+        _grantRole(TSS_ROLE, newTss);
+
+        TSS_ADDRESS = newTss;
+    }
+
     /// @notice                Migrates ERC20 balances and any native ETH to a new vault.
     /// @dev                   BOTH this vault AND the gateway MUST be paused.
     ///                        Call this BEFORE gateway.updateVault(newVault).
     ///                        Tokens with zero balance are silently skipped.
     /// @param newVault        Destination vault address
     /// @param tokens          ERC20 token addresses to sweep
-    function migrateTokens(
-        address newVault,
-        address[] calldata tokens
-    ) external nonReentrant whenPaused onlyRole(VAULT_ADMIN_ROLE) {
+    function migrateTokens(address newVault, address[] calldata tokens)
+        external
+        nonReentrant
+        whenPaused
+        onlyRole(VAULT_ADMIN_ROLE)
+    {
         if (newVault == address(0)) revert Errors.ZeroAddress();
         if (tokens.length == 0) revert Errors.EmptyTokenList();
         if (!gateway.paused()) revert Errors.GatewayNotPaused();
@@ -177,23 +215,17 @@ contract Vault is
 
         if (token == address(0)) {
             if (msg.value != amount) revert Errors.InvalidAmount();
-            gateway.revertUniversalTx{ value: amount }(
-                subTxId, universalTxId, token, amount, revertInstruction
-            );
+            gateway.revertUniversalTx{ value: amount }(subTxId, universalTxId, token, amount, revertInstruction);
         } else {
             if (msg.value != 0) revert Errors.InvalidAmount();
             if (IERC20(token).balanceOf(address(this)) < amount) {
                 revert Errors.InsufficientBalance();
             }
             IERC20(token).safeTransfer(address(gateway), amount);
-            gateway.revertUniversalTx(
-                subTxId, universalTxId, token, amount, revertInstruction
-            );
+            gateway.revertUniversalTx(subTxId, universalTxId, token, amount, revertInstruction);
         }
 
-        emit UniversalTxReverted(
-            subTxId, universalTxId, token, amount, revertInstruction
-        );
+        emit UniversalTxReverted(subTxId, universalTxId, token, amount, revertInstruction);
     }
 
     /// @inheritdoc IVault
@@ -208,23 +240,17 @@ contract Vault is
 
         if (token == address(0)) {
             if (msg.value != amount) revert Errors.InvalidAmount();
-            gateway.rescueFunds{ value: amount }(
-                subTxId, universalTxId, token, amount, revertInstruction
-            );
+            gateway.rescueFunds{ value: amount }(subTxId, universalTxId, token, amount, revertInstruction);
         } else {
             if (msg.value != 0) revert Errors.InvalidAmount();
             if (IERC20(token).balanceOf(address(this)) < amount) {
                 revert Errors.InsufficientBalance();
             }
             IERC20(token).safeTransfer(address(gateway), amount);
-            gateway.rescueFunds(
-                subTxId, universalTxId, token, amount, revertInstruction
-            );
+            gateway.rescueFunds(subTxId, universalTxId, token, amount, revertInstruction);
         }
 
-        emit FundsRescued(
-            subTxId, universalTxId, token, amount, revertInstruction
-        );
+        emit FundsRescued(subTxId, universalTxId, token, amount, revertInstruction);
     }
 
     // ==============================

@@ -81,10 +81,10 @@ contract GatewayAdminSettersTest is BaseTest {
         address newTSS = address(0x123);
 
         vm.prank(admin);
-        gateway.updateTSS(newTSS);
+        gateway.setTSS(newTSS);
 
         // UG no longer manages TSS_ROLE — only tssAddress is updated.
-        assertEq(gateway.tssAddress(), newTSS);
+        assertEq(gateway.TSS_ADDRESS(), newTSS);
     }
 
     function testUpdateTSSAddressOnlyAdmin() public {
@@ -93,18 +93,18 @@ contract GatewayAdminSettersTest is BaseTest {
         // Non-admin should not be able to update TSS
         vm.prank(user1);
         vm.expectRevert();
-        gateway.updateTSS(newTSS);
+        gateway.setTSS(newTSS);
 
         // Admin should be able to update TSS
         vm.prank(admin);
-        gateway.updateTSS(newTSS);
-        assertEq(gateway.tssAddress(), newTSS);
+        gateway.setTSS(newTSS);
+        assertEq(gateway.TSS_ADDRESS(), newTSS);
     }
 
     function testUpdateTSSAddressZeroAddress() public {
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        gateway.updateTSS(address(0));
+        gateway.setTSS(address(0));
     }
 
     function testUpdateTSSAddressWhenPaused() public {
@@ -114,8 +114,8 @@ contract GatewayAdminSettersTest is BaseTest {
 
         // Admin functions like updateTSS should work even when paused
         vm.prank(admin);
-        gateway.updateTSS(address(0x123));
-        assertEq(gateway.tssAddress(), address(0x123));
+        gateway.setTSS(address(0x123));
+        assertEq(gateway.TSS_ADDRESS(), address(0x123));
     }
 
     function testSetCapsUSD() public {
@@ -125,8 +125,8 @@ contract GatewayAdminSettersTest is BaseTest {
         vm.prank(admin);
         gateway.setCapsUSD(newMinCap, newMaxCap);
 
-        assertEq(gateway.minCapUniversalTxUsd(), newMinCap);
-        assertEq(gateway.maxCapUniversalTxUsd(), newMaxCap);
+        assertEq(gateway.MIN_CAP_UNIVERSAL_TX_USD(), newMinCap);
+        assertEq(gateway.MAX_CAP_UNIVERSAL_TX_USD(), newMaxCap);
     }
 
     function testSetCapsUSDOnlyAdmin() public {
@@ -141,7 +141,7 @@ contract GatewayAdminSettersTest is BaseTest {
         // Admin should be able to set caps
         vm.prank(admin);
         gateway.setCapsUSD(newMinCap, newMaxCap);
-        assertEq(gateway.minCapUniversalTxUsd(), newMinCap);
+        assertEq(gateway.MIN_CAP_UNIVERSAL_TX_USD(), newMinCap);
     }
 
     function testSetCapsUSDInvalidRange() public {
@@ -420,14 +420,14 @@ contract GatewayAdminSettersTest is BaseTest {
     function testSetProtocolFee_AcceptsZero() public {
         vm.prank(admin);
         gateway.setInboundFee(0);
-        assertEq(gateway.inboundFee(), 0);
+        assertEq(gateway.INBOUND_FEE(), 0);
     }
 
     function testSetProtocolFee_AcceptsMaxExact() public {
         uint256 max = gateway.MAX_INBOUND_FEE();
         vm.prank(admin);
         gateway.setInboundFee(max);
-        assertEq(gateway.inboundFee(), max);
+        assertEq(gateway.INBOUND_FEE(), max);
     }
 
     function testSetProtocolFee_RevertsAboveMax() public {
@@ -554,7 +554,7 @@ contract GatewayAdminSettersTest is BaseTest {
 
     function testUpdateVault() public {
         address newVault = address(0x999);
-        address oldVault = gateway.vault();
+        address oldVault = gateway.VAULT();
 
         // Expect VaultUpdated event
         vm.expectEmit(true, true, true, true);
@@ -563,7 +563,7 @@ contract GatewayAdminSettersTest is BaseTest {
         vm.prank(admin);
         gateway.updateVault(newVault);
 
-        assertEq(gateway.vault(), newVault);
+        assertEq(gateway.VAULT(), newVault);
         assertTrue(gateway.hasRole(gateway.VAULT_ROLE(), newVault));
         assertFalse(gateway.hasRole(gateway.VAULT_ROLE(), oldVault));
     }
@@ -579,7 +579,7 @@ contract GatewayAdminSettersTest is BaseTest {
         // Admin should be able to update vault
         vm.prank(admin);
         gateway.updateVault(newVault);
-        assertEq(gateway.vault(), newVault);
+        assertEq(gateway.VAULT(), newVault);
     }
 
     function testUpdateVaultZeroAddressReverts() public {
@@ -591,7 +591,7 @@ contract GatewayAdminSettersTest is BaseTest {
     function testUpdateVaultRoleTransfer() public {
         address newVault1 = address(0x888);
         address newVault2 = address(0x999);
-        address oldVault = gateway.vault();
+        address oldVault = gateway.VAULT();
 
         // First update
         vm.prank(admin);

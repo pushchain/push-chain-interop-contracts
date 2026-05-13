@@ -35,12 +35,17 @@ contract Vault_InvariantsFuzz is Test {
         bytes memory gatewayInit = abi.encodeWithSelector(
             UniversalGateway.initialize.selector,
             admin, pauser, tss,
-            address(1), // vault placeholder
             1e18, 10e18,
-            address(0), address(0), weth
+            address(0), address(0), weth,
+            address(0), address(0), address(0)
         );
         ERC1967Proxy gatewayProxy = new ERC1967Proxy(address(gatewayImpl), gatewayInit);
         gateway = UniversalGateway(payable(address(gatewayProxy)));
+        vm.startPrank(admin);
+        gateway.grantRole(gateway.ROLE_MANAGER_ROLE(), admin);
+        gateway.grantRole(gateway.UG_ADMIN_ROLE(), admin);
+        gateway.grantRole(gateway.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
 
         // Deploy vault
         Vault vaultImpl = new Vault();

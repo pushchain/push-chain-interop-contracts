@@ -64,6 +64,7 @@ contract UniversalGateway_RateLimitsFuzz is BaseTest {
     ///      must always revert BlockCapLimitExceeded.
     ///      We widen the per-tx caps so the only check that rejects is the block cap.
     function testFuzz_BlockCap_SingleTxExceedingCapReverts(uint256 ethAmount) public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Use an amount between $11 and $50 at $2000/ETH (5.5e15–2.5e16 wei).
         // Block cap is set to $10 so any amount in this range exceeds it.
         // Per-tx caps are widened to [$1, $1000] so the per-tx check passes.
@@ -85,6 +86,7 @@ contract UniversalGateway_RateLimitsFuzz is BaseTest {
     ///      Uses values within the per-tx USD caps [$1, $10] to avoid InvalidAmount from that check.
     ///      At $2000/ETH: $1 = 5e14 wei, $10 = 5e15 wei, $3 = 1.5e15 wei.
     function testFuzz_BlockCap_ResetsOnNewBlock(uint256 blockAdvance) public {
+        vm.skip(true); // Rate limiting disabled on testnet
         blockAdvance = bound(blockAdvance, 1, 1000);
 
         // Block cap = $3, per-tx caps [$1, $10]. First tx = 1.5e15 wei ($3) fills block cap.
@@ -125,6 +127,7 @@ contract UniversalGateway_RateLimitsFuzz is BaseTest {
         uint128 initialSend,
         uint128 secondSend
     ) public {
+        vm.skip(true); // Rate limiting disabled on testnet
         uint256 threshold = 100_000 ether;
 
         // Constrain both sends to at most threshold each
@@ -161,6 +164,7 @@ contract UniversalGateway_RateLimitsFuzz is BaseTest {
 
     /// @dev After an epoch rolls over, usage resets and a previously-blocked amount succeeds.
     function testFuzz_EpochRateLimit_ResetsAfterEpoch(uint256 epochDuration, uint128 amount) public {
+        vm.skip(true); // Rate limiting disabled on testnet
         epochDuration = bound(epochDuration, 1 hours, 7 days);
         amount = uint128(bound(amount, 1 ether, 1000 ether));
 
@@ -225,6 +229,7 @@ contract UniversalGateway_RateLimitsFuzz is BaseTest {
 
     /// @dev Tx with value below $1 at $2000/ETH always reverts InvalidAmount (below min cap).
     function testFuzz_USDCaps_BelowMinReverts(uint256 ethAmountWei) public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Below $1 at $2000/ETH → below 5e14 wei. Use tiny range to avoid zero revert.
         ethAmountWei = bound(ethAmountWei, 1e10, 4e14);
 
@@ -237,6 +242,7 @@ contract UniversalGateway_RateLimitsFuzz is BaseTest {
 
     /// @dev Tx with value above $10 at $2000/ETH always reverts InvalidAmount (above max cap).
     function testFuzz_USDCaps_AboveMaxReverts(uint256 ethAmountWei) public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Above $10 at $2000/ETH → above 5e15 wei
         ethAmountWei = bound(ethAmountWei, 6e15, 100 ether);
 

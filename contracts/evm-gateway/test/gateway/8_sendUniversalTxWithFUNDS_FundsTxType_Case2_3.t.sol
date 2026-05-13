@@ -104,18 +104,26 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
             admin,
             pauser,
             tss,
-            address(this),
             MIN_CAP_USD,
             MAX_CAP_USD,
             uniV3Factory,
             uniV3Router,
-            address(weth)
+            address(weth),
+            address(0),
+            address(0),
+            address(0)
         );
 
         TransparentUpgradeableProxy tempProxy =
             new TransparentUpgradeableProxy(address(implementation), address(proxyAdmin), initData);
 
         gatewayTemp = UniversalGateway(payable(address(tempProxy)));
+        vm.startPrank(admin);
+        gatewayTemp.grantRole(gatewayTemp.ROLE_MANAGER_ROLE(), admin);
+        gatewayTemp.grantRole(gatewayTemp.UG_ADMIN_ROLE(), admin);
+        gatewayTemp.grantRole(gatewayTemp.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
+        _configureGatewayPostDeploy(gatewayTemp, admin, address(this));
         vm.label(address(gatewayTemp), "UniversalGateway");
     }
 
@@ -152,6 +160,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
     ///      - ERC20 rate limit consumed
     ///      - Native rate limit NOT consumed
     function test_Case2_3_FUNDS_AND_PAYLOAD_ERC20_Batching_HappyPath() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         uint256 msgValue = 0.002 ether; // $4 for gas
         uint256 erc20Amount = 100 ether; // 100 tokenA
 
@@ -472,6 +481,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
     /// @notice Test Case 2.3 - Gas amount below min USD cap reverts
     /// @dev At $2000/ETH, min cap = $1 = 0.0005 ETH
     function test_Case2_3_FUNDS_AND_PAYLOAD_ERC20_RevertOn_GasAmountBelowMinUSDCap() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         uint256 msgValue = 0.0004 ether; // $0.80 (below $1 min)
         uint256 erc20Amount = 100 ether;
 
@@ -493,6 +503,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
     /// @notice Test Case 2.3 - Gas amount above max USD cap reverts
     /// @dev At $2000/ETH, max cap = $10 = 0.005 ETH
     function test_Case2_3_FUNDS_AND_PAYLOAD_ERC20_RevertOn_GasAmountAboveMaxUSDCap() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         uint256 msgValue = 0.006 ether; // $12 (above $10 max)
         uint256 erc20Amount = 100 ether;
 
@@ -514,6 +525,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
     /// @notice Test Case 2.3 - Gas amount exceeds block cap reverts
     /// @dev Set block cap and verify gas route respects it
     function test_Case2_3_FUNDS_AND_PAYLOAD_ERC20_RevertOn_GasAmountExceedsBlockCap() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Set block cap to $5
         vm.prank(admin);
         gatewayTemp.setBlockUsdCap(5e18);
@@ -627,6 +639,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
     /// @notice Test Case 2.3 - Separate rate limits for gas and ERC20
     /// @dev Gas uses USD caps, ERC20 uses token rate limit - completely independent
     function test_Case2_3_FUNDS_AND_PAYLOAD_ERC20_SeparateRateLimits() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         uint256 msgValue = 0.002 ether; // $4 for gas
         uint256 erc20Amount = 100 ether;
 
@@ -658,6 +671,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
     /// @notice Test Case 2.3 - ERC20 rate limit exceeded reverts
     /// @dev Even if gas amount is fine, ERC20 must respect rate limit
     function test_Case2_3_FUNDS_AND_PAYLOAD_ERC20_RevertOn_ERC20RateLimitExceeded() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Set low threshold for tokenA
         address[] memory tokens = new address[](1);
         uint256[] memory thresholds = new uint256[](1);
@@ -688,6 +702,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
     /// @notice Test Case 2.3 - Cumulative ERC20 rate limit
     /// @dev Multiple calls should accumulate towards ERC20 rate limit
     function test_Case2_3_FUNDS_AND_PAYLOAD_ERC20_CumulativeERC20RateLimit() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Set threshold
         address[] memory tokens = new address[](1);
         uint256[] memory thresholds = new uint256[](1);
@@ -730,6 +745,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
     /// @notice Test Case 2.3 - Cumulative ERC20 rate limit exceeded reverts
     /// @dev Second call should fail when cumulative exceeds threshold
     function test_Case2_3_FUNDS_AND_PAYLOAD_ERC20_RevertOn_CumulativeERC20RateLimitExceeded() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Set threshold
         address[] memory tokens = new address[](1);
         uint256[] memory thresholds = new uint256[](1);
@@ -769,6 +785,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
     /// @notice Test Case 2.3 - ERC20 rate limit resets in new epoch
     /// @dev After epoch duration, ERC20 rate limit should reset
     function test_Case2_3_FUNDS_AND_PAYLOAD_ERC20_RateLimitResetsInNewEpoch() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Set threshold
         address[] memory tokens = new address[](1);
         uint256[] memory thresholds = new uint256[](1);
@@ -1326,6 +1343,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
     /// @notice Test Case 2.3 - Multiple calls same block respect gas block cap
     /// @dev Cumulative gas amounts checked against block cap
     function test_Case2_3_FUNDS_AND_PAYLOAD_ERC20_MultipleCallsSameBlock_GasBlockCap() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Set block cap to $8
         vm.prank(admin);
         gatewayTemp.setBlockUsdCap(8e18);

@@ -82,18 +82,26 @@ contract GatewayFetchTxTypeTest is BaseTest {
             admin,
             pauser,
             tss,
-            address(this),
             MIN_CAP_USD,
             MAX_CAP_USD,
             uniV3Factory,
             uniV3Router,
-            address(weth)
+            address(weth),
+            address(0),
+            address(0),
+            address(0)
         );
 
         TransparentUpgradeableProxy tempProxy =
             new TransparentUpgradeableProxy(address(implementation), address(proxyAdmin), initData);
 
         gatewayTemp = UniversalGateway(payable(address(tempProxy)));
+        vm.startPrank(admin);
+        gatewayTemp.grantRole(gatewayTemp.ROLE_MANAGER_ROLE(), admin);
+        gatewayTemp.grantRole(gatewayTemp.UG_ADMIN_ROLE(), admin);
+        gatewayTemp.grantRole(gatewayTemp.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
+        _configureGatewayPostDeploy(gatewayTemp, admin, address(this));
         vm.label(address(gatewayTemp), "UniversalGateway");
     }
 

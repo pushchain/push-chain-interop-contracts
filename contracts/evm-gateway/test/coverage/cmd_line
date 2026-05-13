@@ -1,1 +1,0 @@
-genhtml lcov.info --branch-coverage --output-dir test/coverage --ignore-errors inconsistent,corrupt,missing,range --filter missing

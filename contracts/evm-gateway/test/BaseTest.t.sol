@@ -187,12 +187,14 @@ abstract contract BaseTest is Test {
             admin,
             pauser,
             tss,
-            address(this), // vault address
             MIN_CAP_USD,
             MAX_CAP_USD,
             uniV3Factory,
             uniV3Router,
-            address(weth)
+            address(weth),
+            address(0),
+            address(0),
+            address(0)
         );
 
         gatewayProxy = new TransparentUpgradeableProxy(address(implementation), address(proxyAdmin), initData);
@@ -200,18 +202,47 @@ abstract contract BaseTest is Test {
         // Cast proxy to gateway interface
         gateway = UniversalGateway(payable(address(gatewayProxy)));
 
+        // Grant admin the operational roles (initializeV2 can't be called after
+        // initialize since __AccessControlDefaultAdminRules_init was already run)
+        vm.startPrank(admin);
+        gateway.grantRole(gateway.ROLE_MANAGER_ROLE(), admin);
+        gateway.grantRole(gateway.UG_ADMIN_ROLE(), admin);
+        gateway.grantRole(gateway.OPERATOR_ROLE(), admin);
+
+        vm.stopPrank();
+
+        _configureGatewayPostDeploy(gateway, admin, address(this));
+
+        vm.prank(admin);
+        gateway.setBlockUsdCap(100e18);
+
         vm.label(address(gateway), "UniversalGateway");
         vm.label(address(gatewayProxy), "GatewayProxy");
         vm.label(address(proxyAdmin), "ProxyAdmin");
     }
 
+    /// @dev Configure a freshly-deployed testnet gateway with vault and epoch duration.
+    ///      Testnet `initialize()` leaves VAULT, epochDurationSec at zero; this fills them.
+    ///      Caller must ensure `adminAddr` holds OPERATOR_ROLE.
+    function _configureGatewayPostDeploy(
+        UniversalGateway gw,
+        address adminAddr,
+        address vaultAddr
+    ) internal {
+        vm.prank(adminAddr);
+        gw.updateVault(vaultAddr);
+        // epochDurationSec starts at 0; updateEpochDuration divides by old value,
+        // so seed the slot directly (slot 18).
+        vm.store(address(gw), bytes32(uint256(18)), bytes32(uint256(6 hours)));
+    }
+
     function _initializeGateway() internal {
         // Gateway is already initialized via proxy constructor
         // Verify initialization
-        assertEq(gateway.tssAddress(), tss);
-        assertEq(gateway.minCapUniversalTxUsd(), MIN_CAP_USD);
-        assertEq(gateway.maxCapUniversalTxUsd(), MAX_CAP_USD);
-        assertEq(gateway.weth(), address(weth));
+        assertEq(gateway.TSS_ADDRESS(), tss);
+        assertEq(gateway.MIN_CAP_UNIVERSAL_TX_USD(), MIN_CAP_USD);
+        assertEq(gateway.MAX_CAP_UNIVERSAL_TX_USD(), MAX_CAP_USD);
+        assertEq(gateway.WETH(), address(weth));
     }
 
     // =========================

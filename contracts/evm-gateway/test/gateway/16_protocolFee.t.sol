@@ -101,16 +101,24 @@ contract ProtocolFeeTest is BaseTest {
             admin,
             pauser,
             tss,
-            address(this),
             MIN_CAP_USD,
             MAX_CAP_USD,
             uniV3Factory,
             uniV3Router,
-            address(weth)
+            address(weth),
+            address(0),
+            address(0),
+            address(0)
         );
         TransparentUpgradeableProxy proxy =
             new TransparentUpgradeableProxy(address(impl), address(proxyAdmin), initData);
         gw = UniversalGateway(payable(address(proxy)));
+        vm.startPrank(admin);
+        gw.grantRole(gw.ROLE_MANAGER_ROLE(), admin);
+        gw.grantRole(gw.UG_ADMIN_ROLE(), admin);
+        gw.grantRole(gw.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
+        _configureGatewayPostDeploy(gw, admin, address(this));
         vm.label(address(gw), "GW_FeeTest");
     }
 
@@ -160,7 +168,7 @@ contract ProtocolFeeTest is BaseTest {
         vm.prank(admin);
         gw.setInboundFee(PROTOCOL_FEE_WEI);
 
-        assertEq(gw.inboundFee(), PROTOCOL_FEE_WEI);
+        assertEq(gw.INBOUND_FEE(), PROTOCOL_FEE_WEI);
     }
 
     /// @notice Non-admin cannot set protocol fee
@@ -178,7 +186,7 @@ contract ProtocolFeeTest is BaseTest {
         vm.prank(admin);
         gw.setInboundFee(0);
 
-        assertEq(gw.inboundFee(), 0);
+        assertEq(gw.INBOUND_FEE(), 0);
         // With fee=0, GAS tx with any native value succeeds without fee deduction
         UniversalTxRequest memory req = _buildReq(address(0), 0, bytes(""));
         vm.prank(user1);
@@ -485,7 +493,7 @@ contract ProtocolFeeTest is BaseTest {
     /// @notice When inboundFee=0, GAS tx with any native value works (original behavior)
     function testFeeDisabled_GAS_Works() public {
         // Fee is 0 by default
-        assertEq(gw.inboundFee(), 0);
+        assertEq(gw.INBOUND_FEE(), 0);
 
         UniversalTxRequest memory req = _buildReq(address(0), 0, bytes(""));
         vm.prank(user1);
@@ -517,7 +525,7 @@ contract ProtocolFeeTest is BaseTest {
         // Replace TSS with a contract that rejects ETH
         ProtocolFeeEthRejecter rejecter = new ProtocolFeeEthRejecter();
         vm.prank(admin);
-        gw.updateTSS(address(rejecter));
+        gw.setTSS(address(rejecter));
 
         UniversalTxRequest memory req = _buildReq(address(0), 0, bytes(""));
         vm.prank(user1);

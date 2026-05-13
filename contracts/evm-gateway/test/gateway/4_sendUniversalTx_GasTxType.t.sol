@@ -94,18 +94,26 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
             admin,
             pauser,
             tss,
-            address(this),
             MIN_CAP_USD,
             MAX_CAP_USD,
             uniV3Factory,
             uniV3Router,
-            address(weth)
+            address(weth),
+            address(0),
+            address(0),
+            address(0)
         );
 
         TransparentUpgradeableProxy tempProxy =
             new TransparentUpgradeableProxy(address(implementation), address(proxyAdmin), initData);
 
         gatewayTemp = UniversalGateway(payable(address(tempProxy)));
+        vm.startPrank(admin);
+        gatewayTemp.grantRole(gatewayTemp.ROLE_MANAGER_ROLE(), admin);
+        gatewayTemp.grantRole(gatewayTemp.UG_ADMIN_ROLE(), admin);
+        gatewayTemp.grantRole(gatewayTemp.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
+        _configureGatewayPostDeploy(gatewayTemp, admin, address(this));
         vm.label(address(gatewayTemp), "UniversalGateway");
     }
 
@@ -311,6 +319,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
     /// @notice Test amount below minCapUniversalTxUsd reverts
     /// @dev At $2000/ETH, $1 min = 0.0005 ETH. Test with 0.0004 ETH ($0.80)
     function test_SendTxWithGas_RevertOn_BelowMinCap() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Arrange: At $2000/ETH, 0.0004 ETH = $0.80 (below $1 min)
         uint256 gasAmount = 0.0004 ether;
 
@@ -329,6 +338,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
     /// @notice Test amount above maxCapUniversalTxUsd reverts
     /// @dev At $2000/ETH, $10 max = 0.005 ETH. Test with 0.006 ETH ($12)
     function test_SendTxWithGas_RevertOn_AboveMaxCap() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Arrange: At $2000/ETH, 0.006 ETH = $12 (above $10 max)
         uint256 gasAmount = 0.006 ether;
 
@@ -377,7 +387,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
     /// @dev With blockUsdCap=0, should accept any number of calls in same block
     function test_SendTxWithGas_BlockCap_Disabled_AllowsUnlimited() public {
         // Arrange: Ensure block cap is 0 (disabled by default)
-        assertEq(gatewayTemp.blockUsdCap(), 0, "Block cap should be 0 by default");
+        assertEq(gatewayTemp.BLOCK_USD_CAP(), 0, "Block cap should be 0 by default");
 
         uint256 gasAmount = 0.002 ether; // $4 per call at $2000/ETH
 
@@ -403,6 +413,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
     /// @notice Test single call exceeding block cap reverts
     /// @dev Set cap=$5, attempt call worth $6
     function test_SendTxWithGas_BlockCap_RevertOn_SingleCallExceedsCap() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Arrange: Set block cap to $5 (5e18)
         vm.prank(admin);
         gatewayTemp.setBlockUsdCap(5e18);
@@ -426,6 +437,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
     /// @notice Test cumulative calls exceeding block cap reverts
     /// @dev Set cap=$10, first call $6 (60%), second call $5 (50%) should revert
     function test_SendTxWithGas_BlockCap_RevertOn_CumulativeExceedsCap() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Arrange: Set block cap to $10 (10e18)
         vm.prank(admin);
         gatewayTemp.setBlockUsdCap(10e18);
@@ -621,6 +633,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
     /// @notice Test multiple users can call in same block (within caps)
     /// @dev Verify different users share the same block cap
     function test_SendTxWithGas_MultipleUsers_ShareBlockCap() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Arrange: Set block cap to $10
         vm.prank(admin);
         gatewayTemp.setBlockUsdCap(10e18);
@@ -661,6 +674,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
     /// @notice Test GAS and GAS_AND_PAYLOAD share the same block cap
     /// @dev Both transaction types consume from the same block budget
     function test_SendTxWithGas_GAS_And_GAS_AND_PAYLOAD_ShareBlockCap() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Arrange: Set block cap to $10
         vm.prank(admin);
         gatewayTemp.setBlockUsdCap(10e18);

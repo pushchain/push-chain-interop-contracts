@@ -106,8 +106,8 @@ contract SendUniversalTxViaCEATest is BaseTest {
 
     function test_RevertWhen_CEAFactoryNotSet() public {
         // Zero out ceaFactory via vm.store (slot 20 per storage layout)
-        vm.store(address(gateway), bytes32(uint256(20)), bytes32(0));
-        assertEq(gateway.ceaFactory(), address(0));
+        vm.store(address(gateway), bytes32(uint256(61)), bytes32(0));
+        assertEq(gateway.CEA_FACTORY(), address(0));
 
         UniversalTxRequest memory req = _buildViaCEARequest(address(tokenA), 100 ether, _defaultPayload());
 
@@ -478,6 +478,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
     // =====================================================
 
     function test_ERC20_EpochRateLimitEnforced() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Set a small threshold
         address[] memory tokens = new address[](1);
         uint256[] memory thresholds = new uint256[](1);
@@ -898,6 +899,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
     // =====================================================
 
     function test_GasAndPayload_ViaCEA_USDCapsEnforced() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Set caps so that a tiny gas amount falls below MIN_CAP
         // MIN_CAP = 1e18 ($1), ETH=$2000 → min wei ≈ 0.0005 ether
         // Send less than that
@@ -912,6 +914,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
     }
 
     function test_GasAndPayload_ViaCEA_BlockCapEnforced() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Set a small block cap ($2) and send gas exceeding it
         vm.prank(admin);
         gateway.setBlockUsdCap(2e18); // $2
@@ -1095,8 +1098,8 @@ contract SendUniversalTxViaCEATest is BaseTest {
 
     function test_SendUniversalTx_AllowsWhenCEAFactoryNotSet() public {
         // Zero out ceaFactory — _isCallerCEA returns false, so CEA address is allowed
-        vm.store(address(gateway), bytes32(uint256(20)), bytes32(0));
-        assertEq(gateway.ceaFactory(), address(0));
+        vm.store(address(gateway), bytes32(uint256(61)), bytes32(0));
+        assertEq(gateway.CEA_FACTORY(), address(0));
 
         UniversalTxRequest memory req = UniversalTxRequest({
             recipient: address(0),
@@ -1177,6 +1180,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
     // =====================================================
 
     function test_FUNDS_ViaCEA_EpochRateLimitEnforced() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Set a small threshold for tokenA and try to exceed it
         address[] memory tokens = new address[](1);
         uint256[] memory thresholds = new uint256[](1);

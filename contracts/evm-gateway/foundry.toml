@@ -27,7 +27,7 @@ cache = true
 cache_path = "cache"
 
 # coverage — only report on active source contracts
-no_match_coverage = "^(script/|test/|src/libraries/|src/interfaces/|src/testnetV0/|src/UniversalCore_temp)"
+no_match_coverage = "^(script/|test/|src/libraries/|src/interfaces/)"
 
 # security & permissions
 ffi = false

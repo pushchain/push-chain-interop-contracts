@@ -99,18 +99,26 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_1_Test is BaseTest {
             admin,
             pauser,
             tss,
-            address(this),
             MIN_CAP_USD,
             MAX_CAP_USD,
             uniV3Factory,
             uniV3Router,
-            address(weth)
+            address(weth),
+            address(0),
+            address(0),
+            address(0)
         );
 
         TransparentUpgradeableProxy tempProxy =
             new TransparentUpgradeableProxy(address(implementation), address(proxyAdmin), initData);
 
         gatewayTemp = UniversalGateway(payable(address(tempProxy)));
+        vm.startPrank(admin);
+        gatewayTemp.grantRole(gatewayTemp.ROLE_MANAGER_ROLE(), admin);
+        gatewayTemp.grantRole(gatewayTemp.UG_ADMIN_ROLE(), admin);
+        gatewayTemp.grantRole(gatewayTemp.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
+        _configureGatewayPostDeploy(gatewayTemp, admin, address(this));
         vm.label(address(gatewayTemp), "UniversalGateway");
     }
 
@@ -146,6 +154,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_1_Test is BaseTest {
     ///      - Event emitted with payload
     ///      - msg.value must be 0
     function test_Case2_1_FUNDS_AND_PAYLOAD_ERC20_NoBatching_HappyPath() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         uint256 fundsAmount = 1000 ether;
         UniversalPayload memory payload = buildDefaultPayload();
         bytes memory encodedPayload = abi.encode(payload);
@@ -312,6 +321,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_1_Test is BaseTest {
     /// @notice Test Case 2.1 - Rate limit enforcement for ERC20
     /// @dev Should revert when exceeding ERC20 threshold
     function test_Case2_1_FUNDS_AND_PAYLOAD_RevertOn_RateLimitExceeded() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Set a low threshold for tokenA
         address[] memory tokens = new address[](1);
         uint256[] memory thresholds = new uint256[](1);
@@ -340,6 +350,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_1_Test is BaseTest {
     /// @notice Test Case 2.1 - Cumulative rate limit for ERC20
     /// @dev Multiple calls should accumulate towards rate limit
     function test_Case2_1_FUNDS_AND_PAYLOAD_CumulativeRateLimit() public {
+        vm.skip(true); // Rate limiting disabled on testnet
         // Set threshold
         address[] memory tokens = new address[](1);
         uint256[] memory thresholds = new uint256[](1);

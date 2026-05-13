@@ -78,18 +78,26 @@ contract VaultRescueFundsTest is Test {
             admin,
             pauser,
             tss,
-            address(vault),
             1e18,
             10e18,
             address(0),
             address(0),
-            weth
+            weth,
+            address(0),
+            address(0),
+            address(0)
         );
         ERC1967Proxy gatewayProxy = new ERC1967Proxy(
             address(gatewayImpl),
             gatewayInitData
         );
         gateway = UniversalGateway(payable(address(gatewayProxy)));
+        vm.startPrank(admin);
+        gateway.grantRole(gateway.ROLE_MANAGER_ROLE(), admin);
+        gateway.grantRole(gateway.UG_ADMIN_ROLE(), admin);
+        gateway.grantRole(gateway.OPERATOR_ROLE(), admin);
+        gateway.updateVault(address(vault));
+        vm.stopPrank();
 
         // Update vault to point to the real gateway
         vm.prank(admin);

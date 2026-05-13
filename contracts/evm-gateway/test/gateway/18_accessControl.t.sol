@@ -3,9 +3,7 @@ pragma solidity 0.8.26;
 
 import "forge-std/Test.sol";
 import { UniversalGateway } from "../../src/UniversalGateway.sol";
-import { UniversalGatewayPC } from "../../src/UniversalGatewayPC.sol";
 import { Vault } from "../../src/Vault.sol";
-import { VaultPC } from "../../src/VaultPC.sol";
 import { Errors } from "../../src/libraries/Errors.sol";
 import { MockCEAFactory } from "../mocks/MockCEAFactory.sol";
 import { MockWETH } from "../mocks/MockWETH.sol";
@@ -15,9 +13,7 @@ import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/trans
 
 contract AccessControlTest is Test {
     UniversalGateway public gw;
-    UniversalGatewayPC public gwPC;
     Vault public vault;
-    VaultPC public vaultPC;
 
     address public admin;
     address public pauser;
@@ -39,7 +35,6 @@ contract AccessControlTest is Test {
     bytes32 public VAULT_ROLE;
     bytes32 public TSS_ROLE;
     bytes32 public VAULT_ADMIN_ROLE;
-    bytes32 public VPC_ADMIN_ROLE;
 
     function setUp() public {
         admin = makeAddr("admin");
@@ -67,16 +62,28 @@ contract AccessControlTest is Test {
                             admin,
                             pauser,
                             tss,
-                            address(this),
                             1e18,
                             10e18,
                             address(0),
                             address(0),
-                            address(weth)
+                            address(weth),
+                            address(0),
+                            address(0),
+                            address(ethUsdFeed)
                         )
                     )
                 ))
         );
+
+        vm.stopPrank();
+
+        vm.startPrank(admin);
+        gw.grantRole(gw.ROLE_MANAGER_ROLE(), admin);
+        gw.grantRole(gw.UG_ADMIN_ROLE(), admin);
+        gw.grantRole(gw.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
+
+        vm.startPrank(proxyDeployer);
 
         Vault vaultImpl = new Vault();
         vault = Vault(
@@ -91,33 +98,8 @@ contract AccessControlTest is Test {
                 ))
         );
 
-        UniversalGatewayPC gwPCImpl = new UniversalGatewayPC();
-        gwPC = UniversalGatewayPC(
-            payable(address(
-                    new TransparentUpgradeableProxy(
-                        address(gwPCImpl),
-                        proxyDeployer,
-                        abi.encodeWithSelector(
-                            UniversalGatewayPC.initialize.selector, admin, pauser, address(0x100), address(0x200)
-                        )
-                    )
-                ))
-        );
-
-        VaultPC vpcImpl = new VaultPC();
-        vaultPC = VaultPC(
-            payable(address(
-                    new TransparentUpgradeableProxy(
-                        address(vpcImpl),
-                        proxyDeployer,
-                        abi.encodeWithSelector(VaultPC.initialize.selector, admin, pauser, admin)
-                    )
-                ))
-        );
-
         vm.stopPrank();
 
-        // Cache role constants to avoid consuming vm.prank on view calls
         DEFAULT_ADMIN_ROLE = gw.DEFAULT_ADMIN_ROLE();
         ROLE_MANAGER_ROLE = gw.ROLE_MANAGER_ROLE();
         UG_ADMIN_ROLE = gw.UG_ADMIN_ROLE();
@@ -126,7 +108,6 @@ contract AccessControlTest is Test {
         VAULT_ROLE = gw.VAULT_ROLE();
         TSS_ROLE = vault.TSS_ROLE();
         VAULT_ADMIN_ROLE = vault.VAULT_ADMIN_ROLE();
-        VPC_ADMIN_ROLE = vaultPC.VPC_ADMIN_ROLE();
 
         vm.prank(admin);
         gw.setEthUsdFeed(address(ethUsdFeed));
@@ -138,16 +119,12 @@ contract AccessControlTest is Test {
 
     function test_defaultAdminDelay_is1Day() public view {
         assertEq(gw.defaultAdminDelay(), 1 days);
-        assertEq(gwPC.defaultAdminDelay(), 1 days);
         assertEq(vault.defaultAdminDelay(), 1 days);
-        assertEq(vaultPC.defaultAdminDelay(), 1 days);
     }
 
     function test_defaultAdmin_isAdminAddress() public view {
         assertEq(gw.defaultAdmin(), admin);
-        assertEq(gwPC.defaultAdmin(), admin);
         assertEq(vault.defaultAdmin(), admin);
-        assertEq(vaultPC.defaultAdmin(), admin);
     }
 
     function test_beginDefaultAdminTransfer_onlyAdmin() public {
@@ -341,10 +318,10 @@ contract AccessControlTest is Test {
         gw.setInboundFee(0.01 ether);
     }
 
-    function test_updateTSS_onlyOperator() public {
+    function test_setTSS_onlyOperator() public {
         vm.prank(attacker);
         vm.expectRevert();
-        gw.updateTSS(address(0x1));
+        gw.setTSS(address(0x1));
     }
 
     function test_updateVault_onlyOperator() public {
@@ -389,42 +366,7 @@ contract AccessControlTest is Test {
     }
 
     // ============================================================
-    // D. FUNCTION ACCESS TESTS — UniversalGatewayPC
-    // ============================================================
-
-    function test_updateVaultPC_onlyOperator() public {
-        vm.prank(attacker);
-        vm.expectRevert();
-        gwPC.updateVaultPC(address(0x1));
-    }
-
-    function test_updateUniversalCore_onlyOperator() public {
-        vm.prank(attacker);
-        vm.expectRevert();
-        gwPC.updateUniversalCore(address(0x1));
-    }
-
-    function test_unpause_onlyOperator_UGPC() public {
-        vm.prank(pauser);
-        gwPC.pause();
-
-        vm.prank(pauser);
-        vm.expectRevert();
-        gwPC.unpause();
-
-        vm.prank(admin);
-        gwPC.unpause();
-        assertFalse(gwPC.paused());
-    }
-
-    function test_pause_onlyPauser_UGPC() public {
-        vm.prank(attacker);
-        vm.expectRevert();
-        gwPC.pause();
-    }
-
-    // ============================================================
-    // E. FUNCTION ACCESS TESTS — Vault
+    // D. FUNCTION ACCESS TESTS — Vault
     // ============================================================
 
     function test_updateGateway_onlyOperator() public {
@@ -472,38 +414,7 @@ contract AccessControlTest is Test {
     }
 
     // ============================================================
-    // F. FUNCTION ACCESS TESTS — VaultPC
-    // ============================================================
-
-    function test_withdraw_onlyVPCAdmin() public {
-        vm.deal(address(vaultPC), 1 ether);
-
-        vm.prank(attacker);
-        vm.expectRevert();
-        vaultPC.withdraw(address(0x1), 1 ether);
-    }
-
-    function test_withdrawToken_onlyVPCAdmin() public {
-        vm.prank(attacker);
-        vm.expectRevert();
-        vaultPC.withdrawToken(address(0x1), address(0x2), 1e18);
-    }
-
-    function test_unpause_onlyOperator_VaultPC() public {
-        vm.prank(pauser);
-        vaultPC.pause();
-
-        vm.prank(pauser);
-        vm.expectRevert();
-        vaultPC.unpause();
-
-        vm.prank(admin);
-        vaultPC.unpause();
-        assertFalse(vaultPC.paused());
-    }
-
-    // ============================================================
-    // G. ROLE SEPARATION SCENARIOS
+    // E. ROLE SEPARATION SCENARIOS
     // ============================================================
 
     function test_separateAdminAndOperator() public {
@@ -520,10 +431,10 @@ contract AccessControlTest is Test {
 
         vm.prank(ugAdminAddr);
         vm.expectRevert();
-        gw.updateTSS(address(0x999));
+        gw.setTSS(address(0x999));
 
         vm.prank(operatorAddr);
-        gw.updateTSS(address(0x999));
+        gw.setTSS(address(0x999));
 
         vm.prank(operatorAddr);
         vm.expectRevert();
@@ -557,7 +468,7 @@ contract AccessControlTest is Test {
         vm.stopPrank();
 
         vm.prank(oldOp);
-        gw.updateTSS(makeAddr("tss2"));
+        gw.setTSS(makeAddr("tss2"));
 
         vm.startPrank(admin);
         gw.revokeRole(OPERATOR_ROLE, oldOp);
@@ -566,14 +477,14 @@ contract AccessControlTest is Test {
 
         vm.prank(oldOp);
         vm.expectRevert();
-        gw.updateTSS(makeAddr("tss3"));
+        gw.setTSS(makeAddr("tss3"));
 
         vm.prank(newOp);
-        gw.updateTSS(makeAddr("tss3"));
+        gw.setTSS(makeAddr("tss3"));
     }
 
     // ============================================================
-    // H. BOOTSTRAP GRANTS VERIFICATION
+    // F. BOOTSTRAP GRANTS VERIFICATION
     // ============================================================
 
     function test_bootstrapGrants_UG() public view {
@@ -581,13 +492,6 @@ contract AccessControlTest is Test {
         assertTrue(gw.hasRole(UG_ADMIN_ROLE, admin));
         assertTrue(gw.hasRole(OPERATOR_ROLE, admin));
         assertTrue(gw.hasRole(PAUSER_ROLE, pauser));
-        assertTrue(gw.hasRole(VAULT_ROLE, address(this)));
-    }
-
-    function test_bootstrapGrants_UGPC() public view {
-        assertTrue(gwPC.hasRole(ROLE_MANAGER_ROLE, admin));
-        assertTrue(gwPC.hasRole(OPERATOR_ROLE, admin));
-        assertTrue(gwPC.hasRole(PAUSER_ROLE, pauser));
     }
 
     function test_bootstrapGrants_Vault() public view {
@@ -596,13 +500,6 @@ contract AccessControlTest is Test {
         assertTrue(vault.hasRole(OPERATOR_ROLE, admin));
         assertTrue(vault.hasRole(PAUSER_ROLE, pauser));
         assertTrue(vault.hasRole(TSS_ROLE, tss));
-    }
-
-    function test_bootstrapGrants_VaultPC() public view {
-        assertTrue(vaultPC.hasRole(ROLE_MANAGER_ROLE, admin));
-        assertTrue(vaultPC.hasRole(VPC_ADMIN_ROLE, admin));
-        assertTrue(vaultPC.hasRole(OPERATOR_ROLE, admin));
-        assertTrue(vaultPC.hasRole(PAUSER_ROLE, pauser));
     }
 
     receive() external payable { }

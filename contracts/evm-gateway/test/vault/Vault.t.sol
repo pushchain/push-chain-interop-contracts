@@ -77,15 +77,22 @@ contract VaultTest is Test {
             admin,
             pauser,
             tss,
-            address(this), // vault address (will be set to actual vault after deployment)
             1e18, // minCapUsd
             10e18, // maxCapUsd
             address(0), // factory (not needed for Vault tests)
             address(0), // router (not needed for Vault tests)
-            weth
+            weth,
+            address(0),
+            address(0),
+            address(0)
         );
         ERC1967Proxy gatewayProxy = new ERC1967Proxy(address(gatewayImpl), gatewayInitData);
         gateway = UniversalGateway(payable(address(gatewayProxy)));
+        vm.startPrank(admin);
+        gateway.grantRole(gateway.ROLE_MANAGER_ROLE(), admin);
+        gateway.grantRole(gateway.UG_ADMIN_ROLE(), admin);
+        gateway.grantRole(gateway.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
 
         // Deploy CEAFactory
         ceaFactory = new MockCEAFactory();
@@ -333,10 +340,18 @@ contract VaultTest is Test {
     function test_SetGateway_OnlyAdminCanSet() public {
         UniversalGateway newGatewayImpl = new UniversalGateway();
         bytes memory initData = abi.encodeWithSelector(
-            UniversalGateway.initialize.selector, admin, pauser, tss, address(this), 1e18, 10e18, address(0), address(0), weth
+            UniversalGateway.initialize.selector, admin, pauser, tss, 1e18, 10e18, address(0), address(0), weth,
+            address(0),
+            address(0),
+            address(0)
         );
         ERC1967Proxy newProxy = new ERC1967Proxy(address(newGatewayImpl), initData);
         UniversalGateway newGateway = UniversalGateway(payable(address(newProxy)));
+        vm.startPrank(admin);
+        newGateway.grantRole(newGateway.ROLE_MANAGER_ROLE(), admin);
+        newGateway.grantRole(newGateway.UG_ADMIN_ROLE(), admin);
+        newGateway.grantRole(newGateway.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
 
         vm.prank(admin);
         vault.updateGateway(address(newGateway));
@@ -358,10 +373,18 @@ contract VaultTest is Test {
     function test_SetGateway_EmitsEvent() public {
         UniversalGateway newGatewayImpl = new UniversalGateway();
         bytes memory initData = abi.encodeWithSelector(
-            UniversalGateway.initialize.selector, admin, pauser, tss, address(this), 1e18, 10e18, address(0), address(0), weth
+            UniversalGateway.initialize.selector, admin, pauser, tss, 1e18, 10e18, address(0), address(0), weth,
+            address(0),
+            address(0),
+            address(0)
         );
         ERC1967Proxy newProxy = new ERC1967Proxy(address(newGatewayImpl), initData);
         UniversalGateway newGateway = UniversalGateway(payable(address(newProxy)));
+        vm.startPrank(admin);
+        newGateway.grantRole(newGateway.ROLE_MANAGER_ROLE(), admin);
+        newGateway.grantRole(newGateway.UG_ADMIN_ROLE(), admin);
+        newGateway.grantRole(newGateway.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
 
         vm.prank(admin);
         vm.expectEmit(true, true, false, false);
@@ -501,10 +524,18 @@ contract VaultTest is Test {
 
         UniversalGateway newGatewayImpl = new UniversalGateway();
         bytes memory initData = abi.encodeWithSelector(
-            UniversalGateway.initialize.selector, admin, pauser, tss, address(this), 1e18, 10e18, address(0), address(0), weth
+            UniversalGateway.initialize.selector, admin, pauser, tss, 1e18, 10e18, address(0), address(0), weth,
+            address(0),
+            address(0),
+            address(0)
         );
         ERC1967Proxy newProxy = new ERC1967Proxy(address(newGatewayImpl), initData);
         UniversalGateway newGateway = UniversalGateway(payable(address(newProxy)));
+        vm.startPrank(admin);
+        newGateway.grantRole(newGateway.ROLE_MANAGER_ROLE(), admin);
+        newGateway.grantRole(newGateway.UG_ADMIN_ROLE(), admin);
+        newGateway.grantRole(newGateway.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
 
         vm.prank(admin);
         vault.updateGateway(address(newGateway));
@@ -1712,10 +1743,18 @@ contract VaultTest is Test {
         // Switch to a new gateway and verify vault still routes calls through it
         UniversalGateway newGatewayImpl = new UniversalGateway();
         bytes memory initData = abi.encodeWithSelector(
-            UniversalGateway.initialize.selector, admin, pauser, tss, address(vault), 1e18, 10e18, address(0), address(0), weth
+            UniversalGateway.initialize.selector, admin, pauser, tss, 1e18, 10e18, address(0), address(0), weth,
+            address(0),
+            address(0),
+            address(0)
         );
         ERC1967Proxy newProxy = new ERC1967Proxy(address(newGatewayImpl), initData);
         UniversalGateway newGateway = UniversalGateway(payable(address(newProxy)));
+        vm.startPrank(admin);
+        newGateway.grantRole(newGateway.ROLE_MANAGER_ROLE(), admin);
+        newGateway.grantRole(newGateway.UG_ADMIN_ROLE(), admin);
+        newGateway.grantRole(newGateway.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
 
         vm.prank(admin);
         vault.updateGateway(address(newGateway));
@@ -1730,10 +1769,18 @@ contract VaultTest is Test {
     function test_Events_GatewayUpdated() public {
         UniversalGateway newGatewayImpl = new UniversalGateway();
         bytes memory initData = abi.encodeWithSelector(
-            UniversalGateway.initialize.selector, admin, pauser, tss, address(this), 1e18, 10e18, address(0), address(0), weth
+            UniversalGateway.initialize.selector, admin, pauser, tss, 1e18, 10e18, address(0), address(0), weth,
+            address(0),
+            address(0),
+            address(0)
         );
         ERC1967Proxy newProxy = new ERC1967Proxy(address(newGatewayImpl), initData);
         UniversalGateway newGateway = UniversalGateway(payable(address(newProxy)));
+        vm.startPrank(admin);
+        newGateway.grantRole(newGateway.ROLE_MANAGER_ROLE(), admin);
+        newGateway.grantRole(newGateway.UG_ADMIN_ROLE(), admin);
+        newGateway.grantRole(newGateway.OPERATOR_ROLE(), admin);
+        vm.stopPrank();
 
         vm.prank(admin);
         vm.expectEmit(true, true, false, false);

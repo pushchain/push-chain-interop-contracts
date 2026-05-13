@@ -3,14 +3,14 @@ pragma solidity 0.8.26;
 
 import { Script } from "forge-std/Script.sol";
 import { console } from "forge-std/console.sol";
-import { UniversalGatewayV0 } from "../../../src/testnetV0/UniversalGatewayV0.sol";
+import { UniversalGateway } from "../../../src/UniversalGateway.sol";
 import { ProxyAdmin } from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import { ITransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import { GatewayConfig } from "../../config/testnet/GatewayConfig.sol";
 
 /**
  * @title UpgradeGatewayV0_2
- * @notice Upgrade 2: Deploys clean UniversalGatewayV0 (moveFunds_temp REMOVED)
+ * @notice Upgrade 2: Deploys clean UniversalGateway (moveFunds_temp REMOVED)
  *         and upgrades the existing proxy on the current chain.
  *         Reads gatewayProxy and vault from GatewayConfig.
  *
@@ -49,7 +49,7 @@ contract UpgradeGatewayV0_2 is Script, GatewayConfig {
         upgradeChainId = block.chainid;
 
         console.log("========================================");
-        console.log("  UPGRADE 2: UniversalGatewayV0");
+        console.log("  UPGRADE 2: UniversalGateway");
         console.log("  (clean - no moveFunds_temp)");
         console.log("========================================");
         console.log("");
@@ -101,7 +101,7 @@ contract UpgradeGatewayV0_2 is Script, GatewayConfig {
         console.log("--- Pre-Condition Checks ---");
         console.log("");
 
-        UniversalGatewayV0 gateway = UniversalGatewayV0(payable(cfg.gatewayProxy));
+        UniversalGateway gateway = UniversalGateway(payable(cfg.gatewayProxy));
 
         address vault = gateway.VAULT();
         require(vault == cfg.vault, "VAULT not registered - run registerVault first");
@@ -127,7 +127,7 @@ contract UpgradeGatewayV0_2 is Script, GatewayConfig {
     // ========================================
     function _deployNewImplementation() internal {
         console.log("--- Deploying New Clean Implementation ---");
-        UniversalGatewayV0 implementation = new UniversalGatewayV0();
+        UniversalGateway implementation = new UniversalGateway();
         newImplementation = address(implementation);
         console.log("New Implementation deployed at:", newImplementation);
         console.log("");
@@ -153,7 +153,7 @@ contract UpgradeGatewayV0_2 is Script, GatewayConfig {
         require(currentImpl == newImplementation, "Implementation not updated");
         require(currentImpl != oldImplementation, "Implementation unchanged");
 
-        UniversalGatewayV0 gateway = UniversalGatewayV0(payable(cfg.gatewayProxy));
+        UniversalGateway gateway = UniversalGateway(payable(cfg.gatewayProxy));
 
         address tss = gateway.TSS_ADDRESS();
         require(tss != address(0), "TSS_ADDRESS corrupted");
