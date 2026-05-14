@@ -6,8 +6,7 @@ import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.s
 import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
-import { UniversalPayload } from "../libraries/Types.sol";
-import { IPRC20 } from "../Interfaces/IPRC20.sol";
+import { IPRC20 } from "../interfaces/IPRC20.sol";
 
 // ============================================================
 //  Local type re-declaration for UGPC outbound call.
@@ -19,6 +18,8 @@ struct UniversalOutboundTxRequest {
     address token;
     uint256 amount;
     uint256 gasLimit;
+    uint256 gasPrice;
+    uint256 maxPCForGas;
     bytes payload;
     address revertRecipient;
 }
@@ -185,7 +186,7 @@ contract StakingExample is Initializable, ReentrancyGuardUpgradeable {
         if (revertRecipient == address(0)) revert ZeroAddress();
 
         if (amount > 0) {
-            IPRC20(token).approve(ugpc, amount);
+            IERC20(token).approve(ugpc, amount);
         }
 
         UniversalOutboundTxRequest memory req = UniversalOutboundTxRequest({
@@ -193,6 +194,8 @@ contract StakingExample is Initializable, ReentrancyGuardUpgradeable {
             token: token,
             amount: amount,
             gasLimit: gasLimit,
+            gasPrice: 0,
+            maxPCForGas: 0,
             payload: payload,
             revertRecipient: revertRecipient
         });
