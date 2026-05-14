@@ -19,9 +19,10 @@ import { IUniversalGatewayPC } from "./interfaces/IUniversalGatewayPC.sol";
 import { TX_TYPE } from "./libraries/Types.sol";
 import { UniversalOutboundTxRequest } from "./libraries/TypesUGPC.sol";
 
-
 import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import { AccessControlDefaultAdminRulesUpgradeable } from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
+import {
+    AccessControlDefaultAdminRulesUpgradeable
+} from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
 import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 contract UniversalGatewayPC is
@@ -44,6 +45,7 @@ contract UniversalGatewayPC is
     constructor() {
         _disableInitializers();
     }
+
     // ==============================
     //    UGPC_1: ADMIN ACTIONS
     // ==============================
@@ -113,8 +115,6 @@ contract UniversalGatewayPC is
     {
         _validateParams(req.token, req.revertRecipient);
 
-        if (!IUniversalCore(universalCore).isSupportedToken(req.token)) revert Errors.NotSupported();
-
         TX_TYPE txType = _fetchTxType(req);
 
         (
@@ -181,31 +181,21 @@ contract UniversalGatewayPC is
     }
 
     /// @inheritdoc IUniversalGatewayPC
-    function rescueFundsOnSourceChain(
-        bytes32 universalTxId,
-        address prc20
-    ) external payable whenNotPaused nonReentrant {
+    function rescueFundsOnSourceChain(bytes32 universalTxId, address prc20)
+        external
+        payable
+        whenNotPaused
+        nonReentrant
+    {
         if (prc20 == address(0)) revert Errors.ZeroAddress();
 
-        (
-            address gasToken,
-            uint256 gasFee,
-            uint256 rescueGasLimit,
-            uint256 gasPrice,
-            string memory chainNamespace
-        ) = IUniversalCore(universalCore).getRescueFundsGasLimit(prc20);
+        (address gasToken, uint256 gasFee, uint256 rescueGasLimit, uint256 gasPrice, string memory chainNamespace) =
+            IUniversalCore(universalCore).getRescueFundsGasLimit(prc20);
 
         _swapAndCollectFees(gasToken, msg.value, gasFee);
 
         emit RescueFundsOnSourceChain(
-            universalTxId,
-            prc20,
-            chainNamespace,
-            msg.sender,
-            TX_TYPE.RESCUE_FUNDS,
-            gasFee,
-            gasPrice,
-            rescueGasLimit
+            universalTxId, prc20, chainNamespace, msg.sender, TX_TYPE.RESCUE_FUNDS, gasFee, gasPrice, rescueGasLimit
         );
     }
 
