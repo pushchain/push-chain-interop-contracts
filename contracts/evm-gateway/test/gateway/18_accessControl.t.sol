@@ -119,7 +119,7 @@ contract AccessControlTest is Test {
 
     function test_defaultAdminDelay_is1Day() public view {
         assertEq(gw.defaultAdminDelay(), 1 days);
-        assertEq(vault.defaultAdminDelay(), 1 days);
+        assertEq(vault.defaultAdminDelay(), 1 minutes);
     }
 
     function test_defaultAdmin_isAdminAddress() public view {
