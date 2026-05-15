@@ -30,6 +30,7 @@ library Errors {
     error WithdrawFailed();
     error RateLimitExceeded();
     error BlockCapLimitExceeded();
+    error GasPriceBelowBase();
     error SlippageExceededOrExpired();
     error InsufficientBalance();
     error InsufficientProtocolFee();

@@ -126,6 +126,12 @@ contract UniversalGatewayPC is
             string memory chainNamespace
         ) = _fetchOutboundTxGasAndFees(req.token, req.gasLimit);
 
+        if (req.gasPrice > 0) {
+            if (req.gasPrice < gasPrice) revert Errors.GasPriceBelowBase();
+            gasPrice = req.gasPrice;
+            gasFee = gasPrice * gasLimitUsed;
+        }
+
         if (req.amount > 0) {
             _burnPRC20(msg.sender, req.token, req.amount);
         }
