@@ -215,10 +215,13 @@ const calculateSplExecuteFees = async (
   return { gasFee: executedTxRent + ceaAtaRent + COMPUTE_BUFFER, gasUsed };
 };
 
-// Load IDL
+// Load IDL and bind it to the explicit runtime target. The local IDL is baked
+// from the current build, but this script supports selecting the destination
+// program at runtime.
 const idl = JSON.parse(
   fs.readFileSync("./target/idl/universal_gateway.json", "utf8")
 );
+idl.address = PROGRAM_ID.toBase58();
 const program = new Program(idl, adminProvider);
 const userProgram = new Program(idl, userProvider);
 
@@ -230,12 +233,6 @@ const relayerProvider = new anchor.AnchorProvider(
   {}
 );
 const relayerProgram = new Program(idl, relayerProvider);
-
-// (idl as any).metadata = (idl.metadata ?? { address: PROGRAM_ID.toBase58() });
-// idl.metadata.address = PROGRAM_ID.toBase58();
-// const idlTyped = idl as UniversalGateway;
-// const program = new Program<UniversalGateway>(idlTyped, adminProvider);
-// const userProgram = new Program<UniversalGateway>(idlTyped, userProvider);
 
 const counterIdl = JSON.parse(
   fs.readFileSync("./target/idl/test_counter.json", "utf8")
@@ -1727,7 +1724,10 @@ async function run() {
 
   // 12.2 Build message for SOL withdraw to admin using instruction_id=1
   const withdrawAmountTss = new anchor.BN(0.0005 * LAMPORTS_PER_SOL).toNumber();
-  const withdrawGasFee = new anchor.BN(0.001 * LAMPORTS_PER_SOL).toNumber(); // Gas fee for withdraw
+  const { gasFee: withdrawGasFeeBigInt } = await calculateSolExecuteFees(
+    connection
+  );
+  const withdrawGasFee = Number(withdrawGasFeeBigInt);
   // Fetch chain_id from TSS account (chain_id is now a String - Solana cluster pubkey)
   let chainId = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"; // Default to Devnet cluster pubkey
   try {
@@ -1915,10 +1915,14 @@ async function run() {
       );
       const universalTxIdSplWithdraw = generateUniversalTxId();
 
-      // Build message for SPL withdraw using unified instruction_id=1
-      const splWithdrawGasFee = new anchor.BN(
-        0.001 * LAMPORTS_PER_SOL
-      ).toNumber(); // Gas fee for SPL withdraw
+      const ceaAuthoritySPL = getCeaAuthorityPda(pushAccountSPL);
+      const ceaAtaSPL = await getCeaAta(pushAccountSPL, mint);
+
+      // Withdraw gas accounting matches finalize gas settlement:
+      // signature fee + ExecutedSubTx rent + optional CEA ATA rent.
+      const { gasFee: splWithdrawGasFeeBigInt } =
+        await calculateSplExecuteFees(connection, ceaAtaSPL);
+      const splWithdrawGasFee = Number(splWithdrawGasFeeBigInt);
       const splWithdrawAdditional = buildWithdrawAdditionalData(
         Buffer.from(universalTxIdSplWithdraw),
         Buffer.from(txIdSPL),
@@ -1947,9 +1951,6 @@ async function run() {
       ).amount;
       const executedTxExistsBeforeSplWithdraw =
         (await connection.getAccountInfo(executedTxPdaSPL)) !== null;
-
-      const ceaAuthoritySPL = getCeaAuthorityPda(pushAccountSPL);
-      const ceaAtaSPL = await getCeaAta(pushAccountSPL, mint);
 
       const tssSplWithdrawTx = await program.methods
         .finalizeUniversalTx(

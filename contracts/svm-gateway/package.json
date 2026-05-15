@@ -9,6 +9,7 @@
     "token:whitelist": " ts-node app/token-cli.ts whitelist",
     "token:remove-whitelist": " ts-node app/token-cli.ts remove-whitelist",
     "token:list": " ts-node app/token-cli.ts list",
+    "token:transfer-mint-authority": " ts-node app/token-cli.ts transfer-mint-authority",
     "config": " ts-node app/config-cli.ts",
     "config:show": " ts-node app/config-cli.ts config:show",
     "config:tss-init": " ts-node app/config-cli.ts tss:init",
