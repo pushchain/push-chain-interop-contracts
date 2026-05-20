@@ -1241,11 +1241,11 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
     it("Should accept zero and exact max protocol fee", async () => {
       await setInboundFee(0);
       let feeVault = await program.account.feeVault.fetch(feeVaultPda);
-      expect(feeVault.protocolFeeLamports.toNumber()).to.equal(0);
+      expect(feeVault.inboundFeeLamports.toNumber()).to.equal(0);
 
       await setInboundFee(MAX_INBOUND_FEE_LAMPORTS);
       feeVault = await program.account.feeVault.fetch(feeVaultPda);
-      expect(feeVault.protocolFeeLamports.toNumber()).to.equal(
+      expect(feeVault.inboundFeeLamports.toNumber()).to.equal(
         MAX_INBOUND_FEE_LAMPORTS
       );
 

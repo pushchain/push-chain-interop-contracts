@@ -134,10 +134,15 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 config = await program.account.config.fetch(configPda);
                 expect(config.operator.toString()).to.equal(newOperator.publicKey.toString());
 
-                const tx = await provider.connection.getTransaction(txSig, {
-                    commitment: "confirmed",
-                    maxSupportedTransactionVersion: 0,
-                });
+                let tx = null;
+                for (let i = 0; i < 10; i++) {
+                    tx = await provider.connection.getTransaction(txSig, {
+                        commitment: "confirmed",
+                        maxSupportedTransactionVersion: 0,
+                    });
+                    if (tx?.meta?.logMessages) break;
+                    await new Promise(resolve => setTimeout(resolve, 250));
+                }
                 expect(tx?.meta?.logMessages).to.exist;
 
                 const eventCoder = new anchor.BorshEventCoder(program.idl);
