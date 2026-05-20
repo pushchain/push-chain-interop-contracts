@@ -66,6 +66,9 @@ This is role-local. Admin can be Squads while operator is an EOA, or vice versa.
 |---|---|---|---|
 | `send_universal_tx` | Solana -> Push Chain | N/A | Inbound deposit entrypoint |
 | `finalize_universal_tx` | Push Chain -> Solana | `1` / `2` | `1=withdraw`, `2=execute` |
+| `store_execute_ix_data` | Push Chain -> Solana (prep) | N/A | Store large `ix_data` before ref-finalize |
+| `finalize_universal_tx_with_ix_data_ref` | Push Chain -> Solana | `2` | Execute via stored `ix_data` (for payloads > ~900 bytes) |
+| `close_stored_ix_data` | Push Chain -> Solana (cleanup) | N/A | Close stored PDA and recover rent |
 | `revert_universal_tx` | Push Chain -> Solana | `3` | Unified SOL + SPL revert |
 | `rescue_funds` | Push Chain -> Solana | `4` | Emergency fund release |
 
@@ -81,6 +84,7 @@ This is role-local. Admin can be Squads while operator is an EOA, or vice versa.
 - [Revert](./docs/3-REVERT.md)
 - [CEA](./docs/4-CEA.md)
 - [Rescue](./docs/5-RESCUE.md)
+- [TX-Size Ref-Finalize Route](./docs/6-TX-SIZE-REF-ROUTE.md)
 - [Threat Model](./docs/THREAT_MODEL.md)
 - [Runbook](./docs/RUNBOOK.md)
 

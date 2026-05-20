@@ -136,6 +136,12 @@ The policy is enforced in the instruction body. Passing an incorrect `executed_s
 
 ---
 
+## Failed-Path Economics
+
+There is no on-chain reimbursement for failed store or finalize transactions. If `store_execute_ix_data` succeeds but `finalize_universal_tx_with_ix_data_ref` fails, the store UV bears the store transaction fee and retains the StoredIxData PDA (which can be closed to recover rent). If finalize fails before the `ExecutedSubTx` PDA is created, only the store_refund_recipient can close the PDA. The UV is expected to absorb transaction fees on failed paths.
+
+---
+
 ## Multi-UV Model
 
 The UV that stores and the UV that finalizes can differ:

@@ -477,10 +477,15 @@ This single entrypoint handles both withdraw (instruction_id=1) and execute (ins
 - `associated_token_program`: Associated Token program
 - `recipient_ata`: **Withdraw only** - Recipient ATA (must exist; derived from recipient + mint)
 
+**New optional accounts** (added for ref-finalize route; pass `null` on all direct finalize calls):
+- `stored_ix_data`: Option — `null` for direct route; `StoredIxData` PDA for ref route
+- `store_refund_recipient`: Option — `null` for direct route; the account that called `store_execute_ix_data`
+
 **Anchor client note**:
 - For execute mode: pass `recipient: null`, `destinationProgram: targetProgramPubkey`
 - For withdraw mode: pass `recipient: recipientPubkey`, `destinationProgram: SystemProgram.programId`
 - `destination_program` is NEVER null/omitted (always required, use SystemProgram as sentinel for withdraw)
+- Always pass `storedIxData: null, storeRefundRecipient: null` for direct finalize calls
 
 **Remaining Accounts** (execute only):
 - Pass decoded `accounts` from payload as `remaining_accounts`
@@ -538,7 +543,41 @@ This single entrypoint handles both withdraw (instruction_id=1) and execute (ins
 
 **Flow**: vault→CEA→recipient (direct transfer)
 
-### 4.4 Example: CEA Self-Withdraw (Execute to Gateway)
+### 4.4 Ref-Finalize Route (Large Execute Payloads)
+
+When the serialized `finalize_universal_tx` transaction exceeds 1232 bytes (Solana legacy tx limit), use the two-step ref route instead. The store instruction can carry `ix_data` up to ~921 bytes; if `ix_data` itself exceeds that, versioned transactions with ALT are required.
+
+**Step 1 — `store_execute_ix_data`**
+
+```
+Args: sub_tx_id [u8;32], ix_data_hash [u8;32] = keccak256(ix_data), ix_data Vec<u8>
+Accounts: caller (mut signer), stored_ix_data (init PDA), system_program
+```
+
+Permissionless. PDA seeds: `["stored_ix_data", sub_tx_id, keccak256(ix_data)]`. `caller` becomes the `store_refund_recipient`.
+
+**Step 2 — `finalize_universal_tx_with_ix_data_ref`**
+
+Same args and accounts as `finalize_universal_tx` except:
+- Pass `ix_data_hash [u8;32]` instead of raw `ix_data`
+- Populate `stored_ix_data` and `store_refund_recipient` (not null)
+
+TSS message format is identical — TSS signs over the raw `ix_data` bytes, not the hash.
+
+**Step 3 — `close_stored_ix_data`**
+
+```
+Args: sub_tx_id [u8;32], ix_data_hash [u8;32]
+Accounts: caller (mut signer), stored_ix_data, store_refund_recipient (receives rent), executed_sub_tx (optional)
+```
+
+After finalize succeeds, anyone can close. Before finalize, only `store_refund_recipient` can close.
+
+See [6-TX-SIZE-REF-ROUTE.md](./docs/6-TX-SIZE-REF-ROUTE.md) for full details.
+
+---
+
+### 4.5 Example: CEA Self-Withdraw (Execute to Gateway)
 
 **Use case**: Execute path where `destination_program == gateway_program_id` routes to CEA→UEA withdrawal instead of normal CPI.
 
@@ -629,9 +668,20 @@ gas_fee = executed_sub_tx_rent + cea_ata_rent_if_created + compute_buffer
 - `cea_ata_rent_if_created`: get exact value via `getMinimumBalanceForRentExemption(165)` when CEA ATA does not already exist
 - `compute_buffer`: operational buffer for tx fees / compute
 
-**On-chain transfer split**:
+**For Ref-Finalize (SOL Execute via stored ix_data)**:
+```text
+gas_fee = executed_sub_tx_rent + SIGNATURE_FEE (5000) + compute_buffer
+```
+The extra `5000` covers the store UV's transaction fee.
+
+**On-chain transfer split (direct route)**:
 - `amount` → CEA (if `amount > 0`)
 - `gas_fee` → caller (UV reimbursement)
+
+**On-chain transfer split (ref route)**:
+- `amount` → CEA (if `amount > 0`)
+- `base_finalize_gas` → caller (finalize UV)
+- `5000` → `store_refund_recipient` (store UV)
 
 ---
 

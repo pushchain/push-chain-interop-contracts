@@ -1642,4 +1642,186 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
       executedSubTx: null,
     });
   });
+
+  it("rejects ref-finalize when stored_ix_data account is null", async () => {
+    const subTxId = generateTxId();
+    const pushAccount = generateSender();
+    const { counterIx, accounts, writableFlags } =
+      await buildCounterIncrementRoute(pushAccount, 1);
+    const ixData = Buffer.from(counterIx.data);
+    const ixDataHash = hashIxData(ixData);
+    const storedIxDataPda = deriveStoredIxDataPda(subTxId, ixDataHash);
+
+    await gatewayProgram.methods
+      .storeExecuteIxData(Array.from(subTxId), asIxDataHashArg(ixDataHash), ixData)
+      .accountsPartial({
+        caller: storeRelayer.publicKey,
+        storedIxData: storedIxDataPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([storeRelayer])
+      .rpc();
+
+    const { gasFee } = await calculateSolExecuteFees(provider.connection);
+    const refGasFee = gasFee + SIGNATURE_FEE_LAMPORTS;
+    const universalTxId = generateUniversalTxId();
+    const sig = await signTssMessage({
+      instruction: TssInstruction.Execute,
+      amount: BigInt(0),
+      chainId: (await gatewayProgram.account.tssPda.fetch(tssPda)).chainId,
+      additional: buildExecuteAdditionalData(
+        new Uint8Array(universalTxId),
+        new Uint8Array(subTxId),
+        counterProgram.programId,
+        new Uint8Array(pushAccount),
+        accounts,
+        ixData,
+        refGasFee
+      ),
+    });
+
+    try {
+      await gatewayProgram.methods
+        .finalizeUniversalTxWithIxDataRef(
+          2,
+          Array.from(subTxId),
+          Array.from(universalTxId),
+          new anchor.BN(0),
+          Array.from(pushAccount),
+          asIxDataHashArg(ixDataHash),
+          writableFlags,
+          new anchor.BN(Number(refGasFee)),
+          Array.from(sig.signature),
+          sig.recoveryId,
+          Array.from(sig.messageHash)
+        )
+        .accountsPartial({
+          caller: admin.publicKey,
+          config: configPda,
+          vaultSol: vaultPda,
+          ceaAuthority: getCeaAuthorityPda(Array.from(pushAccount), gatewayProgram.programId),
+          tssPda,
+          executedSubTx: getExecutedTxPda(subTxId, gatewayProgram.programId),
+          destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: storeRelayer.publicKey,
+          recipient: null,
+          vaultAta: null,
+          ceaAta: null,
+          mint: null,
+          tokenProgram: null,
+          rent: null,
+          associatedTokenProgram: null,
+          recipientAta: null,
+          rateLimitConfig: null,
+          tokenRateLimit: null,
+          systemProgram: SystemProgram.programId,
+        })
+        .remainingAccounts(instructionAccountsToRemaining(counterIx))
+        .signers([admin])
+        .rpc();
+      expect.fail("expected InvalidAccount");
+    } catch (error) {
+      expect(getErrorCode(error)).to.equal("InvalidAccount");
+    }
+
+    await closeStoredIxDataAs({
+      caller: storeRelayer,
+      storeRefundRecipient: storeRelayer.publicKey,
+      subTxId,
+      ixDataHash,
+      executedSubTx: null,
+    });
+  });
+
+  it("rejects ref-finalize when store_refund_recipient account is null", async () => {
+    const subTxId = generateTxId();
+    const pushAccount = generateSender();
+    const { counterIx, accounts, writableFlags } =
+      await buildCounterIncrementRoute(pushAccount, 1);
+    const ixData = Buffer.from(counterIx.data);
+    const ixDataHash = hashIxData(ixData);
+    const storedIxDataPda = deriveStoredIxDataPda(subTxId, ixDataHash);
+
+    await gatewayProgram.methods
+      .storeExecuteIxData(Array.from(subTxId), asIxDataHashArg(ixDataHash), ixData)
+      .accountsPartial({
+        caller: storeRelayer.publicKey,
+        storedIxData: storedIxDataPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([storeRelayer])
+      .rpc();
+
+    const { gasFee } = await calculateSolExecuteFees(provider.connection);
+    const refGasFee = gasFee + SIGNATURE_FEE_LAMPORTS;
+    const universalTxId = generateUniversalTxId();
+    const sig = await signTssMessage({
+      instruction: TssInstruction.Execute,
+      amount: BigInt(0),
+      chainId: (await gatewayProgram.account.tssPda.fetch(tssPda)).chainId,
+      additional: buildExecuteAdditionalData(
+        new Uint8Array(universalTxId),
+        new Uint8Array(subTxId),
+        counterProgram.programId,
+        new Uint8Array(pushAccount),
+        accounts,
+        ixData,
+        refGasFee
+      ),
+    });
+
+    try {
+      await gatewayProgram.methods
+        .finalizeUniversalTxWithIxDataRef(
+          2,
+          Array.from(subTxId),
+          Array.from(universalTxId),
+          new anchor.BN(0),
+          Array.from(pushAccount),
+          asIxDataHashArg(ixDataHash),
+          writableFlags,
+          new anchor.BN(Number(refGasFee)),
+          Array.from(sig.signature),
+          sig.recoveryId,
+          Array.from(sig.messageHash)
+        )
+        .accountsPartial({
+          caller: admin.publicKey,
+          config: configPda,
+          vaultSol: vaultPda,
+          ceaAuthority: getCeaAuthorityPda(Array.from(pushAccount), gatewayProgram.programId),
+          tssPda,
+          executedSubTx: getExecutedTxPda(subTxId, gatewayProgram.programId),
+          destinationProgram: counterProgram.programId,
+          storedIxData: storedIxDataPda,
+          storeRefundRecipient: null,
+          recipient: null,
+          vaultAta: null,
+          ceaAta: null,
+          mint: null,
+          tokenProgram: null,
+          rent: null,
+          associatedTokenProgram: null,
+          recipientAta: null,
+          rateLimitConfig: null,
+          tokenRateLimit: null,
+          systemProgram: SystemProgram.programId,
+        })
+        .remainingAccounts(instructionAccountsToRemaining(counterIx))
+        .signers([admin])
+        .rpc();
+      expect.fail("expected InvalidAccount");
+    } catch (error) {
+      expect(getErrorCode(error)).to.equal("InvalidAccount");
+    }
+
+    await closeStoredIxDataAs({
+      caller: storeRelayer,
+      storeRefundRecipient: storeRelayer.publicKey,
+      subTxId,
+      ixDataHash,
+      executedSubTx: null,
+    });
+  });
 });
