@@ -750,6 +750,7 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
       .signers([storeRelayer])
       .rpc();
 
+    const pdaLamports = (await provider.connection.getAccountInfo(storedIxDataPda))!.lamports;
     const refundBefore = await provider.connection.getBalance(
       storeRelayer.publicKey
     );
@@ -815,7 +816,8 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
     const refundAfter = await provider.connection.getBalance(
       storeRelayer.publicKey
     );
-    expect(refundAfter - refundBefore).to.equal(Number(SIGNATURE_FEE_LAMPORTS));
+    // storeRelayer receives SIGNATURE_FEE_LAMPORTS reimbursement + PDA rent (auto-close)
+    expect(refundAfter - refundBefore).to.equal(Number(SIGNATURE_FEE_LAMPORTS) + pdaLamports);
 
     const refEvents = await decodeGatewayEvents(refTx);
     const refFinalized = refEvents.find(
@@ -831,13 +833,8 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
     const counterAfter = await counterProgram.account.counter.fetch(counterPda);
     expect(counterAfter.value.toNumber() - counterBefore.value.toNumber()).to.equal(6);
 
-    await closeStoredIxDataAs({
-      caller: storeRelayer,
-      storeRefundRecipient: storeRelayer.publicKey,
-      subTxId: refSubTxId,
-      ixDataHash,
-      executedSubTx: getExecutedTxPda(refSubTxId, gatewayProgram.programId),
-    });
+    // PDA is auto-closed by ref-finalize
+    expect(await provider.connection.getAccountInfo(deriveStoredIxDataPda(refSubTxId, ixDataHash))).to.equal(null);
   });
 
   it("requires an extra 5000 lamports of gas budget for ref finalize", async () => {
@@ -1077,7 +1074,7 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
     expect(accountInfo).to.equal(null);
   });
 
-  it("allows anyone to close after successful finalize and refunds rent to the stored recipient", async () => {
+  it("auto-closes StoredIxData PDA on ref-finalize success and refunds rent to store_refund_recipient", async () => {
     const subTxId = generateTxId();
     const universalTxId = generateUniversalTxId();
     const pushAccount = generateSender();
@@ -1101,8 +1098,8 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
       .signers([storeRelayer])
       .rpc();
 
-    const storedBeforeClose = await provider.connection.getAccountInfo(storedIxDataPda);
-    expect(storedBeforeClose).to.not.equal(null);
+    const pdaLamports = (await provider.connection.getAccountInfo(storedIxDataPda))!.lamports;
+    const refundBefore = await provider.connection.getBalance(storeRelayer.publicKey);
 
     const sig = await signTssMessage({
       instruction: TssInstruction.Execute,
@@ -1162,27 +1159,12 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
       .signers([admin])
       .rpc();
 
-    const refundBeforeClose = await provider.connection.getBalance(
-      storeRelayer.publicKey
-    );
+    // PDA auto-closed — account must be gone
+    expect(await provider.connection.getAccountInfo(storedIxDataPda)).to.equal(null);
 
-    await closeStoredIxDataAs({
-      caller: closeRelayer,
-      storeRefundRecipient: storeRelayer.publicKey,
-      subTxId,
-      ixDataHash,
-      executedSubTx: getExecutedTxPda(subTxId, gatewayProgram.programId),
-    });
-
-    const refundAfterClose = await provider.connection.getBalance(
-      storeRelayer.publicKey
-    );
-    expect(refundAfterClose - refundBeforeClose).to.equal(
-      storedBeforeClose!.lamports
-    );
-
-    const accountInfo = await provider.connection.getAccountInfo(storedIxDataPda);
-    expect(accountInfo).to.equal(null);
+    // storeRelayer receives SIGNATURE_FEE_LAMPORTS reimbursement + PDA rent (auto-close)
+    const refundAfter = await provider.connection.getBalance(storeRelayer.publicKey);
+    expect(refundAfter - refundBefore).to.equal(Number(SIGNATURE_FEE_LAMPORTS) + pdaLamports);
   });
 
   it("allows normal finalize after store, ignores stored optional accounts, and still allows anyone to close", async () => {
@@ -1341,6 +1323,8 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
 
     await storeIxData({ subTxId, ixDataHash, ixData });
 
+    const storedIxDataPda = deriveStoredIxDataPda(subTxId, ixDataHash);
+    const pdaLamports = (await provider.connection.getAccountInfo(storedIxDataPda))!.lamports;
     const refundBefore = await provider.connection.getBalance(storeRelayer.publicKey);
     const recipientBefore = await mockUSDT.getBalance(recipientUsdtAccount);
 
@@ -1381,8 +1365,9 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
       tokenRateLimit: null,
     });
 
+    // storeRelayer receives SIGNATURE_FEE_LAMPORTS reimbursement + PDA rent (auto-close)
     const refundAfter = await provider.connection.getBalance(storeRelayer.publicKey);
-    expect(refundAfter - refundBefore).to.equal(Number(SIGNATURE_FEE_LAMPORTS));
+    expect(refundAfter - refundBefore).to.equal(Number(SIGNATURE_FEE_LAMPORTS) + pdaLamports);
 
     const events = await decodeGatewayEvents(txSig);
     const finalized = events.find((event) => event.name === "universalTxFinalized");
@@ -1398,13 +1383,8 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
     );
     expect(await provider.connection.getAccountInfo(ceaAta)).to.not.equal(null);
 
-    await closeStoredIxDataAs({
-      caller: closeRelayer,
-      storeRefundRecipient: storeRelayer.publicKey,
-      subTxId,
-      ixDataHash,
-      executedSubTx: getExecutedTxPda(subTxId, gatewayProgram.programId),
-    });
+    // PDA auto-closed by finalize
+    expect(await provider.connection.getAccountInfo(storedIxDataPda)).to.equal(null);
   });
 
   it("ref-finalizes the self-route (CEA -> UEA) and preserves the emitted semantics", async () => {
@@ -1435,6 +1415,8 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
 
     await storeIxData({ subTxId, ixDataHash, ixData });
 
+    const ceaSelfStoredIxDataPda = deriveStoredIxDataPda(subTxId, ixDataHash);
+    const ceaPdaLamports = (await provider.connection.getAccountInfo(ceaSelfStoredIxDataPda))!.lamports;
     const refundBefore = await provider.connection.getBalance(storeRelayer.publicKey);
     const sig = await signTssMessage({
       instruction: TssInstruction.Execute,
@@ -1465,8 +1447,9 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
       tokenRateLimit: nativeSolTokenRateLimitPda,
     });
 
+    // storeRelayer receives SIGNATURE_FEE_LAMPORTS reimbursement + PDA rent (auto-close)
     const refundAfter = await provider.connection.getBalance(storeRelayer.publicKey);
-    expect(refundAfter - refundBefore).to.equal(Number(SIGNATURE_FEE_LAMPORTS));
+    expect(refundAfter - refundBefore).to.equal(Number(SIGNATURE_FEE_LAMPORTS) + ceaPdaLamports);
 
     const events = await decodeGatewayEvents(txSig);
     const universalTxEvent = events.find((event) => event.name === "universalTx");
@@ -1483,13 +1466,8 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
       Number(gasUsed + SIGNATURE_FEE_LAMPORTS)
     );
 
-    await closeStoredIxDataAs({
-      caller: closeRelayer,
-      storeRefundRecipient: storeRelayer.publicKey,
-      subTxId,
-      ixDataHash,
-      executedSubTx: getExecutedTxPda(subTxId, gatewayProgram.programId),
-    });
+    // PDA auto-closed by finalize
+    expect(await provider.connection.getAccountInfo(ceaSelfStoredIxDataPda)).to.equal(null);
   });
 
   it("rejects close_stored_ix_data with a non-canonical executed_sub_tx key", async () => {

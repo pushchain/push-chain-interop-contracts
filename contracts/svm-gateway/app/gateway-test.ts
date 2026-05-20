@@ -3635,6 +3635,7 @@ async function run() {
       ),
     });
 
+    const pdaLamports = (await connection.getAccountInfo(refStoredIxDataPda))!.lamports;
     const counterBeforeRef = await counterProgram.account.counter.fetch(counterPda);
     const relayerBalBeforeRef = await connection.getBalance(relayer);
 
@@ -3692,24 +3693,18 @@ async function run() {
     assert.isNotNull(executedSubTxInfo, "ExecutedSubTx PDA must exist (replay protection)");
     console.log("  ✅ ExecutedSubTx PDA exists (replay protection active)");
 
-    // Step 3: close_stored_ix_data (post-success: anyone can close)
-    const closeTx = await relayerProgram.methods
-      .closeStoredIxData(
-        Array.from(refSubTxId),
-        refIxDataHash as unknown as number[]
-      )
-      .accountsPartial({
-        caller: relayer,
-        storedIxData: refStoredIxDataPda,
-        storeRefundRecipient: relayer,
-        executedSubTx: refExecutedSubTx,
-      })
-      .rpc();
-    console.log(`  ✅ close_stored_ix_data: ${closeTx}`);
+    // StoredIxData PDA is auto-closed by finalize
+    const storedAfterFinalize = await connection.getAccountInfo(refStoredIxDataPda);
+    assert.isNull(storedAfterFinalize, "StoredIxData PDA must be auto-closed by finalize");
+    console.log("  ✅ StoredIxData PDA auto-closed by finalize, rent returned to storeRefundRecipient");
 
-    const storedAfterClose = await connection.getAccountInfo(refStoredIxDataPda);
-    assert.isNull(storedAfterClose, "StoredIxData PDA must be closed");
-    console.log("  ✅ StoredIxData PDA closed, rent returned to storeRefundRecipient");
+    // Relayer (same account for store + finalize) receives: SIGNATURE_FEE + PDA rent.
+    // Allow compute fee tolerance of ~0.001 SOL.
+    const relayerBalAfterRef = await connection.getBalance(relayer);
+    const relayerNet = relayerBalAfterRef - relayerBalBeforeRef;
+    const expectedMin = Number(SIGNATURE_FEE_LAMPORTS) + pdaLamports - 100_000;
+    assert.isAtLeast(relayerNet, expectedMin, `Relayer net (${relayerNet}) should be at least SIGNATURE_FEE + PDA rent - compute buffer`);
+    console.log(`  ✅ Relayer net change: ${relayerNet} lamports (SIGNATURE_FEE=${SIGNATURE_FEE_LAMPORTS} + PDA rent=${pdaLamports})`);
 
     await parseAndPrintEvents(refFinalizeTx, "finalize_universal_tx_with_ix_data_ref events");
   } catch (error: any) {

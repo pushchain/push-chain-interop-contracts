@@ -287,7 +287,12 @@ pub mod universal_gateway {
             signature,
             recovery_id,
             message_hash,
-        )
+        )?;
+
+        // Auto-close the StoredIxData PDA on finalize success — rent returns to store_refund_recipient.
+        ctx.accounts.stored_ix_data.as_ref().unwrap().close(store_refund_recipient_info)?;
+
+        Ok(())
     }
 
     /// @notice Close stored ix_data PDA and recover rent to the stored store_refund_recipient.
@@ -409,3 +414,4 @@ pub use state::{
     StoredIxData,
     VAULT_SEED,
 };
+

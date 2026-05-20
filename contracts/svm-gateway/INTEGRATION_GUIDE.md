@@ -564,14 +564,20 @@ Same args and accounts as `finalize_universal_tx` except:
 
 TSS message format is identical — TSS signs over the raw `ix_data` bytes, not the hash.
 
-**Step 3 — `close_stored_ix_data`**
+**Step 3 — `close_stored_ix_data` (failure / abort path only)**
+
+On the happy path, `finalize_universal_tx_with_ix_data_ref` auto-closes the `StoredIxData` PDA and returns rent to `store_refund_recipient` in the same transaction — no separate close needed.
+
+`close_stored_ix_data` is only needed when finalize did not succeed:
+- Finalize was submitted but failed (reverted) — PDA is still open.
+- UV decides finalize will never be submitted (abort) — recover rent immediately.
+
+In both cases only `store_refund_recipient` can close, since `ExecutedSubTx` does not exist yet.
 
 ```
 Args: sub_tx_id [u8;32], ix_data_hash [u8;32]
 Accounts: caller (mut signer), stored_ix_data, store_refund_recipient (receives rent), executed_sub_tx (optional)
 ```
-
-After finalize succeeds, anyone can close. Before finalize, only `store_refund_recipient` can close.
 
 See [6-TX-SIZE-REF-ROUTE.md](./docs/6-TX-SIZE-REF-ROUTE.md) for full details.
 

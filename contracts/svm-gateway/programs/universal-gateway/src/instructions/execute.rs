@@ -121,6 +121,7 @@ pub struct FinalizeUniversalTx<'info> {
     pub token_rate_limit: Option<Account<'info, TokenRateLimit>>,
 
     /// Optional stored ix_data account for additive finalize-by-reference.
+    #[account(mut)]
     pub stored_ix_data: Option<Account<'info, StoredIxData>>,
 
     /// CHECK: Optional stored-route fee refund recipient. Verified in ref-finalize entrypoint.

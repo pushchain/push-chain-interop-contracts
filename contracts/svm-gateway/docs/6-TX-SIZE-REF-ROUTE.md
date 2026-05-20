@@ -115,30 +115,44 @@ Vault pays:
 
 The 5000 reimbursement compensates the store UV for their Solana transaction signature fee. Rent paid during store is recovered separately at close time.
 
-**UGPC gas_fee sizing:** For the ref route to succeed, `gas_fee` must be at least `base_finalize_gas + 5000`. The current UGPC default of 960,000 lamports provides sufficient headroom (`base_finalize_gas ≈ 952,000`, leaving ~8,000 lamports above the base — more than the 5,000 needed for the ref route).
+**UGPC gas_fee sizing:** For the ref route to succeed, `gas_fee` must be at least `base_finalize_gas + 5000`. `base_finalize_gas` is dynamic: `5000 + executed_sub_tx_rent [+ cea_ata_rent if SPL ATA created]`. The UGPC should compute this dynamically and add at least 5000 on top when using the ref route.
 
 ---
 
-## Step 3 — `close_stored_ix_data`
+## Step 3 — Auto-close on finalize success
 
-Closes the `StoredIxData` PDA. Rent always goes to `stored_ix_data.store_refund_recipient` via the Anchor `close` constraint.
+`finalize_universal_tx_with_ix_data_ref` automatically closes the `StoredIxData` PDA on success. Rent is returned to `store_refund_recipient` in the same transaction. No separate cleanup step is needed.
+
+## `close_stored_ix_data` — Rent Recovery Before Finalize Succeeds
+
+Used in two cases where the PDA was not auto-closed (because finalize never succeeded):
+
+1. **Finalize failed** — store succeeded, ref-finalize was submitted but reverted. PDA is still open; `store_refund_recipient` calls close to recover rent.
+2. **Abort** — UV decides finalize will never be submitted (e.g. invalid payload discovered). `store_refund_recipient` closes to recover rent immediately.
+
+Only `store_refund_recipient` can close in both cases, since `ExecutedSubTx` does not exist yet.
 
 **Close policy:**
 
 | State | Who can trigger close |
 |---|---|
-| `ExecutedSubTx` does not exist (finalize not yet succeeded) | Only `store_refund_recipient` |
-| `ExecutedSubTx` exists (finalize succeeded) | Anyone |
+| `ExecutedSubTx` does not exist (finalize not yet succeeded or failed) | Only `store_refund_recipient` |
+| `ExecutedSubTx` exists and PDA is still open (direct finalize used instead of ref) | Anyone |
 
-The policy is enforced in the instruction body. Passing an incorrect `executed_sub_tx` account (wrong key) fails with `InvalidAccount`.
+The second row covers the edge case where a `StoredIxData` PDA was created but direct `finalize_universal_tx` was used for the same `sub_tx_id` instead of the ref route — the PDA was never auto-closed, but the `ExecutedSubTx` exists, so anyone can clean it up.
 
-**Error:** `StoredIxDataNotClosable` if caller is not `store_refund_recipient` and finalize has not yet succeeded.
+**Error:** `StoredIxDataNotClosable` if caller is not `store_refund_recipient` and `ExecutedSubTx` does not exist.
 
 ---
 
 ## Failed-Path Economics
 
-There is no on-chain reimbursement for failed store or finalize transactions. If `store_execute_ix_data` succeeds but `finalize_universal_tx_with_ix_data_ref` fails, the store UV bears the store transaction fee and retains the StoredIxData PDA (which can be closed to recover rent). If finalize fails before the `ExecutedSubTx` PDA is created, only the store_refund_recipient can close the PDA. The UV is expected to absorb transaction fees on failed paths.
+There is no on-chain reimbursement for failed transactions. The UV absorbs transaction fees on all failure paths. Rent is always recoverable:
+
+- **Store succeeds, finalize fails** — `ExecutedSubTx` was never created. `store_refund_recipient` calls `close_stored_ix_data` to recover PDA rent.
+- **Store succeeds, finalize never submitted** — same as above.
+- **Store fails** — no PDA was created, no rent to recover.
+- **Finalize succeeds** — PDA is auto-closed, rent already returned in the same transaction.
 
 ---
 

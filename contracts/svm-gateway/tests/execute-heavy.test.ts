@@ -625,8 +625,8 @@ describe("Universal Gateway - Heavy Transaction Benchmarking", () => {
         counterBefore.value.toNumber() + operationId
       );
 
-      // Reimbursement: admin is both caller and store_refund_recipient, so receives
-      // base_finalize_gas + SIGNATURE_FEE_LAMPORTS. Net positive after compute fees.
+      // admin is both caller and store_refund_recipient; receives base_finalize_gas +
+      // SIGNATURE_FEE_LAMPORTS + PDA rent (auto-closed). Net positive after compute fees.
       const adminBalanceAfter = await provider.connection.getBalance(admin.publicKey);
       expect(adminBalanceAfter).to.be.greaterThan(
         adminBalanceBefore - Number(SIGNATURE_FEE_LAMPORTS) * 10,
@@ -637,20 +637,9 @@ describe("Universal Gateway - Heavy Transaction Benchmarking", () => {
       const executedSubTxInfo = await provider.connection.getAccountInfo(executedSubTxPda);
       expect(executedSubTxInfo).to.not.be.null;
 
-      // Close the StoredIxData PDA (post-success: anyone can close)
-      await gatewayProgram.methods
-        .closeStoredIxData(Array.from(subTxId), asIxDataHashArg(ixDataHash))
-        .accountsPartial({
-          caller: admin.publicKey,
-          storedIxData: storedIxData,
-          storeRefundRecipient: admin.publicKey,
-          executedSubTx: executedSubTxPda,
-        })
-        .signers([admin])
-        .rpc();
-
-      const storedAfterClose = await provider.connection.getAccountInfo(storedIxData);
-      expect(storedAfterClose).to.be.null;
+      // StoredIxData PDA auto-closed by finalize
+      const storedAfterFinalize = await provider.connection.getAccountInfo(storedIxData);
+      expect(storedAfterFinalize).to.be.null;
     });
   });
 });
