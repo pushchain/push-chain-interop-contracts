@@ -1,10 +1,10 @@
 # Withdraw & Execute (Outbound)
 
-**Function:** `finalize_universal_tx`
+**Functions:** `finalize_universal_tx` / `finalize_universal_tx_with_ix_data_ref`
 **Direction:** Push Chain → Solana
 **Authorization:** TSS ECDSA secp256k1 signature
 
-Single entrypoint for withdraw/execute outbound operations, routed by `instruction_id`.
+Single entrypoint for withdraw/execute outbound operations, routed by `instruction_id`. For execute payloads too large to fit inline (> ~900 bytes), use the ref-finalize route — see `6-TX-SIZE-REF-ROUTE.md`.
 
 | instruction_id | Mode | Action |
 |---|---|---|
@@ -112,6 +112,21 @@ This path emits:
 - **CEA isolation:** `CEA(sender_A) != CEA(sender_B)` — cross-user CPI is impossible
 - **No outer signers:** `remaining_accounts` entries with `is_signer = true` are rejected
 - **Vault integrity:** only `gas_used` leaves vault as UV reimbursement; `amount` moves vault → CEA → target, never directly to the UV
+
+---
+
+## Ref-Finalize Route (Large Payloads)
+
+When `ix_data` is too large to fit in a single transaction alongside the finalize accounts, use the two-step ref route:
+
+1. Call `store_execute_ix_data(sub_tx_id, keccak256(ix_data), ix_data)` — stores bytes on-chain.
+2. Call `finalize_universal_tx_with_ix_data_ref` with `ix_data_hash` instead of raw `ix_data`.
+
+TSS signs the same message format (raw `ix_data` bytes, not the hash). The program loads, verifies, and uses the stored bytes identically to the direct path.
+
+Gas accounting difference: `gas_used` is `base_finalize_gas + 5000` (extra 5000 to reimburse the store UV's transaction fee).
+
+See `6-TX-SIZE-REF-ROUTE.md` for complete details, gas accounting, multi-UV model, and close policy.
 
 ---
 

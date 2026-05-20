@@ -111,5 +111,7 @@ export const makeFinalizeUniversalTxBuilder =
         recipientAta,
         rateLimitConfig,
         tokenRateLimit,
+        storedIxData: null,
+        storeRefundRecipient: null,
         systemProgram: SystemProgram.programId,
       });

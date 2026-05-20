@@ -93,4 +93,13 @@ pub enum GatewayError {
 
     #[msg("gas_fee is below the minimum required gas_used for this finalize")]
     InsufficientGasBudget,
+
+    #[msg("Invalid ix_data hash")]
+    InvalidIxDataHash,
+
+    #[msg("ix_data cannot be empty")]
+    EmptyIxData,
+
+    #[msg("Stored ix_data account is not closable by caller")]
+    StoredIxDataNotClosable,
 }

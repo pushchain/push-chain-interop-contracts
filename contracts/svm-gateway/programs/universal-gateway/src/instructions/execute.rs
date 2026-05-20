@@ -2,27 +2,23 @@ use crate::errors::GatewayError;
 use crate::instructions::tss::validate_message;
 use crate::instructions::withdraw::{internal_withdraw, send_universal_tx_to_uea};
 use crate::state::{
-    Config, ExecutedSubTx, GatewayAccountMeta, RateLimitConfig, TokenRateLimit, TssPda,
-    UniversalTxFinalized, CEA_SEED, EXECUTED_SUB_TX_SEED, RATE_LIMIT_CONFIG_SEED, TSS_SEED,
-    VAULT_SEED,
+    Config, ExecutedSubTx, GatewayAccountMeta, RateLimitConfig, StoredIxData, TokenRateLimit,
+    TssPda, UniversalTxFinalized, CEA_SEED, EXECUTED_SUB_TX_SEED, RATE_LIMIT_CONFIG_SEED,
+    SIGNATURE_FEE_LAMPORTS, STORED_IX_DATA_SEED, TSS_SEED, VAULT_SEED,
 };
-use crate::utils::{encode_u64_be, parse_token_account, pda_spl_transfer, pda_system_transfer, serialize_gateway_accounts, serialize_ix_data, validate_remaining_accounts};
+use crate::utils::{
+    encode_u64_be, parse_token_account, pda_spl_transfer, pda_system_transfer,
+    serialize_gateway_accounts, serialize_ix_data, transfer_gas_fee_to_caller,
+    validate_remaining_accounts,
+};
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{
     instruction::{AccountMeta as SolanaAccountMeta, Instruction},
+    keccak,
     program::invoke_signed,
 };
 use anchor_spl::associated_token::{spl_associated_token_account, AssociatedToken};
 use anchor_spl::token::{spl_token, Mint, Token, TokenAccount};
-
-/// Base Solana transaction fee per signature (protocol constant, unchanged since genesis).
-///
-/// PROTOCOL ASSUMPTION: `caller` is the sole fee payer and the finalize transaction has exactly
-/// one required signature (the UV/relayer keypair). If the UV ever uses a separate fee-payer
-/// account or a multi-signature setup, `gas_used` will under-estimate the actual tx cost and
-/// the accounting will drift. This constraint is NOT enforced on-chain — it must be upheld
-/// by the UV submission service and documented in its operational runbook.
-const SIGNATURE_FEE_LAMPORTS: u64 = 5_000;
 
 /// SPL token account data size in bytes (spl_token::state::Account layout — stable protocol constant).
 const SPL_TOKEN_ACCOUNT_LEN: usize = 165;
@@ -32,7 +28,7 @@ const SPL_TOKEN_ACCOUNT_LEN: usize = 165;
 // =========================
 
 #[derive(Accounts)]
-#[instruction(instruction_id: u8, sub_tx_id: [u8; 32], universal_tx_id: [u8; 32], amount: u64, push_account: [u8; 20], writable_flags: Vec<u8>, ix_data: Vec<u8>, gas_fee: u64, signature: [u8; 64], recovery_id: u8, message_hash: [u8; 32])]
+#[instruction(instruction_id: u8, sub_tx_id: [u8; 32], universal_tx_id: [u8; 32], amount: u64, push_account: [u8; 20])]
 pub struct FinalizeUniversalTx<'info> {
     #[account(mut)]
     pub caller: Signer<'info>,
@@ -123,6 +119,57 @@ pub struct FinalizeUniversalTx<'info> {
     /// Token-specific rate limit state (CEA withdrawal path only)
     #[account(mut)]
     pub token_rate_limit: Option<Account<'info, TokenRateLimit>>,
+
+    /// Optional stored ix_data account for additive finalize-by-reference.
+    pub stored_ix_data: Option<Account<'info, StoredIxData>>,
+
+    /// CHECK: Optional stored-route fee refund recipient. Verified in ref-finalize entrypoint.
+    #[account(mut)]
+    pub store_refund_recipient: Option<UncheckedAccount<'info>>,
+}
+
+#[derive(Accounts)]
+#[instruction(sub_tx_id: [u8; 32], ix_data_hash: [u8; 32], ix_data: Vec<u8>)]
+pub struct StoreExecuteIxData<'info> {
+    #[account(mut)]
+    pub caller: Signer<'info>,
+
+    #[account(
+        init,
+        payer = caller,
+        space = StoredIxData::LEN_BASE + ix_data.len(),
+        seeds = [STORED_IX_DATA_SEED, sub_tx_id.as_ref(), ix_data_hash.as_ref()],
+        bump
+    )]
+    pub stored_ix_data: Account<'info, StoredIxData>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(sub_tx_id: [u8; 32], ix_data_hash: [u8; 32])]
+pub struct CloseStoredIxData<'info> {
+    #[account(mut)]
+    pub caller: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [STORED_IX_DATA_SEED, sub_tx_id.as_ref(), ix_data_hash.as_ref()],
+        bump = stored_ix_data.bump,
+        close = store_refund_recipient
+    )]
+    pub stored_ix_data: Account<'info, StoredIxData>,
+
+    /// CHECK: Must equal `stored_ix_data.store_refund_recipient`; close refunds rent here.
+    #[account(
+        mut,
+        constraint = store_refund_recipient.key() == stored_ix_data.store_refund_recipient
+            @ GatewayError::InvalidAccount
+    )]
+    pub store_refund_recipient: UncheckedAccount<'info>,
+
+    /// CHECK: Optional success marker PDA. If present, must equal the canonical executed_sub_tx PDA.
+    pub executed_sub_tx: Option<UncheckedAccount<'info>>,
 }
 
 struct FinalizeRequestContext {
@@ -132,8 +179,55 @@ struct FinalizeRequestContext {
     target: Pubkey,
 }
 
-pub fn finalize_universal_tx(
-    mut ctx: Context<FinalizeUniversalTx>,
+pub fn store_execute_ix_data(
+    ctx: Context<StoreExecuteIxData>,
+    _sub_tx_id: [u8; 32],
+    ix_data_hash: [u8; 32],
+    ix_data: Vec<u8>,
+) -> Result<()> {
+    require!(!ix_data.is_empty(), GatewayError::EmptyIxData);
+
+    let computed = keccak::hashv(&[ix_data.as_slice()]).to_bytes();
+    require!(computed == ix_data_hash, GatewayError::InvalidIxDataHash);
+
+    let stored = &mut ctx.accounts.stored_ix_data;
+    stored.bump = ctx.bumps.stored_ix_data;
+    stored.store_refund_recipient = ctx.accounts.caller.key();
+    stored.ix_data = ix_data;
+    Ok(())
+}
+
+pub fn close_stored_ix_data(
+    ctx: Context<CloseStoredIxData>,
+    sub_tx_id: [u8; 32],
+    _ix_data_hash: [u8; 32],
+) -> Result<()> {
+    let expected_executed_sub_tx = Pubkey::find_program_address(
+        &[EXECUTED_SUB_TX_SEED, sub_tx_id.as_ref()],
+        ctx.program_id,
+    )
+    .0;
+
+    let executed_sub_tx_exists = if let Some(executed_sub_tx) = &ctx.accounts.executed_sub_tx {
+        require!(
+            executed_sub_tx.key() == expected_executed_sub_tx,
+            GatewayError::InvalidAccount
+        );
+        executed_sub_tx.owner == ctx.program_id && !executed_sub_tx.data_is_empty()
+    } else {
+        false
+    };
+
+    if !executed_sub_tx_exists && ctx.accounts.caller.key() != ctx.accounts.store_refund_recipient.key()
+    {
+        return err!(GatewayError::StoredIxDataNotClosable);
+    }
+
+    Ok(())
+}
+
+pub fn finalize_universal_tx_common<'info>(
+    ctx: &mut Context<FinalizeUniversalTx<'info>>,
     instruction_id: u8,
     sub_tx_id: [u8; 32],
     universal_tx_id: [u8; 32],
@@ -141,6 +235,8 @@ pub fn finalize_universal_tx(
     push_account: [u8; 20],
     writable_flags: Vec<u8>,
     ix_data: Vec<u8>,
+    store_upload_fee_lamports: u64,
+    store_refund_recipient: Option<&AccountInfo<'info>>,
     gas_fee: u64,
     signature: [u8; 64],
     recovery_id: u8,
@@ -149,7 +245,7 @@ pub fn finalize_universal_tx(
     require!(!ctx.accounts.config.paused, GatewayError::Paused);
 
     let request = validate_finalize_request(
-        &ctx,
+        ctx,
         instruction_id,
         amount,
         push_account,
@@ -158,7 +254,7 @@ pub fn finalize_universal_tx(
     )?;
 
     let execute_accounts = verify_finalize_tss(
-        &mut ctx,
+        ctx,
         &request,
         universal_tx_id,
         sub_tx_id,
@@ -180,10 +276,16 @@ pub fn finalize_universal_tx(
     // Stage assets vault → CEA. Returns whether CEA ATA was created.
     let ata_created = stage_assets_to_cea(&ctx, &request, amount, &vault_seeds)?;
 
-    let (gas_used, gas_to_refund) = settle_relayer_gas_cost(&ctx, gas_fee, ata_created)?;
+    let (gas_used, gas_to_refund) = settle_relayer_gas_cost(
+        &ctx,
+        gas_fee,
+        ata_created,
+        store_upload_fee_lamports,
+        store_refund_recipient,
+    )?;
 
     dispatch_finalize_action(
-        &mut ctx,
+        ctx,
         &request,
         execute_accounts,
         amount,
@@ -214,10 +316,12 @@ pub fn finalize_universal_tx(
 /// Marked `inline(never)` to keep `finalize_universal_tx` stack usage below the
 /// BPF frame limit.
 #[inline(never)]
-fn settle_relayer_gas_cost(
-    ctx: &Context<FinalizeUniversalTx>,
+fn settle_relayer_gas_cost<'info>(
+    ctx: &Context<FinalizeUniversalTx<'info>>,
     gas_fee: u64,
     ata_created: bool,
+    store_upload_fee_lamports: u64,
+    store_refund_recipient: Option<&AccountInfo<'info>>,
 ) -> Result<(u64, u64)> {
     let sub_tx_rent = Rent::get()?.minimum_balance(ExecutedSubTx::LEN);
     let ata_rent = if ata_created {
@@ -225,19 +329,30 @@ fn settle_relayer_gas_cost(
     } else {
         0
     };
-    let gas_used = SIGNATURE_FEE_LAMPORTS + sub_tx_rent + ata_rent;
+    let base_finalize_gas = SIGNATURE_FEE_LAMPORTS + sub_tx_rent + ata_rent;
+    let gas_used = base_finalize_gas + store_upload_fee_lamports;
     require!(gas_fee >= gas_used, GatewayError::InsufficientGasBudget);
     let gas_to_refund = gas_fee - gas_used;
 
     // Reimburse relayer for actual cost only. Remaining gas_to_refund stays in vault
     // until UVs return it to the user on Push Chain via the emitted event.
-    crate::utils::transfer_gas_fee_to_caller(
+    transfer_gas_fee_to_caller(
         &ctx.accounts.vault_sol.to_account_info(),
         &ctx.accounts.caller.to_account_info(),
         &ctx.accounts.system_program.to_account_info(),
-        gas_used,
+        base_finalize_gas,
         ctx.accounts.config.vault_bump,
     )?;
+
+    if let Some(refund_recipient) = store_refund_recipient {
+        transfer_gas_fee_to_caller(
+            &ctx.accounts.vault_sol.to_account_info(),
+            refund_recipient,
+            &ctx.accounts.system_program.to_account_info(),
+            store_upload_fee_lamports,
+            ctx.accounts.config.vault_bump,
+        )?;
+    }
 
     Ok((gas_used, gas_to_refund))
 }
@@ -290,6 +405,7 @@ fn validate_finalize_request(
     let is_native = ctx.accounts.mint.is_none();
     let token = ctx.accounts.mint.as_ref().map_or(Pubkey::default(), |m| m.key());
     validate_account_presence(ctx, is_native)?;
+    require!(push_account != [0u8; 20], GatewayError::InvalidInput);
 
     let target = if is_withdraw {
         let recipient = ctx
@@ -305,7 +421,6 @@ fn validate_finalize_request(
 
     if is_withdraw {
         require!(amount > 0, GatewayError::InvalidAmount);
-        require!(push_account != [0u8; 20], GatewayError::InvalidInput);
         require!(writable_flags.is_empty(), GatewayError::InvalidInput);
         require!(ix_data.is_empty(), GatewayError::InvalidInput);
 

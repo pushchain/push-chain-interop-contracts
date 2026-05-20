@@ -8,8 +8,17 @@ pub const TSS_SEED: &[u8] = b"final_tss_pda";
 pub const RATE_LIMIT_CONFIG_SEED: &[u8] = b"rate_limit_config";
 pub const RATE_LIMIT_SEED: &[u8] = b"rate_limit";
 pub const EXECUTED_SUB_TX_SEED: &[u8] = b"executed_sub_tx";
+pub const STORED_IX_DATA_SEED: &[u8] = b"stored_ix_data";
 pub const CEA_SEED: &[u8] = b"push_identity";
 pub const MAX_INBOUND_FEE_LAMPORTS: u64 = 2_000_000;
+/// Base Solana transaction fee per signature (protocol constant, unchanged since genesis).
+///
+/// PROTOCOL ASSUMPTION: `caller` is the sole fee payer and the finalize transaction has exactly
+/// one required signature (the UV/relayer keypair). If the UV ever uses a separate fee-payer
+/// account or a multi-signature setup, `gas_used` will under-estimate the actual tx cost and
+/// the accounting will drift. This constraint is NOT enforced on-chain — it must be upheld
+/// by the UV submission service and documented in its operational runbook.
+pub const SIGNATURE_FEE_LAMPORTS: u64 = 5_000;
 
 // Price feed ID (Pyth SOL/USD), same as locker for now
 pub const FEED_ID: &str = "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
@@ -158,6 +167,24 @@ pub struct ExecutedSubTx {}
 impl ExecutedSubTx {
     // discriminator (8) only - account existence is the flag
     pub const LEN: usize = 8;
+}
+
+/// Stored raw ix_data for ref-finalize flow.
+/// PDA: `[b"stored_ix_data", sub_tx_id, ix_data_hash]`.
+#[account]
+pub struct StoredIxData {
+    pub bump: u8,
+    /// Rent refund recipient on close, and success-path recipient of the extra store-route
+    /// signature reimbursement. Because `StoreExecuteIxData` uses `payer = caller`, the rent
+    /// payer is always this signer. The extra `SIGNATURE_FEE_LAMPORTS` reimbursement also
+    /// assumes the same signer paid the store transaction fee operationally.
+    pub store_refund_recipient: Pubkey,
+    pub ix_data: Vec<u8>,
+}
+
+impl StoredIxData {
+    // discriminator + bump + refund_recipient + vec len prefix
+    pub const LEN_BASE: usize = 8 + 1 + 32 + 4;
 }
 
 // ============================================

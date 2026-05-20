@@ -30,6 +30,7 @@ The program uses PDAs for all protocol state. No external signers or owner keys 
 | `ExecutedSubTx` | `["executed_sub_tx", sub_tx_id[32]]` | Replay protection; existence = executed |
 | `RateLimitConfig` | `["rate_limit_config"]` | Block USD cap, epoch duration |
 | `TokenRateLimit` | `["rate_limit", mint]` | Per-token epoch usage |
+| `StoredIxData` | `["stored_ix_data", sub_tx_id[32], keccak256(ix_data)[32]]` | Temporary store for large `ix_data` used by the ref-finalize route |
 
 **Vault vs FeeVault separation:** `Vault` holds only user-deposited bridge funds, keeping it 1:1 backed. `FeeVault` holds inbound fees and funds UV reimbursement for `revert_universal_tx` and `rescue_funds`. `finalize_universal_tx` reimburses only `gas_used` from `Vault`; any signed surplus (`gas_to_refund = gas_fee - gas_used`) remains in `Vault` and is refunded to the user on Push Chain using the `UniversalTxFinalized` event. The inbound fee is hard-capped at `2_000_000` lamports (`0.002 SOL`). Only reverted txs consume from `FeeVault`; accumulated surplus from successful txs is recoverable by admin via `withdraw_inbound_fees`.
 
@@ -43,6 +44,9 @@ The program uses PDAs for all protocol state. No external signers or owner keys 
 |----------|-----------|------|-------------|
 | `send_universal_tx` | Inbound | User signature | Deposit SOL or SPL tokens; infers TX_TYPE automatically |
 | `finalize_universal_tx` | Outbound | TSS signature | Withdraw (id=1) or Execute (id=2) — single entrypoint |
+| `store_execute_ix_data` | Outbound (prep) | Any signer | Store large `ix_data` on-chain before ref-finalize |
+| `finalize_universal_tx_with_ix_data_ref` | Outbound | TSS signature | Same as `finalize_universal_tx` but loads `ix_data` from a stored PDA (for payloads > ~900 bytes) |
+| `close_stored_ix_data` | Outbound (cleanup) | Policy-gated | Close `StoredIxData` PDA and recover rent |
 | `revert_universal_tx` | Outbound | TSS signature | Return funds to original depositor (id=3) |
 | `rescue_funds` | Outbound | TSS signature | Emergency release to any recipient (id=4) |
 | `initialize` | Admin | Upgrade authority signature | One-time program setup |

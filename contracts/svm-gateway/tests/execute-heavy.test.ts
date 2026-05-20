@@ -30,11 +30,15 @@ import {
   instructionAccountsToGatewayMetas,
   instructionAccountsToRemaining,
   accountsToWritableFlagsOnly,
+  SIGNATURE_FEE_LAMPORTS,
 } from "./helpers/test-utils";
 import {
   makeFinalizeUniversalTxBuilder,
   FinalizeUniversalTxArgs,
 } from "./helpers/builders";
+import pkg from "js-sha3";
+
+const { keccak_256 } = pkg;
 
 describe("Universal Gateway - Heavy Transaction Benchmarking", () => {
   anchor.setProvider(anchor.AnchorProvider.env());
@@ -59,6 +63,19 @@ describe("Universal Gateway - Heavy Transaction Benchmarking", () => {
   let finalizeUniversalTx: ReturnType<typeof makeFinalizeUniversalTxBuilder>;
 
   const generateTxId = makeTxIdGenerator();
+  const deriveStoredIxDataPda = (subTxId: number[], ixDataHash: Uint8Array) =>
+    PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("stored_ix_data"),
+        Buffer.from(subTxId),
+        Buffer.from(ixDataHash),
+      ],
+      gatewayProgram.programId
+    )[0];
+  const hashIxData = (ixData: Buffer): Uint8Array =>
+    new Uint8Array(keccak_256.arrayBuffer(ixData));
+  const asIxDataHashArg = (ixDataHash: Uint8Array): number[] =>
+    Buffer.from(ixDataHash) as unknown as number[];
   const getExecutedTxPda = (subTxId: number[]) =>
     _getExecutedTxPda(subTxId, gatewayProgram.programId);
   const getCeaAuthorityPda = (pushAccount: number[]) =>
@@ -416,18 +433,18 @@ describe("Universal Gateway - Heavy Transaction Benchmarking", () => {
       );
     });
 
-    it("should fail when transaction exceeds 1232 bytes limit (18 accounts + 400 bytes)", async () => {
+    it("should fail when transaction exceeds 1232 bytes limit (8 accounts + 700 bytes)", async () => {
       const subTxId = generateTxId();
       const universalTxId = generateUniversalTxId();
       const pushAccount = generateSender();
       const cea = getCeaAuthorityPda(pushAccount);
 
       // Try to create a transaction that exceeds the limit
-      const dummyAccounts = Array.from({ length: 18 }, () =>
+      const dummyAccounts = Array.from({ length: 8 }, () =>
         Keypair.generate()
       );
       const operationId = 11111;
-      const largeData = Buffer.alloc(400, 0xdd); // Very large data
+      const largeData = Buffer.alloc(700, 0xdd); // Oversized payload; direct route should exceed the legacy tx limit
 
       const batchIx = await counterProgram.methods
         .batchOperation(new anchor.BN(operationId), largeData)
@@ -500,6 +517,111 @@ describe("Universal Gateway - Heavy Transaction Benchmarking", () => {
             err.logs?.some((log: string) => log.includes("too large"))
         ).to.be.true;
       }
+    });
+
+    it("should succeed for the same oversized payload via store + ref finalize", async () => {
+      const subTxId = generateTxId();
+      const universalTxId = generateUniversalTxId();
+      const pushAccount = generateSender();
+      const dummyAccounts = Array.from({ length: 8 }, () => Keypair.generate());
+      const operationId = 22222;
+      const largeData = Buffer.alloc(700, 0xee);
+
+      const batchIx = await counterProgram.methods
+        .batchOperation(new anchor.BN(operationId), largeData)
+        .accountsPartial({
+          counter: counterPda,
+          authority: counterAuthority.publicKey,
+        })
+        .remainingAccounts(
+          dummyAccounts.map((acc) => ({
+            pubkey: acc.publicKey,
+            isWritable: false,
+            isSigner: false,
+          }))
+        )
+        .instruction();
+
+      const ixData = Buffer.from(batchIx.data);
+      const ixDataHash = hashIxData(ixData);
+      const storedIxData = deriveStoredIxDataPda(subTxId, ixDataHash);
+      const accounts = instructionAccountsToGatewayMetas(batchIx);
+      const remaining = instructionAccountsToRemaining(batchIx);
+      const writableFlags = accountsToWritableFlagsOnly(accounts);
+      const { gasFee } = await calculateSolExecuteFees(provider.connection);
+      const refGasFee = gasFee + SIGNATURE_FEE_LAMPORTS;
+
+      await gatewayProgram.methods
+        .storeExecuteIxData(Array.from(subTxId), asIxDataHashArg(ixDataHash), ixData)
+        .accountsPartial({
+          caller: admin.publicKey,
+          storedIxData,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([admin])
+        .rpc();
+
+      const sig = await signTssMessage({
+        instruction: TssInstruction.Execute,
+        amount: BigInt(0),
+        chainId: (await gatewayProgram.account.tssPda.fetch(tssPda)).chainId,
+        additional: buildExecuteAdditionalData(
+          new Uint8Array(universalTxId),
+          new Uint8Array(subTxId),
+          counterProgram.programId,
+          new Uint8Array(pushAccount),
+          accounts,
+          ixData,
+          refGasFee
+        ),
+      });
+
+      const counterBefore = await counterProgram.account.counter.fetch(counterPda);
+
+      await gatewayProgram.methods
+        .finalizeUniversalTxWithIxDataRef(
+          2,
+          Array.from(subTxId),
+          Array.from(universalTxId),
+          new anchor.BN(0),
+          Array.from(pushAccount),
+          asIxDataHashArg(ixDataHash),
+          writableFlags,
+          new anchor.BN(Number(refGasFee)),
+          Array.from(sig.signature),
+          sig.recoveryId,
+          Array.from(sig.messageHash)
+        )
+        .accountsPartial({
+          caller: admin.publicKey,
+          config: configPda,
+          vaultSol: vaultPda,
+          ceaAuthority: getCeaAuthorityPda(pushAccount),
+          tssPda,
+          executedSubTx: getExecutedTxPda(subTxId),
+          destinationProgram: counterProgram.programId,
+          recipient: null,
+          vaultAta: null,
+          ceaAta: null,
+          mint: null,
+          tokenProgram: null,
+          rent: null,
+          associatedTokenProgram: null,
+          recipientAta: null,
+          rateLimitConfig: null,
+          tokenRateLimit: null,
+          storedIxData,
+          storeRefundRecipient: admin.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .remainingAccounts(remaining)
+        .signers([admin])
+        .rpc();
+
+      const counterAfter = await counterProgram.account.counter.fetch(counterPda);
+      expect(counterAfter.value.toNumber()).to.equal(
+        counterBefore.value.toNumber() + operationId
+      );
     });
   });
 });

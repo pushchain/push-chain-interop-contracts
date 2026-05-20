@@ -1,4 +1,6 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::keccak;
+use crate::errors::GatewayError;
 
 pub mod errors;
 pub mod instructions;
@@ -184,7 +186,7 @@ pub mod universal_gateway {
     /// @notice Unified outbound entrypoint: withdraw (mode 1) or execute (mode 2)
     /// @param instruction_id 1=withdraw (vault→CEA→recipient), 2=execute (vault→CEA→CPI)
     pub fn finalize_universal_tx(
-        ctx: Context<FinalizeUniversalTx>,
+        mut ctx: Context<FinalizeUniversalTx>,
         instruction_id: u8,
         sub_tx_id: [u8; 32],
         universal_tx_id: [u8; 32],
@@ -197,8 +199,8 @@ pub mod universal_gateway {
         recovery_id: u8,
         message_hash: [u8; 32],
     ) -> Result<()> {
-        instructions::execute::finalize_universal_tx(
-            ctx,
+        instructions::execute::finalize_universal_tx_common(
+            &mut ctx,
             instruction_id,
             sub_tx_id,
             universal_tx_id,
@@ -206,11 +208,95 @@ pub mod universal_gateway {
             push_account,
             writable_flags,
             ix_data,
+            0,
+            None,
             gas_fee,
             signature,
             recovery_id,
             message_hash,
         )
+    }
+
+    /// @notice Store raw ix_data bytes on-chain for later finalize-by-reference.
+    pub fn store_execute_ix_data(
+        ctx: Context<StoreExecuteIxData>,
+        sub_tx_id: [u8; 32],
+        ix_data_hash: [u8; 32],
+        ix_data: Vec<u8>,
+    ) -> Result<()> {
+        instructions::execute::store_execute_ix_data(ctx, sub_tx_id, ix_data_hash, ix_data)
+    }
+
+    /// @notice Additive ref-finalize route. Executes the same finalize flow using ix_data loaded from PDA.
+    pub fn finalize_universal_tx_with_ix_data_ref(
+        mut ctx: Context<FinalizeUniversalTx>,
+        instruction_id: u8,
+        sub_tx_id: [u8; 32],
+        universal_tx_id: [u8; 32],
+        amount: u64,
+        push_account: [u8; 20],
+        ix_data_hash: [u8; 32],
+        writable_flags: Vec<u8>,
+        gas_fee: u64,
+        signature: [u8; 64],
+        recovery_id: u8,
+        message_hash: [u8; 32],
+    ) -> Result<()> {
+        let stored_ix_data = ctx
+            .accounts
+            .stored_ix_data
+            .as_ref()
+            .ok_or(error!(GatewayError::InvalidAccount))?;
+        let store_refund_recipient = ctx
+            .accounts
+            .store_refund_recipient
+            .as_ref()
+            .ok_or(error!(GatewayError::InvalidAccount))?;
+
+        let ix_data = stored_ix_data.ix_data.clone();
+        let computed = keccak::hashv(&[ix_data.as_slice()]).to_bytes();
+        require!(computed == ix_data_hash, GatewayError::InvalidIxDataHash);
+        require!(
+            store_refund_recipient.key() == stored_ix_data.store_refund_recipient,
+            GatewayError::InvalidAccount
+        );
+
+        let (expected_stored_ix_data, _) = Pubkey::find_program_address(
+            &[state::STORED_IX_DATA_SEED, sub_tx_id.as_ref(), computed.as_ref()],
+            ctx.program_id,
+        );
+        require!(
+            stored_ix_data.key() == expected_stored_ix_data,
+            GatewayError::InvalidAccount
+        );
+
+        let store_refund_recipient_info = store_refund_recipient.to_account_info();
+
+        instructions::execute::finalize_universal_tx_common(
+            &mut ctx,
+            instruction_id,
+            sub_tx_id,
+            universal_tx_id,
+            amount,
+            push_account,
+            writable_flags,
+            ix_data,
+            state::SIGNATURE_FEE_LAMPORTS,
+            Some(&store_refund_recipient_info),
+            gas_fee,
+            signature,
+            recovery_id,
+            message_hash,
+        )
+    }
+
+    /// @notice Close stored ix_data PDA and recover rent to the stored store_refund_recipient.
+    pub fn close_stored_ix_data(
+        ctx: Context<CloseStoredIxData>,
+        sub_tx_id: [u8; 32],
+        ix_data_hash: [u8; 32],
+    ) -> Result<()> {
+        instructions::execute::close_stored_ix_data(ctx, sub_tx_id, ix_data_hash)
     }
 
     // =========================
@@ -291,7 +377,7 @@ pub use instructions::admin::{
     TokenRateLimitAction, WithdrawInboundFees,
 };
 pub use instructions::deposit::SendUniversalTx;
-pub use instructions::execute::FinalizeUniversalTx;
+pub use instructions::execute::{CloseStoredIxData, FinalizeUniversalTx, StoreExecuteIxData};
 pub use instructions::initialize::Initialize;
 pub use instructions::rescue::RescueFunds;
 pub use instructions::revert::RevertUniversalTx;
@@ -319,5 +405,7 @@ pub use state::{
     EXECUTED_SUB_TX_SEED,
     FEED_ID,
     FEE_VAULT_SEED,
+    STORED_IX_DATA_SEED,
+    StoredIxData,
     VAULT_SEED,
 };

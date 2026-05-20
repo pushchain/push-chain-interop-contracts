@@ -144,6 +144,16 @@ function getCeaAuthorityPda(pushAccount: Uint8Array | number[]): PublicKey {
   )[0];
 }
 
+function getStoredIxDataPda(
+  subTxId: Uint8Array | number[],
+  ixDataHash: Uint8Array | Buffer
+): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("stored_ix_data"), Buffer.from(subTxId), Buffer.from(ixDataHash)],
+    PROGRAM_ID
+  )[0];
+}
+
 async function getCeaAta(
   pushAccount: Uint8Array | number[],
   mint: PublicKey
@@ -1808,6 +1818,8 @@ async function run() {
       tssPda: tssPda,
       executedSubTx: executedTxPda,
       destinationProgram: SystemProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
       recipient: admin, // THE ACTUAL RECIPIENT
       vaultAta: null,
       ceaAta: null,
@@ -1974,6 +1986,8 @@ async function run() {
           tssPda: tssPda,
           executedSubTx: executedTxPdaSPL,
           destinationProgram: SystemProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
           recipient: adminKeypair.publicKey, // SPL recipient (token account)
           vaultAta: vaultAta.address,
           ceaAta: ceaAtaSPL,
@@ -2185,6 +2199,8 @@ async function run() {
         tssPda,
         executedSubTx,
         destinationProgram: targetProgram,
+      storedIxData: null,
+      storeRefundRecipient: null,
         recipient: null, // null for execute mode
         vaultAta: null,
         ceaAta: null,
@@ -2371,6 +2387,8 @@ async function run() {
         tssPda,
         executedSubTx,
         destinationProgram: targetProgram,
+      storedIxData: null,
+      storeRefundRecipient: null,
         recipient: null, // null for execute mode
         vaultAta: vaultAta.address,
         ceaAta: ceaAtaForSpl, // CEA ATA
@@ -2526,6 +2544,8 @@ async function run() {
         tssPda,
         executedSubTx,
         destinationProgram: program.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
         recipient: null,
         vaultAta: null,
         ceaAta: null,
@@ -2678,6 +2698,8 @@ async function run() {
           tssPda,
           executedSubTx: getExecutedTxPda(securityTxId1),
           destinationProgram: counterProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -2767,6 +2789,8 @@ async function run() {
           tssPda,
           executedSubTx: getExecutedTxPda(securityTxId2),
           destinationProgram: counterProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -2867,6 +2891,8 @@ async function run() {
           tssPda,
           executedSubTx: getExecutedTxPda(securityTxId4),
           destinationProgram: counterProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -2971,6 +2997,8 @@ async function run() {
       tssPda,
       executedSubTx: getExecutedTxPda(testTxId),
       destinationProgram: counterProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
       recipient: null,
       vaultAta: null,
       ceaAta: null,
@@ -3317,6 +3345,8 @@ async function run() {
         tssPda,
         executedSubTx: getExecutedTxPda(heavyTxId),
         destinationProgram: counterProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
         recipient: null,
         vaultAta: null,
         ceaAta: null,
@@ -3449,6 +3479,8 @@ async function run() {
         tssPda,
         executedSubTx: getExecutedTxPda(heavyTxIdSpl),
         destinationProgram: counterProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
         recipient: null,
         vaultAta: vaultAta.address,
         ceaAta: heavyCeaAtaSpl,
@@ -3525,6 +3557,166 @@ async function run() {
   }
 
   console.log(`\n✅ Transaction size limit tests completed!\n`);
+
+  // 14. Ref-finalize route: store + finalize-by-reference + close
+  console.log("14. Testing ref-finalize route (store + finalize-by-reference + close)...");
+  try {
+    const tssAccountRef: any = await (program.account as any).tssPda.fetch(tssPda);
+
+    const refSubTxId = anchor.web3.Keypair.generate().publicKey.toBytes();
+    const refPushAccount = Buffer.alloc(20, 0x44);
+    const refCeaAuthority = getCeaAuthorityPda(Array.from(refPushAccount));
+    const refExecutedSubTx = getExecutedTxPda(refSubTxId);
+
+    // Build ix_data: counter increment
+    const refCounterIx = await counterProgram.methods
+      .increment(new anchor.BN(7))
+      .accountsPartial({ counter: counterPda, authority: admin })
+      .instruction();
+    const refIxData = Buffer.from(refCounterIx.data);
+    const refIxDataHash = Buffer.from(keccak_256(refIxData), "hex");
+    const refStoredIxDataPda = getStoredIxDataPda(refSubTxId, refIxDataHash);
+
+    // Step 1: store_execute_ix_data
+    const storeTx = await relayerProgram.methods
+      .storeExecuteIxData(
+        Array.from(refSubTxId),
+        refIxDataHash as unknown as number[],
+        refIxData
+      )
+      .accountsPartial({
+        caller: relayer,
+        storedIxData: refStoredIxDataPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+    console.log(`  ✅ store_execute_ix_data: ${storeTx}`);
+
+    const stored = await (program.account as any).storedIxData.fetch(refStoredIxDataPda);
+    assert.equal(
+      stored.storeRefundRecipient.toString(),
+      relayer.toString(),
+      "storeRefundRecipient must be the store caller"
+    );
+    assert.equal(
+      Buffer.from(stored.ixData).toString("hex"),
+      refIxData.toString("hex"),
+      "Stored ix_data must match"
+    );
+    console.log("  ✅ StoredIxData PDA verified: storeRefundRecipient and ix_data correct");
+
+    // Step 2: finalize_universal_tx_with_ix_data_ref
+    const { gasFee: refGasFee } = await calculateSolExecuteFees(connection);
+    const universalTxIdRef = generateUniversalTxId();
+
+    const refRemainingAccounts = [
+      { pubkey: counterPda, isWritable: true, isSigner: false },
+      { pubkey: admin, isWritable: false, isSigner: false },
+    ];
+    const refWritableFlags = accountsToWritableFlags(
+      refRemainingAccounts.map((a) => ({ pubkey: a.pubkey, isWritable: a.isWritable }))
+    );
+
+    const refSig = await signTssMessage({
+      instruction: TssInstruction.Execute,
+      amount: BigInt(0),
+      chainId: tssAccountRef.chainId,
+      additional: buildExecuteAdditionalData(
+        universalTxIdRef,
+        refSubTxId,
+        counterProgram.programId,
+        refPushAccount,
+        refRemainingAccounts.map((a) => ({
+          pubkey: a.pubkey,
+          isWritable: a.isWritable,
+        })),
+        refIxData,
+        refGasFee
+      ),
+    });
+
+    const counterBeforeRef = await counterProgram.account.counter.fetch(counterPda);
+    const relayerBalBeforeRef = await connection.getBalance(relayer);
+
+    const refFinalizeTx = await relayerProgram.methods
+      .finalizeUniversalTxWithIxDataRef(
+        2,
+        Array.from(refSubTxId),
+        Array.from(universalTxIdRef),
+        new anchor.BN(0),
+        Array.from(refPushAccount),
+        refIxDataHash as unknown as number[],
+        refWritableFlags,
+        new anchor.BN(Number(refGasFee)),
+        refSig.signature,
+        refSig.recoveryId,
+        refSig.messageHash
+      )
+      .accountsPartial({
+        caller: relayer,
+        config: configPda,
+        vaultSol: vaultPda,
+        ceaAuthority: refCeaAuthority,
+        tssPda,
+        executedSubTx: refExecutedSubTx,
+        destinationProgram: counterProgram.programId,
+        storedIxData: refStoredIxDataPda,
+        storeRefundRecipient: relayer,
+        recipient: null,
+        vaultAta: null,
+        ceaAta: null,
+        mint: null,
+        tokenProgram: null,
+        rent: null,
+        associatedTokenProgram: null,
+        recipientAta: null,
+        rateLimitConfig: null,
+        tokenRateLimit: null,
+        systemProgram: SystemProgram.programId,
+      })
+      .remainingAccounts(refRemainingAccounts)
+      .rpc();
+    console.log(`  ✅ finalize_universal_tx_with_ix_data_ref: ${refFinalizeTx}`);
+
+    const counterAfterRef = await counterProgram.account.counter.fetch(counterPda);
+    assert.equal(
+      counterAfterRef.value.toNumber(),
+      counterBeforeRef.value.toNumber() + 7,
+      "Counter must increment by 7"
+    );
+    console.log(
+      `  ✅ Counter incremented: ${counterBeforeRef.value.toNumber()} → ${counterAfterRef.value.toNumber()}`
+    );
+
+    const executedSubTxInfo = await connection.getAccountInfo(refExecutedSubTx);
+    assert.isNotNull(executedSubTxInfo, "ExecutedSubTx PDA must exist (replay protection)");
+    console.log("  ✅ ExecutedSubTx PDA exists (replay protection active)");
+
+    // Step 3: close_stored_ix_data (post-success: anyone can close)
+    const closeTx = await relayerProgram.methods
+      .closeStoredIxData(
+        Array.from(refSubTxId),
+        refIxDataHash as unknown as number[]
+      )
+      .accountsPartial({
+        caller: relayer,
+        storedIxData: refStoredIxDataPda,
+        storeRefundRecipient: relayer,
+        executedSubTx: refExecutedSubTx,
+      })
+      .rpc();
+    console.log(`  ✅ close_stored_ix_data: ${closeTx}`);
+
+    const storedAfterClose = await connection.getAccountInfo(refStoredIxDataPda);
+    assert.isNull(storedAfterClose, "StoredIxData PDA must be closed");
+    console.log("  ✅ StoredIxData PDA closed, rent returned to storeRefundRecipient");
+
+    await parseAndPrintEvents(refFinalizeTx, "finalize_universal_tx_with_ix_data_ref events");
+  } catch (error: any) {
+    console.log(`❌ Ref-finalize route test failed: ${error.message}`);
+    throw error;
+  }
+  console.log("✅ Ref-finalize route test completed!\n");
 
   // 15. Test revert function with real TSS signature
   console.log("15. Testing revert function with real TSS signature...");
