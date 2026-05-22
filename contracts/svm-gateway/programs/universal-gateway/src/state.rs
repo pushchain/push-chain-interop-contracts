@@ -174,6 +174,10 @@ impl ExecutedSubTx {
 #[account]
 pub struct StoredIxData {
     pub bump: u8,
+    /// The sub_tx_id used to derive this PDA. Stored so close_stored_ix_data
+    /// needs no args — a UV can recover orphaned PDAs via getProgramAccounts
+    /// and close them with accounts only, no local state required.
+    pub sub_tx_id: [u8; 32],
     /// Rent refund recipient on close, and success-path recipient of the extra store-route
     /// signature reimbursement. Because `StoreExecuteIxData` uses `payer = caller`, the rent
     /// payer is always this signer. The extra `SIGNATURE_FEE_LAMPORTS` reimbursement also
@@ -183,8 +187,8 @@ pub struct StoredIxData {
 }
 
 impl StoredIxData {
-    // discriminator + bump + refund_recipient + vec len prefix
-    pub const LEN_BASE: usize = 8 + 1 + 32 + 4;
+    // discriminator + bump + sub_tx_id + store_refund_recipient + vec len prefix
+    pub const LEN_BASE: usize = 8 + 1 + 32 + 32 + 4;
 }
 
 // ============================================

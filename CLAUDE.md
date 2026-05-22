@@ -92,7 +92,7 @@ SVM entrypoint: `finalize_universal_tx` (withdraw/execute) and separate `revert_
 **TX-size ref route** (execute only): when `ix_data` exceeds ~900 bytes, use the two-step ref route:
 1. `store_execute_ix_data(sub_tx_id, keccak256(ix_data), ix_data)` — uploads bytes to a `StoredIxData` PDA.
 2. `finalize_universal_tx_with_ix_data_ref(...)` — loads `ix_data` from the PDA, same TSS message format and execution logic as `finalize_universal_tx`. Gas cost is `base_finalize_gas + 5000` (extra 5000 reimburses the store UV).
-3. `close_stored_ix_data(...)` — closes the PDA after finalize, returning rent to `store_refund_recipient`.
+3. `close_stored_ix_data()` — no args; only needed on failure/abort path (finalize auto-closes on success). Recovers PDA rent to `store_refund_recipient`. Supports orphan recovery via `getProgramAccounts` — `sub_tx_id` is stored inside the PDA so no local UV state is required.
 
 See `contracts/svm-gateway/docs/6-TX-SIZE-REF-ROUTE.md` for full details.
 

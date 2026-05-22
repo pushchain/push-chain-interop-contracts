@@ -148,15 +148,14 @@ pub struct StoreExecuteIxData<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(sub_tx_id: [u8; 32], ix_data_hash: [u8; 32])]
 pub struct CloseStoredIxData<'info> {
     #[account(mut)]
     pub caller: Signer<'info>,
 
+    /// No seed constraint here — canonicality is verified manually inside close_stored_ix_data
+    /// using sub_tx_id and ix_data stored in the account itself, enabling arg-free close.
     #[account(
         mut,
-        seeds = [STORED_IX_DATA_SEED, sub_tx_id.as_ref(), ix_data_hash.as_ref()],
-        bump = stored_ix_data.bump,
         close = store_refund_recipient
     )]
     pub stored_ix_data: Account<'info, StoredIxData>,
@@ -169,7 +168,8 @@ pub struct CloseStoredIxData<'info> {
     )]
     pub store_refund_recipient: UncheckedAccount<'info>,
 
-    /// CHECK: Optional success marker PDA. If present, must equal the canonical executed_sub_tx PDA.
+    /// CHECK: Optional success marker PDA. If present, must equal the canonical executed_sub_tx PDA
+    /// derived from the stored sub_tx_id.
     pub executed_sub_tx: Option<UncheckedAccount<'info>>,
 }
 
@@ -182,7 +182,7 @@ struct FinalizeRequestContext {
 
 pub fn store_execute_ix_data(
     ctx: Context<StoreExecuteIxData>,
-    _sub_tx_id: [u8; 32],
+    sub_tx_id: [u8; 32],
     ix_data_hash: [u8; 32],
     ix_data: Vec<u8>,
 ) -> Result<()> {
@@ -193,18 +193,35 @@ pub fn store_execute_ix_data(
 
     let stored = &mut ctx.accounts.stored_ix_data;
     stored.bump = ctx.bumps.stored_ix_data;
+    stored.sub_tx_id = sub_tx_id;
     stored.store_refund_recipient = ctx.accounts.caller.key();
     stored.ix_data = ix_data;
     Ok(())
 }
 
-pub fn close_stored_ix_data(
-    ctx: Context<CloseStoredIxData>,
-    sub_tx_id: [u8; 32],
-    _ix_data_hash: [u8; 32],
-) -> Result<()> {
+pub fn close_stored_ix_data(ctx: Context<CloseStoredIxData>) -> Result<()> {
+    let stored = &ctx.accounts.stored_ix_data;
+
+    // Verify this is the canonical PDA for its own stored data (self-describing check).
+    // Recompute ix_data_hash from stored bytes, then re-derive the expected PDA address.
+    let ix_data_hash = keccak::hashv(&[stored.ix_data.as_slice()]).to_bytes();
+    let expected_pda = Pubkey::create_program_address(
+        &[
+            STORED_IX_DATA_SEED,
+            stored.sub_tx_id.as_ref(),
+            ix_data_hash.as_ref(),
+            &[stored.bump],
+        ],
+        ctx.program_id,
+    )
+    .map_err(|_| error!(GatewayError::InvalidAccount))?;
+    require!(
+        ctx.accounts.stored_ix_data.key() == expected_pda,
+        GatewayError::InvalidAccount
+    );
+
     let expected_executed_sub_tx = Pubkey::find_program_address(
-        &[EXECUTED_SUB_TX_SEED, sub_tx_id.as_ref()],
+        &[EXECUTED_SUB_TX_SEED, stored.sub_tx_id.as_ref()],
         ctx.program_id,
     )
     .0;
@@ -219,7 +236,8 @@ pub fn close_stored_ix_data(
         false
     };
 
-    if !executed_sub_tx_exists && ctx.accounts.caller.key() != ctx.accounts.store_refund_recipient.key()
+    if !executed_sub_tx_exists
+        && ctx.accounts.caller.key() != ctx.accounts.store_refund_recipient.key()
     {
         return err!(GatewayError::StoredIxDataNotClosable);
     }

@@ -252,7 +252,7 @@ const counterProgram: any = new Program(counterIdl as any, adminProvider);
 // Helper: Get dynamic gas amount based on current SOL price
 async function getDynamicGasAmount(
   targetUsd: number,
-  fallbackSol: number = 0.01
+  fallbackSol: number = 0.02
 ): Promise<anchor.BN> {
   try {
     const solPriceResult = await program.methods
@@ -3707,6 +3707,66 @@ async function run() {
     console.log(`  ✅ Relayer net change: ${relayerNet} lamports (SIGNATURE_FEE=${SIGNATURE_FEE_LAMPORTS} + PDA rent=${pdaLamports})`);
 
     await parseAndPrintEvents(refFinalizeTx, "finalize_universal_tx_with_ix_data_ref events");
+
+    // 14.4 Orphan recovery — simulate UV crash, recover PDA via getProgramAccounts
+    console.log("  14.4 Testing orphan PDA recovery via getProgramAccounts...");
+    const orphanSubTxId = anchor.web3.Keypair.generate().publicKey.toBytes();
+    const orphanCounterIx = await counterProgram.methods
+      .increment(new anchor.BN(1))
+      .accountsPartial({ counter: counterPda, authority: admin })
+      .instruction();
+    const orphanIxData = Buffer.from(orphanCounterIx.data);
+    const orphanIxDataHash = Buffer.from(keccak_256(orphanIxData), "hex");
+    const orphanStoredPda = getStoredIxDataPda(orphanSubTxId, orphanIxDataHash);
+
+    await relayerProgram.methods
+      .storeExecuteIxData(
+        Array.from(orphanSubTxId),
+        orphanIxDataHash as unknown as number[],
+        orphanIxData
+      )
+      .accountsPartial({
+        caller: relayer,
+        storedIxData: orphanStoredPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    // UV "crashes" — sub_tx_id lost. Recover by scanning chain.
+    const discriminatorHex = require("crypto")
+      .createHash("sha256")
+      .update("account:StoredIxData")
+      .digest("hex")
+      .slice(0, 16);
+    const discriminator = Buffer.from(discriminatorHex, "hex").slice(0, 8);
+    const STORE_REFUND_RECIPIENT_OFFSET = 8 + 1 + 32; // disc + bump + sub_tx_id
+
+    const discovered = await connection.getProgramAccounts(PROGRAM_ID, {
+      filters: [
+        { memcmp: { offset: 0, bytes: anchor.utils.bytes.bs58.encode(discriminator) } },
+        { memcmp: { offset: STORE_REFUND_RECIPIENT_OFFSET, bytes: relayer.toBase58() } },
+      ],
+    });
+    assert.isAtLeast(discovered.length, 1, "Must discover at least one orphaned PDA");
+    const orphan = discovered.find((a) => a.pubkey.equals(orphanStoredPda));
+    assert.isNotNull(orphan, "Orphaned PDA must be discoverable on-chain");
+    console.log(`  ✅ Discovered ${discovered.length} orphaned PDA(s) via getProgramAccounts`);
+
+    await relayerProgram.methods
+      .closeStoredIxData()
+      .accountsPartial({
+        caller: relayer,
+        storedIxData: orphan!.pubkey,
+        storeRefundRecipient: relayer,
+        executedSubTx: null,
+      })
+      .rpc();
+
+    assert.isNull(
+      await connection.getAccountInfo(orphanStoredPda),
+      "Orphaned PDA must be closed"
+    );
+    console.log("  ✅ Orphaned PDA recovered and closed without local state");
   } catch (error: any) {
     console.log(`❌ Ref-finalize route test failed: ${error.message}`);
     throw error;

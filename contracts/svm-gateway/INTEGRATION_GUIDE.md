@@ -575,7 +575,7 @@ On the happy path, `finalize_universal_tx_with_ix_data_ref` auto-closes the `Sto
 In both cases only `store_refund_recipient` can close, since `ExecutedSubTx` does not exist yet.
 
 ```
-Args: sub_tx_id [u8;32], ix_data_hash [u8;32]
+Args: none
 Accounts: caller (mut signer), stored_ix_data, store_refund_recipient (receives rent), executed_sub_tx (optional)
 ```
 

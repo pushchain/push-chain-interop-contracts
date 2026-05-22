@@ -260,6 +260,10 @@ pub mod universal_gateway {
             store_refund_recipient.key() == stored_ix_data.store_refund_recipient,
             GatewayError::InvalidAccount
         );
+        require!(
+            stored_ix_data.sub_tx_id == sub_tx_id,
+            GatewayError::InvalidAccount
+        );
 
         let (expected_stored_ix_data, _) = Pubkey::find_program_address(
             &[state::STORED_IX_DATA_SEED, sub_tx_id.as_ref(), computed.as_ref()],
@@ -296,12 +300,8 @@ pub mod universal_gateway {
     }
 
     /// @notice Close stored ix_data PDA and recover rent to the stored store_refund_recipient.
-    pub fn close_stored_ix_data(
-        ctx: Context<CloseStoredIxData>,
-        sub_tx_id: [u8; 32],
-        ix_data_hash: [u8; 32],
-    ) -> Result<()> {
-        instructions::execute::close_stored_ix_data(ctx, sub_tx_id, ix_data_hash)
+    pub fn close_stored_ix_data(ctx: Context<CloseStoredIxData>) -> Result<()> {
+        instructions::execute::close_stored_ix_data(ctx)
     }
 
     // =========================

@@ -32,6 +32,7 @@ PDA seeds: [b"stored_ix_data", sub_tx_id[32], keccak256(ix_data)[32]]
 | Field | Type | Description |
 |---|---|---|
 | `bump` | `u8` | Canonical PDA bump |
+| `sub_tx_id` | `[u8; 32]` | Stored explicitly so orphaned PDAs can be rediscovered via `getProgramAccounts` and closed without local UV state |
 | `store_refund_recipient` | `Pubkey` | The caller of `store_execute_ix_data`; receives gas reimbursement at finalize and rent at close |
 | `ix_data` | `Vec<u8>` | Raw instruction data bytes |
 

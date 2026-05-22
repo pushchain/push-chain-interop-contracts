@@ -317,7 +317,7 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
     executedSubTx: PublicKey | null;
   }) =>
     gatewayProgram.methods
-      .closeStoredIxData(Array.from(subTxId), asIxDataHashArg(ixDataHash))
+      .closeStoredIxData()
       .accountsPartial({
         caller: caller.publicKey,
         storedIxData: deriveStoredIxDataPda(subTxId, ixDataHash),
@@ -1801,5 +1801,63 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
       ixDataHash,
       executedSubTx: null,
     });
+  });
+
+  it("recovers orphaned PDAs via getProgramAccounts without local state", async () => {
+    // Simulates a UV that stored ix_data, crashed (lost sub_tx_id from memory),
+    // and later recovers via on-chain discovery.
+    const subTxId = generateTxId();
+    const pushAccount = generateSender();
+    const { counterIx } = await buildCounterIncrementRoute(pushAccount, 1);
+    const ixData = Buffer.from(counterIx.data);
+    const ixDataHash = hashIxData(ixData);
+    const storedIxDataPda = deriveStoredIxDataPda(subTxId, ixDataHash);
+
+    await gatewayProgram.methods
+      .storeExecuteIxData(Array.from(subTxId), asIxDataHashArg(ixDataHash), ixData)
+      .accountsPartial({
+        caller: storeRelayer.publicKey,
+        storedIxData: storedIxDataPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([storeRelayer])
+      .rpc();
+
+    // UV "crashes" — sub_tx_id and ix_data_hash are gone from local state.
+    // Recovery: scan chain for all StoredIxData PDAs belonging to this relayer.
+    const discriminator = Buffer.from(
+      anchor.utils.sha256.hash("account:StoredIxData").slice(0, 16),
+      "hex"
+    ).slice(0, 8);
+    // Offset: 8 (disc) + 1 (bump) + 32 (sub_tx_id) = 41
+    const storeRefundRecipientOffset = 8 + 1 + 32;
+
+    const discovered = await provider.connection.getProgramAccounts(
+      gatewayProgram.programId,
+      {
+        filters: [
+          { memcmp: { offset: 0, bytes: anchor.utils.bytes.bs58.encode(discriminator) } },
+          { memcmp: { offset: storeRefundRecipientOffset, bytes: storeRelayer.publicKey.toBase58() } },
+        ],
+      }
+    );
+
+    expect(discovered.length).to.be.at.least(1);
+    const orphaned = discovered.find((a) => a.pubkey.equals(storedIxDataPda));
+    expect(orphaned, "orphaned PDA must be discoverable").to.exist;
+
+    // Close using only the discovered account address — no sub_tx_id arg needed.
+    await gatewayProgram.methods
+      .closeStoredIxData()
+      .accountsPartial({
+        caller: storeRelayer.publicKey,
+        storedIxData: orphaned!.pubkey,
+        storeRefundRecipient: storeRelayer.publicKey,
+        executedSubTx: null,
+      })
+      .signers([storeRelayer])
+      .rpc();
+
+    expect(await provider.connection.getAccountInfo(storedIxDataPda)).to.equal(null);
   });
 });
