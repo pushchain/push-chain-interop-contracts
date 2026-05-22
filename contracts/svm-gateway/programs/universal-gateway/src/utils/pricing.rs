@@ -92,7 +92,7 @@ pub fn check_usd_caps(
 }
 
 /// View function for SOL price (display only — not part of cap enforcement).
-/// Uses a 1-hour window since this path does not gate any protocol limit.
+/// Uses a 10-hour window to tolerate devnet feed staleness.
 pub fn get_sol_price(price_update: &Account<PriceUpdateV2>) -> Result<PriceData> {
-    calculate_sol_price(price_update, 3_600)
+    calculate_sol_price(price_update, 36_000)
 }
