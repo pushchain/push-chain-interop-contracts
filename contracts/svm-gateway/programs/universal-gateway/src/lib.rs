@@ -185,6 +185,8 @@ pub mod universal_gateway {
     // =========================
     /// @notice Unified outbound entrypoint: withdraw (mode 1) or execute (mode 2)
     /// @param instruction_id 1=withdraw (vault→CEA→recipient), 2=execute (vault→CEA→CPI)
+    /// @param deadline Unix timestamp (seconds) after which TSS signature is invalid.
+    ///        Prevents late first-execution on Solana after source-chain revert/refund.
     pub fn finalize_universal_tx(
         mut ctx: Context<FinalizeUniversalTx>,
         instruction_id: u8,
@@ -195,6 +197,7 @@ pub mod universal_gateway {
         writable_flags: Vec<u8>,
         ix_data: Vec<u8>,
         gas_fee: u64,
+        deadline: i64,
         signature: [u8; 64],
         recovery_id: u8,
         message_hash: [u8; 32],
@@ -211,6 +214,7 @@ pub mod universal_gateway {
             0,
             None,
             gas_fee,
+            deadline,
             signature,
             recovery_id,
             message_hash,
@@ -228,6 +232,7 @@ pub mod universal_gateway {
     }
 
     /// @notice Additive ref-finalize route. Executes the same finalize flow using ix_data loaded from PDA.
+    /// @param deadline Unix timestamp (seconds) after which TSS signature is invalid.
     pub fn finalize_universal_tx_with_ix_data_ref(
         mut ctx: Context<FinalizeUniversalTx>,
         instruction_id: u8,
@@ -238,6 +243,7 @@ pub mod universal_gateway {
         ix_data_hash: [u8; 32],
         writable_flags: Vec<u8>,
         gas_fee: u64,
+        deadline: i64,
         signature: [u8; 64],
         recovery_id: u8,
         message_hash: [u8; 32],
@@ -288,6 +294,7 @@ pub mod universal_gateway {
             state::SIGNATURE_FEE_LAMPORTS,
             Some(&store_refund_recipient_info),
             gas_fee,
+            deadline,
             signature,
             recovery_id,
             message_hash,
@@ -310,12 +317,14 @@ pub mod universal_gateway {
     /// @notice TSS-verified emergency rescue of locked funds from vault.
     ///         SOL path: token_mint = None. SPL path: token_mint = Some.
     ///         Replay-protected via ExecutedSubTx PDA
+    /// @param deadline Unix timestamp (seconds) after which TSS signature is invalid.
     pub fn rescue_funds(
         ctx: Context<RescueFunds>,
         sub_tx_id: [u8; 32],
         universal_tx_id: [u8; 32],
         amount: u64,
         gas_fee: u64,
+        deadline: i64,
         signature: [u8; 64],
         recovery_id: u8,
         message_hash: [u8; 32],
@@ -326,6 +335,7 @@ pub mod universal_gateway {
             universal_tx_id,
             amount,
             gas_fee,
+            deadline,
             signature,
             recovery_id,
             message_hash,
@@ -337,6 +347,7 @@ pub mod universal_gateway {
     // =========================
     /// @notice TSS-verified unified revert (SOL and SPL) — EVM parity: `revertUniversalTx`.
     ///         SOL path: token_mint = None. SPL path: token_mint = Some.
+    /// @param deadline Unix timestamp (seconds) after which TSS signature is invalid.
     pub fn revert_universal_tx(
         ctx: Context<RevertUniversalTx>,
         sub_tx_id: [u8; 32],
@@ -344,6 +355,7 @@ pub mod universal_gateway {
         amount: u64,
         revert_instruction: RevertInstructions,
         gas_fee: u64,
+        deadline: i64,
         signature: [u8; 64],
         recovery_id: u8,
         message_hash: [u8; 32],
@@ -355,6 +367,7 @@ pub mod universal_gateway {
             amount,
             revert_instruction,
             gas_fee,
+            deadline,
             signature,
             recovery_id,
             message_hash,

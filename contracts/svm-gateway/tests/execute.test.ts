@@ -169,6 +169,25 @@ describe("Universal Gateway - Execute Tests", () => {
 
   let txIdCounter = 0;
 
+  const expectRejection = async (promise: Promise<unknown>, message: string) => {
+    let rejected = false;
+    try {
+      await promise;
+    } catch (error: any) {
+      rejected = true;
+      const errorStr = error.toString();
+      const errorMessage = error.error?.errorMessage || error.message || errorStr;
+      const errorCode = error.error?.errorCode?.code || error.error?.errorCode || error.code;
+      const matches =
+        errorStr.includes(message) ||
+        errorMessage.includes(message) ||
+        (errorCode && errorCode.toString().includes(message)) ||
+        error.error?.errorCode?.code === message;
+      expect(matches, `Expected error "${message}", got ${errorStr}`).to.be.true;
+    }
+    expect(rejected, `Expected rejection with "${message}" but call succeeded`).to.be.true;
+  };
+
   const generateTxId = (): number[] => {
     txIdCounter++;
     const buffer = Buffer.alloc(32);
@@ -459,6 +478,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(counterIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -565,6 +585,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(preseedIx.data),
           new anchor.BN(Number(preseedGasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(preseedSig.signature),
           preseedSig.recoveryId,
           Array.from(preseedSig.messageHash)
@@ -641,6 +662,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(transferIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(transferSig.signature),
           transferSig.recoveryId,
           Array.from(transferSig.messageHash)
@@ -740,6 +762,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(sysTransferIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -841,6 +864,7 @@ describe("Universal Gateway - Execute Tests", () => {
             Buffer.from(transferIx.data),
             new anchor.BN(Number(gasFee)),
 
+            new anchor.BN(4102444800),
             Array.from(transferSig.signature),
             transferSig.recoveryId,
             Array.from(transferSig.messageHash)
@@ -935,6 +959,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(counterIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig1.signature),
           sig1.recoveryId,
           Array.from(sig1.messageHash)
@@ -994,6 +1019,7 @@ describe("Universal Gateway - Execute Tests", () => {
             Buffer.from(counterIx.data),
             new anchor.BN(Number(gasFee)),
 
+            new anchor.BN(4102444800),
             Array.from(sig2.signature),
             sig2.recoveryId,
             Array.from(sig2.messageHash)
@@ -1109,6 +1135,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(counterIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -1235,6 +1262,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(preseedIx.data),
           new anchor.BN(Number(preseedGasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(preseedSig.signature),
           preseedSig.recoveryId,
           Array.from(preseedSig.messageHash)
@@ -1314,6 +1342,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(transferIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(transferSig.signature),
           transferSig.recoveryId,
           Array.from(transferSig.messageHash)
@@ -1427,6 +1456,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(splTransferIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -1544,6 +1574,7 @@ describe("Universal Gateway - Execute Tests", () => {
             Buffer.from(transferIx.data),
             new anchor.BN(Number(gasFee)),
 
+            new anchor.BN(4102444800),
             Array.from(transferSig.signature),
             transferSig.recoveryId,
             Array.from(transferSig.messageHash)
@@ -1666,6 +1697,7 @@ describe("Universal Gateway - Execute Tests", () => {
             Buffer.from(counterIx.data),
             new anchor.BN(Number(gasFee)),
 
+            new anchor.BN(4102444800),
             Array.from(sig.signature),
             sig.recoveryId,
             Array.from(sig.messageHash)
@@ -1779,6 +1811,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(counterIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -1933,6 +1966,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(decoded.ixData),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -2092,6 +2126,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(decoded.ixData),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -2241,6 +2276,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 accountsToWritableFlagsOnly(accounts),
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -2344,6 +2380,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -2436,6 +2473,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -2530,6 +2568,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -2623,6 +2662,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -2692,6 +2732,7 @@ describe("Universal Gateway - Execute Tests", () => {
               Buffer.from([]),
               new anchor.BN(Number(gasFee)),
 
+              new anchor.BN(4102444800),
               dummySig,
               0,
               dummyHash
@@ -2791,6 +2832,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 corruptedSignature, // Invalid!
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -2882,6 +2924,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 tamperedHash // Tampered!
@@ -2968,6 +3011,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from([0x01]),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -3060,6 +3104,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -3155,6 +3200,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -3266,6 +3312,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(decoded.ixData),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -3435,6 +3482,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(stakeIx.data),
           new anchor.BN(Number(gasFee1)),
 
+          new anchor.BN(4102444800),
           Array.from(sig1.signature),
           sig1.recoveryId,
           Array.from(sig1.messageHash)
@@ -3540,6 +3588,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(stakeIx2.data),
           new anchor.BN(Number(gasFee2)),
 
+          new anchor.BN(4102444800),
           Array.from(sig2.signature),
           sig2.recoveryId,
           Array.from(sig2.messageHash)
@@ -3645,6 +3694,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(unstakeIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -3808,6 +3858,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(stakeIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -3901,6 +3952,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(unstakeIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -4025,6 +4077,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(stakeIx.data),
           gasFeeBn,
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -4133,6 +4186,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(unstakeIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -4343,6 +4397,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(stakeIx.data),
           gasFeeBn,
 
+          new anchor.BN(4102444800),
           Array.from(sig1.signature),
           sig1.recoveryId,
           Array.from(sig1.messageHash)
@@ -4440,6 +4495,7 @@ describe("Universal Gateway - Execute Tests", () => {
             Buffer.from(crossUnstakeIx.data),
             new anchor.BN(Number(gasFee2)),
 
+            new anchor.BN(4102444800),
             Array.from(sigCross.signature),
             sigCross.recoveryId,
             Array.from(sigCross.messageHash)
@@ -4493,6 +4549,92 @@ describe("Universal Gateway - Execute Tests", () => {
           user3StakeAfter.amount.toString()
         );
       }
+    });
+  });
+
+  describe("deadline enforcement", () => {
+    const PAST_DEADLINE = BigInt(1);
+
+    it("rejects execute finalize with an expired deadline (SignatureExpired)", async () => {
+      const subTxId = generateTxId();
+      const universalTxId = generateUniversalTxId();
+      const pushAccount = generateSender();
+
+      const counterIx = await counterProgram.methods
+        .increment(new anchor.BN(1))
+        .accountsPartial({
+          counter: counterPda,
+          authority: counterAuthority.publicKey,
+        })
+        .instruction();
+
+      const remainingAccounts = instructionAccountsToRemaining(counterIx);
+      const accounts = remainingAccounts.map((acc) => ({
+        pubkey: acc.pubkey,
+        isWritable: acc.isWritable,
+      }));
+      const { gasFee } = await calculateSolExecuteFees(provider.connection);
+      const writableFlags = accountsToWritableFlagsOnly(accounts);
+
+      const sig = await signTssMessage({
+        instruction: TssInstruction.Execute,
+        amount: BigInt(0),
+        chainId: (await gatewayProgram.account.tssPda.fetch(tssPda)).chainId,
+        deadline: PAST_DEADLINE,
+        additional: buildExecuteAdditionalData(
+          new Uint8Array(universalTxId),
+          new Uint8Array(subTxId),
+          counterProgram.programId,
+          new Uint8Array(pushAccount),
+          accounts,
+          counterIx.data,
+          gasFee
+        ),
+      });
+
+      await expectRejection(
+        gatewayProgram.methods
+          .finalizeUniversalTx(
+            2,
+            Array.from(subTxId),
+            Array.from(universalTxId),
+            new anchor.BN(0),
+            Array.from(pushAccount),
+            writableFlags,
+            Buffer.from(counterIx.data),
+            new anchor.BN(Number(gasFee)),
+            new anchor.BN(PAST_DEADLINE.toString()),
+            Array.from(sig.signature),
+            sig.recoveryId,
+            Array.from(sig.messageHash)
+          )
+          .accountsPartial({
+            caller: admin.publicKey,
+            config: configPda,
+            vaultSol: vaultPda,
+            ceaAuthority: getCeaAuthorityPda(pushAccount),
+            tssPda,
+            executedSubTx: getExecutedTxPda(subTxId),
+            rateLimitConfig: null,
+            tokenRateLimit: null,
+            destinationProgram: counterProgram.programId,
+            storedIxData: null,
+            storeRefundRecipient: null,
+            recipient: null,
+            vaultAta: null,
+            ceaAta: null,
+            mint: null,
+            tokenProgram: null,
+            rent: null,
+            associatedTokenProgram: null,
+            recipientAta: null,
+            systemProgram: SystemProgram.programId,
+          })
+          .remainingAccounts(remainingAccounts)
+          .signers([admin])
+          .rpc(),
+        "SignatureExpired"
+      );
     });
   });
 

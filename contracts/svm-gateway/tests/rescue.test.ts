@@ -84,6 +84,7 @@ describe("Universal Gateway - Rescue Tests", () => {
         instruction: TssInstruction;
         amount?: bigint;
         additional: (Uint8Array | number[])[];
+        deadline?: bigint;
     }) => {
         const tssAccount = await program.account.tssPda.fetch(tssPda);
         return signTssMessage({ ...params, chainId: tssAccount.chainId });
@@ -313,6 +314,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     Array.from(universalTxId),
                     new anchor.BN(rescueAmount),
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     sig.signature,
                     sig.recoveryId,
                     sig.messageHash,
@@ -374,6 +376,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(rescueAmount),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         corrupted,
                         valid.recoveryId,
                         valid.messageHash,
@@ -422,6 +425,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(0),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -477,6 +481,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(rescueAmount),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -534,6 +539,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(rescueAmount),
                         new anchor.BN(Number(tooLargeGasFee)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -583,6 +589,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     Array.from(universalTxId),
                     new anchor.BN(rescueAmount),
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     sig.signature,
                     sig.recoveryId,
                     sig.messageHash,
@@ -612,6 +619,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(rescueAmount),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -679,6 +687,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     Array.from(universalTxId),
                     new anchor.BN(Number(rescueRaw)),
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     sig.signature,
                     sig.recoveryId,
                     sig.messageHash,
@@ -741,6 +750,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(Number(rescueRaw)),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         corrupted,
                         valid.recoveryId,
                         valid.messageHash,
@@ -794,6 +804,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(Number(rescueRaw)),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -850,6 +861,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(Number(rescueRaw)),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -901,6 +913,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     Array.from(universalTxId),
                     new anchor.BN(Number(rescueRaw)),
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     sig.signature,
                     sig.recoveryId,
                     sig.messageHash,
@@ -930,6 +943,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(Number(rescueRaw)),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -961,6 +975,59 @@ describe("Universal Gateway - Rescue Tests", () => {
                     allLogs.includes("AccountDiscriminatorAlreadySet");
                 expect(isReplayError).to.be.true;
             }
+        });
+
+        it("rejects rescue_funds with an expired deadline (SignatureExpired)", async () => {
+            const rescueRaw = BigInt(100) * TOKEN_MULTIPLIER;
+            const subTxId = generateTxId();
+            const executedSubTxPda = getExecutedTxPda(subTxId);
+            const universalTxId = generateUniversalTxId();
+            const pastDeadline = BigInt(1);
+
+            const additional = buildRescueAdditionalData(
+                subTxId,
+                universalTxId,
+                recipient.publicKey,
+                DEFAULT_GAS_FEE,
+                mockUSDT.mint.publicKey
+            );
+            const sig = await signTssMessageWithChainId({
+                instruction: TssInstruction.Rescue,
+                amount: rescueRaw,
+                additional,
+                deadline: pastDeadline,
+            });
+
+            await expectRejection(
+                program.methods
+                    .rescueFunds(
+                        Array.from(subTxId),
+                        Array.from(universalTxId),
+                        new anchor.BN(Number(rescueRaw)),
+                        new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(pastDeadline.toString()),
+                        sig.signature,
+                        sig.recoveryId,
+                        sig.messageHash,
+                    )
+                    .accountsPartial({
+                        config: configPda,
+                        vault: vaultPda,
+                        feeVault: feeVaultPda,
+                        tssPda,
+                        recipient: recipient.publicKey,
+                        executedSubTx: executedSubTxPda,
+                        caller: relayer.publicKey,
+                        systemProgram: SystemProgram.programId,
+                        tokenVault: vaultUsdtAccount,
+                        recipientTokenAccount: recipientUsdtAccount,
+                        tokenMint: mockUSDT.mint.publicKey,
+                        tokenProgram: TOKEN_PROGRAM_ID,
+                    })
+                    .signers([relayer])
+                    .rpc(),
+                "SignatureExpired"
+            );
         });
     });
 });

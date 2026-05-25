@@ -102,4 +102,7 @@ pub enum GatewayError {
 
     #[msg("Stored ix_data account is not closable by caller")]
     StoredIxDataNotClosable,
+
+    #[msg("TSS signature has expired (current time is past deadline)")]
+    SignatureExpired,
 }

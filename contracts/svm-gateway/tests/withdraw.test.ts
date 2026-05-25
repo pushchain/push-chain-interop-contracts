@@ -10,7 +10,7 @@ import {
     getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import * as sharedState from "./shared-state";
-import { signTssMessage, TssInstruction, generateUniversalTxId, buildRevertAdditionalData, buildWithdrawAdditionalData } from "./helpers/tss";
+import { signTssMessage, TssInstruction, generateUniversalTxId, buildRevertAdditionalData, buildWithdrawAdditionalData, DEFAULT_DEADLINE } from "./helpers/tss";
 import { ensureTestSetup } from "./helpers/test-setup";
 import {
     USDT_DECIMALS, TOKEN_MULTIPLIER,
@@ -74,6 +74,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
     const signTssMessageWithChainId = async (params: {
         instruction: TssInstruction;
         amount?: bigint;
+        deadline?: bigint;
         additional: (Uint8Array | number[])[];
     }) => {
         const tssAccount = await program.account.tssPda.fetch(tssPda);
@@ -711,6 +712,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                     new anchor.BN(revertAmount),
                     revertInstruction,
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     signature.signature,
                     signature.recoveryId,
                     signature.messageHash,
@@ -777,6 +779,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(revertAmount),
                         revertInstruction,
                         new anchor.BN(Number(tooLargeGasFee)),
+                        new anchor.BN(4102444800),
                         signature.signature,
                         signature.recoveryId,
                         signature.messageHash,
@@ -840,6 +843,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                     new anchor.BN(Number(revertRaw)),
                     revertInstruction,
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     signature.signature,
                     signature.recoveryId,
                     signature.messageHash,
@@ -1253,6 +1257,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                             new anchor.BN(revertAmount),
                             revertInstruction,
                             new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                            new anchor.BN(4102444800),
                             signature.signature,
                             signature.recoveryId,
                             signature.messageHash,
@@ -1314,6 +1319,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(0),
                         revertInstruction,
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         signature.signature,
                         signature.recoveryId,
                         signature.messageHash,
@@ -1371,6 +1377,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(revertAmount),
                         revertInstruction,
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         signature.signature,
                         signature.recoveryId,
                         signature.messageHash,
@@ -1444,6 +1451,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                     new anchor.BN(revertAmount),
                     revertInstruction,
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     signature.signature,
                     signature.recoveryId,
                     signature.messageHash,
@@ -1492,6 +1500,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(revertAmount),
                         revertInstruction,
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         signature2.signature,
                         signature2.recoveryId,
                         signature2.messageHash,
@@ -1564,6 +1573,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(0),
                         revertInstruction,
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         signature.signature,
                         signature.recoveryId,
                         signature.messageHash,
@@ -1623,6 +1633,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(Number(revertRaw)),
                         revertInstruction,
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         signature.signature,
                         signature.recoveryId,
                         signature.messageHash,
@@ -1683,6 +1694,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                     new anchor.BN(Number(revertRaw)),
                     revertInstruction,
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     signature.signature,
                     signature.recoveryId,
                     signature.messageHash,
@@ -1732,6 +1744,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(Number(revertRaw)),
                         revertInstruction,
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         signature2.signature,
                         signature2.recoveryId,
                         signature2.messageHash,
@@ -1768,6 +1781,154 @@ describe("Universal Gateway - Withdraw Tests", () => {
                     allLogs.includes("AccountDiscriminatorAlreadySet");
                 expect(isReplayError).to.be.true;
             }
+        });
+    });
+
+    // =======================================================================
+    //  DEADLINE ENFORCEMENT
+    // =======================================================================
+    describe("deadline enforcement", () => {
+        const PAST_DEADLINE = BigInt(1); // Unix epoch 1970 — always expired
+
+        it("rejects finalize_universal_tx with an expired deadline (SignatureExpired)", async () => {
+            const subTxId = generateTxId();
+            const universalTxId = generateUniversalTxId();
+            const pushAccount = generatePushAccount();
+            const withdrawLamports = anchor.web3.LAMPORTS_PER_SOL;
+
+            // Sign with the past deadline — hash includes deadline=1
+            const tssAdditional = buildWithdrawAdditionalData(
+                new Uint8Array(universalTxId),
+                new Uint8Array(subTxId),
+                new Uint8Array(pushAccount),
+                PublicKey.default,
+                recipient.publicKey,
+                DEFAULT_GAS_FEE
+            );
+            const signature = await signTssMessageWithChainId({
+                instruction: TssInstruction.Withdraw,
+                amount: BigInt(withdrawLamports),
+                additional: tssAdditional,
+                deadline: PAST_DEADLINE,
+            });
+
+            await expectRejection(
+                finalizeUniversalTx({
+                    instructionId: 1,
+                    subTxId,
+                    universalTxId,
+                    amount: new anchor.BN(withdrawLamports),
+                    pushAccount,
+                    gasFee: new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    deadline: new anchor.BN(PAST_DEADLINE.toString()),
+                    sig: signature,
+                    caller: relayer.publicKey,
+                    recipient: recipient.publicKey,
+                })
+                    .signers([relayer])
+                    .rpc(),
+                "SignatureExpired"
+            );
+        });
+
+        it("rejects revert_universal_tx with an expired deadline (SignatureExpired)", async () => {
+            const subTxId = generateTxId();
+            const universalTxId = generateUniversalTxId();
+            const revertAmount = anchor.web3.LAMPORTS_PER_SOL;
+            const revertInstruction = {
+                revertRecipient: recipient.publicKey,
+                revertMsg: Buffer.from("expired revert"),
+            };
+
+            const signature = await signTssMessageWithChainId({
+                instruction: TssInstruction.Revert,
+                amount: BigInt(revertAmount),
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    recipient.publicKey,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE
+                ),
+                deadline: PAST_DEADLINE,
+            });
+
+            await expectRejection(
+                program.methods
+                    .revertUniversalTx(
+                        subTxId,
+                        universalTxId,
+                        new anchor.BN(revertAmount),
+                        revertInstruction,
+                        new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(PAST_DEADLINE.toString()),
+                        signature.signature,
+                        signature.recoveryId,
+                        signature.messageHash,
+                    )
+                    .accountsPartial({
+                        config: configPda,
+                        vault: vaultPda,
+                        feeVault: feeVaultPda,
+                        tssPda,
+                        recipient: recipient.publicKey,
+                        executedSubTx: getExecutedTxPda(subTxId),
+                        caller: relayer.publicKey,
+                        systemProgram: SystemProgram.programId,
+                        tokenVault: null,
+                        recipientTokenAccount: null,
+                        tokenMint: null,
+                        tokenProgram: null,
+                    })
+                    .signers([relayer])
+                    .rpc(),
+                "SignatureExpired"
+            );
+        });
+
+        it("rejects finalize_universal_tx when submitted deadline differs from signed deadline (MessageHashMismatch)", async () => {
+            const subTxId = generateTxId();
+            const universalTxId = generateUniversalTxId();
+            const pushAccount = generatePushAccount();
+            const withdrawLamports = anchor.web3.LAMPORTS_PER_SOL;
+
+            // Sign with DEFAULT_DEADLINE (far future)
+            const tssAdditional = buildWithdrawAdditionalData(
+                new Uint8Array(universalTxId),
+                new Uint8Array(subTxId),
+                new Uint8Array(pushAccount),
+                PublicKey.default,
+                recipient.publicKey,
+                DEFAULT_GAS_FEE
+            );
+            const signature = await signTssMessageWithChainId({
+                instruction: TssInstruction.Withdraw,
+                amount: BigInt(withdrawLamports),
+                additional: tssAdditional,
+                // uses DEFAULT_DEADLINE implicitly
+            });
+
+            // Submit with a different future deadline — expiry check passes but
+            // the on-chain hash reconstruction uses the submitted deadline, so
+            // it won't match the signature (which was built with DEFAULT_DEADLINE).
+            const WRONG_FUTURE_DEADLINE = DEFAULT_DEADLINE + BigInt(1);
+            await expectRejection(
+                finalizeUniversalTx({
+                    instructionId: 1,
+                    subTxId,
+                    universalTxId,
+                    amount: new anchor.BN(withdrawLamports),
+                    pushAccount,
+                    gasFee: new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    deadline: new anchor.BN(WRONG_FUTURE_DEADLINE.toString()),
+                    sig: signature,
+                    caller: relayer.publicKey,
+                    recipient: recipient.publicKey,
+                })
+                    .signers([relayer])
+                    .rpc(),
+                "MessageHashMismatch"
+            );
         });
     });
 });

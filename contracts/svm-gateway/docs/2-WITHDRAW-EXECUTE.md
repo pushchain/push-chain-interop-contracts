@@ -17,9 +17,11 @@ Single entrypoint for withdraw/execute outbound operations, routed by `instructi
 
 ```
 PREFIX = b"PUSH_CHAIN_SVM"
-message = PREFIX || instruction_id (1 byte) || chain_id || amount (8 bytes BE) || additional_data
+message = PREFIX || instruction_id (1 byte) || chain_id || deadline (8 bytes i64 BE) || amount (8 bytes u64 BE) || additional_data
 hash = keccak256(message)
 ```
+
+`deadline` is a Unix timestamp (seconds). The program rejects execution if `Clock::unix_timestamp > deadline`.
 
 ### Withdraw (id=1) — additional_data
 ```

@@ -57,6 +57,23 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
     error?.code ||
     /Error Code: ([A-Za-z0-9_]+)/.exec(String(error))?.[1];
 
+  const expectRejection = async (promise: Promise<unknown>, message: string) => {
+    let rejected = false;
+    try {
+      await promise;
+    } catch (error: any) {
+      rejected = true;
+      const errorCode = getErrorCode(error);
+      const errorStr = String(error);
+      const matches =
+        errorCode === message ||
+        errorStr.includes(message) ||
+        error?.error?.errorMessage?.includes?.(message);
+      expect(matches, `Expected error "${message}", got ${errorStr}`).to.be.true;
+    }
+    expect(rejected, `Expected rejection with "${message}" but call succeeded`).to.be.true;
+  };
+
   const deriveStoredIxDataPda = (
     subTxId: number[],
     ixDataHash: Uint8Array
@@ -409,6 +426,7 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
         asIxDataHashArg(ixDataHash),
         writableFlags,
         new anchor.BN(Number(gasFee)),
+        new anchor.BN(4102444800),
         Array.from(sig.signature),
         sig.recoveryId,
         Array.from(sig.messageHash)
@@ -631,6 +649,7 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
           asIxDataHashArg(wrongIxDataHash),
           route.writableFlags,
           new anchor.BN(Number(refGasFee)),
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -780,6 +799,7 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
         asIxDataHashArg(ixDataHash),
         refRoute.writableFlags,
         new anchor.BN(Number(refGasFee)),
+        new anchor.BN(4102444800),
         Array.from(refSig.signature),
         refSig.recoveryId,
         Array.from(refSig.messageHash)
@@ -886,6 +906,7 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
           asIxDataHashArg(ixDataHash),
           route.writableFlags,
           new anchor.BN(Number(insufficientGasFee)),
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -982,6 +1003,7 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
           asIxDataHashArg(ixDataHash),
           route.writableFlags,
           new anchor.BN(Number(refGasFee)),
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -1126,6 +1148,7 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
         asIxDataHashArg(ixDataHash),
         route.writableFlags,
         new anchor.BN(Number(refGasFee)),
+        new anchor.BN(4102444800),
         Array.from(sig.signature),
         sig.recoveryId,
         Array.from(sig.messageHash)
@@ -1219,6 +1242,7 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
         route.writableFlags,
         Buffer.from(route.counterIx.data),
         new anchor.BN(Number(gasFee)),
+        new anchor.BN(4102444800),
         Array.from(sig.signature),
         sig.recoveryId,
         Array.from(sig.messageHash)
@@ -1569,6 +1593,7 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
           asIxDataHashArg(ixDataHash),
           route.writableFlags,
           new anchor.BN(Number(refGasFee)),
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -1669,6 +1694,7 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
           asIxDataHashArg(ixDataHash),
           writableFlags,
           new anchor.BN(Number(refGasFee)),
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -1760,6 +1786,7 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
           asIxDataHashArg(ixDataHash),
           writableFlags,
           new anchor.BN(Number(refGasFee)),
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -1859,5 +1886,102 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
       .rpc();
 
     expect(await provider.connection.getAccountInfo(storedIxDataPda)).to.equal(null);
+  });
+
+  it("rejects ref-finalize with an expired deadline (SignatureExpired)", async () => {
+    const subTxId = generateTxId();
+    const universalTxId = generateUniversalTxId();
+    const pushAccount = generateSender();
+    const route = await buildCounterIncrementRoute(pushAccount, 1);
+    const ixDataHash = hashIxData(Buffer.from(route.counterIx.data));
+    const storedIxDataPda = deriveStoredIxDataPda(subTxId, ixDataHash);
+    const { gasFee } = await calculateSolExecuteFees(provider.connection);
+    const refGasFee = gasFee + SIGNATURE_FEE_LAMPORTS;
+    const pastDeadline = BigInt(1);
+
+    await gatewayProgram.methods
+      .storeExecuteIxData(
+        Array.from(subTxId),
+        asIxDataHashArg(ixDataHash),
+        Buffer.from(route.counterIx.data)
+      )
+      .accountsPartial({
+        caller: storeRelayer.publicKey,
+        storedIxData: storedIxDataPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([storeRelayer])
+      .rpc();
+
+    const sig = await signTssMessage({
+      instruction: TssInstruction.Execute,
+      amount: BigInt(0),
+      chainId: (await gatewayProgram.account.tssPda.fetch(tssPda)).chainId,
+      deadline: pastDeadline,
+      additional: buildExecuteAdditionalData(
+        new Uint8Array(universalTxId),
+        new Uint8Array(subTxId),
+        counterProgram.programId,
+        new Uint8Array(pushAccount),
+        route.accounts,
+        route.counterIx.data,
+        refGasFee
+      ),
+    });
+
+    await expectRejection(
+      gatewayProgram.methods
+        .finalizeUniversalTxWithIxDataRef(
+          2,
+          Array.from(subTxId),
+          Array.from(universalTxId),
+          new anchor.BN(0),
+          Array.from(pushAccount),
+          asIxDataHashArg(ixDataHash),
+          route.writableFlags,
+          new anchor.BN(Number(refGasFee)),
+          new anchor.BN(pastDeadline.toString()),
+          Array.from(sig.signature),
+          sig.recoveryId,
+          Array.from(sig.messageHash)
+        )
+        .accountsPartial({
+          caller: admin.publicKey,
+          config: configPda,
+          vaultSol: vaultPda,
+          ceaAuthority: getCeaAuthorityPda(
+            Array.from(pushAccount),
+            gatewayProgram.programId
+          ),
+          tssPda,
+          executedSubTx: getExecutedTxPda(subTxId, gatewayProgram.programId),
+          destinationProgram: counterProgram.programId,
+          recipient: null,
+          vaultAta: null,
+          ceaAta: null,
+          mint: null,
+          tokenProgram: null,
+          rent: null,
+          associatedTokenProgram: null,
+          recipientAta: null,
+          rateLimitConfig: rateLimitConfigPda,
+          tokenRateLimit: nativeSolTokenRateLimitPda,
+          storedIxData: storedIxDataPda,
+          storeRefundRecipient: storeRelayer.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .remainingAccounts(instructionAccountsToRemaining(route.counterIx))
+        .signers([admin])
+        .rpc(),
+      "SignatureExpired"
+    );
+
+    await closeStoredIxDataAs({
+      caller: storeRelayer,
+      storeRefundRecipient: storeRelayer.publicKey,
+      subTxId,
+      ixDataHash,
+      executedSubTx: null,
+    });
   });
 });

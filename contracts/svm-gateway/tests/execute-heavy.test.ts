@@ -590,6 +590,7 @@ describe("Universal Gateway - Heavy Transaction Benchmarking", () => {
           asIxDataHashArg(ixDataHash),
           writableFlags,
           new anchor.BN(Number(refGasFee)),
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)

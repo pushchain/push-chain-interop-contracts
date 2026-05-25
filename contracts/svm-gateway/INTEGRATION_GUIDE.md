@@ -722,9 +722,11 @@ The extra `5000` covers the store UV's transaction fee.
    - Read account: get `chain_id` (string)
 3. Build message hash based on instruction_id (common fields first):
    - **Withdraw (1)**:
-     `PREFIX | 0x01 | chain_id | amount | sub_tx_id | universal_tx_id | push_account | token | gas_fee | target`
+     `PREFIX | 0x01 | chain_id | deadline (i64 BE 8 bytes) | amount | sub_tx_id | universal_tx_id | push_account | token | gas_fee | target`
    - **Execute (2)**:
-     `PREFIX | 0x02 | chain_id | amount | sub_tx_id | universal_tx_id | push_account | token | gas_fee | target_program | accounts_buf | ix_data_buf`
+     `PREFIX | 0x02 | chain_id | deadline (i64 BE 8 bytes) | amount | sub_tx_id | universal_tx_id | push_account | token | gas_fee | target_program | accounts_buf | ix_data_buf`
+   - **Revert (3)** and **Rescue (4)** include `deadline` in the same position.
+   - `deadline` is the Unix timestamp (seconds) after which the program rejects the instruction with `SignatureExpired`.
 4. For execute: build `accounts_buf` and `ix_data_buf` with length prefixes (section 3.3)
 
 ### 7.4 TSS Signing
@@ -760,8 +762,16 @@ The extra `5000` covers the store UV's transaction fee.
 - `Paused`: Gateway is paused (check config)
 
 **Retry logic**:
-- Transaction expired: Get new blockhash, retry
+- Solana blockhash expired: Rebuild transaction with a new blockhash and resubmit — the TSS signature covers the gateway instruction, not the Solana transaction envelope, so the same signature remains valid until the `deadline` expires.
+- `SignatureExpired`: The `deadline` in the TSS-signed payload has passed. Do NOT retry. Issue source-chain revert.
 - Account errors: Verify PDA derivation and account order
+
+**CRITICAL — revert-after-deadline rule**:
+A source-chain revert (refunding the user on Push) must only be issued when **both** conditions hold:
+1. The `deadline` in the TSS-signed payload has elapsed (on-chain clock past `deadline`).
+2. No `ExecutedSubTx` PDA exists for the `sub_tx_id` (confirming the finalize never succeeded).
+
+Do not treat a transient Solana failure (CPI error, congestion, blockhash expiry) as terminal before the deadline. The signed payload remains executable on Solana until the deadline expires. Issuing a source-chain revert while the payload is still live risks double-spend: the user is refunded on Push and the transaction later executes on Solana.
 
 ### 7.7 Event Verification
 

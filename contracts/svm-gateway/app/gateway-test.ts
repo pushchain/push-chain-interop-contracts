@@ -33,6 +33,7 @@ import {
   buildWithdrawAdditionalData,
   TssInstruction,
   generateUniversalTxId,
+  DEFAULT_DEADLINE,
 } from "../tests/helpers/tss";
 
 const KNOWN_PROGRAMS: Record<string, string> = {
@@ -1806,6 +1807,7 @@ async function run() {
       Buffer.alloc(0), // writable_flags (empty for withdraw)
       Buffer.from([]), // ix_data (empty for withdraw)
       new anchor.BN(withdrawGasFee), // gas_fee
+      new anchor.BN(DEFAULT_DEADLINE.toString()), // deadline
       Array.from(signature) as any,
       recoveryId,
       Array.from(messageHash) as any
@@ -1974,6 +1976,7 @@ async function run() {
           Buffer.alloc(0), // writable_flags (empty for withdraw)
           Buffer.from([]), // ix_data (empty for withdraw)
           new anchor.BN(splWithdrawGasFee), // gas_fee
+          new anchor.BN(DEFAULT_DEADLINE.toString()),
           Array.from(signatureSPL) as any,
           recoveryIdSPL,
           Array.from(messageHashSPL) as any
@@ -2187,6 +2190,7 @@ async function run() {
         Buffer.from(decoded.ixData),
         new anchor.BN(Number(gasFee)),
 
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         sig.signature,
         sig.recoveryId,
         sig.messageHash
@@ -2375,6 +2379,7 @@ async function run() {
         Buffer.from(decoded.ixData),
         new anchor.BN(Number(gasFee)),
 
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         sig.signature,
         sig.recoveryId,
         sig.messageHash
@@ -2532,6 +2537,7 @@ async function run() {
         ixData,
         new anchor.BN(Number(gasFee)),
 
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         Array.from(sig.signature),
         sig.recoveryId,
         Array.from(sig.messageHash)
@@ -2686,6 +2692,7 @@ async function run() {
           Buffer.from(securityCounterIx.data),
           new anchor.BN(Number(gasFee1)),
 
+          new anchor.BN(DEFAULT_DEADLINE.toString()),
           securitySig1.signature,
           securitySig1.recoveryId,
           securitySig1.messageHash
@@ -2777,6 +2784,7 @@ async function run() {
           Buffer.from(securityCounterIx2.data),
           new anchor.BN(Number(gasFee2)),
 
+          new anchor.BN(DEFAULT_DEADLINE.toString()),
           corruptedSig,
           securitySig2.recoveryId,
           securitySig2.messageHash
@@ -2879,6 +2887,7 @@ async function run() {
           Buffer.from(securityCounterIx4.data),
           new anchor.BN(Number(gasFee4)),
 
+          new anchor.BN(DEFAULT_DEADLINE.toString()),
           securitySig4.signature,
           securitySig4.recoveryId,
           securitySig4.messageHash
@@ -3032,6 +3041,7 @@ async function run() {
           Buffer.from(batchIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(DEFAULT_DEADLINE.toString()),
           sig.signature,
           sig.recoveryId,
           sig.messageHash
@@ -3065,6 +3075,7 @@ async function run() {
           Buffer.from(batchIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(DEFAULT_DEADLINE.toString()),
           sig.signature,
           sig.recoveryId,
           sig.messageHash
@@ -3333,6 +3344,7 @@ async function run() {
         Buffer.from(batchIx.data),
         new anchor.BN(Number(gasFeeHeavy)),
 
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         heavySig.signature,
         heavySig.recoveryId,
         heavySig.messageHash
@@ -3467,6 +3479,7 @@ async function run() {
         Buffer.from(batchIxSpl.data),
         new anchor.BN(Number(gasFeeHeavySpl)),
 
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         heavySigSpl.signature,
         heavySigSpl.recoveryId,
         heavySigSpl.messageHash
@@ -3649,6 +3662,7 @@ async function run() {
         refIxDataHash as unknown as number[],
         refWritableFlags,
         new anchor.BN(Number(refGasFee)),
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         refSig.signature,
         refSig.recoveryId,
         refSig.messageHash
@@ -3828,11 +3842,14 @@ async function run() {
       BigInt(revertGasFee)
     );
 
-    // Order matches revert_universal_tx.rs
+    // Order matches revert_universal_tx.rs: PREFIX || instruction_id || chain_id || deadline (i64 BE) || amount || additional_data
+    const deadlineBuf = Buffer.alloc(8);
+    deadlineBuf.writeBigInt64BE(DEFAULT_DEADLINE);
     const messageData = Buffer.concat([
       PREFIX,
       instructionIdBE,
-      chainIdBytes, // UTF-8 bytes of chain_id string
+      chainIdBytes,
+      deadlineBuf,
       amountBE,
       ...revertAdditional.map((item) => Buffer.from(item)),
     ]);
@@ -3869,6 +3886,7 @@ async function run() {
           revertMsg,
         },
         new anchor.BN(revertGasFee),
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         Array.from(signature),
         recoveryId,
         Array.from(messageHash)
@@ -3894,6 +3912,190 @@ async function run() {
   } catch (error) {
     console.log(`❌ revertWithdraw failed: ${error.message}`);
   }
+
+  // ===========================================================================
+  // 16. Deadline enforcement tests
+  // ===========================================================================
+  console.log("\n16. Testing deadline enforcement on devnet...");
+
+  const PAST_DEADLINE = BigInt(1); // Unix epoch 1970 — always expired
+
+  // ── 16.1 finalize_universal_tx: expired deadline → SignatureExpired ────────
+  {
+    const subTxId16a = Array.from(anchor.web3.Keypair.generate().publicKey.toBuffer());
+    const universalTxId16a = generateUniversalTxId();
+    const pushAccount16a = Array.from(anchor.web3.Keypair.generate().publicKey.toBuffer()).slice(0, 20);
+    const tssAccount16: any = await (program.account as any).tssPda.fetch(tssPda);
+
+    const sig16a = await signTssMessage({
+      instruction: TssInstruction.Withdraw,
+      amount: BigInt(LAMPORTS_PER_SOL),
+      chainId: tssAccount16.chainId,
+      deadline: PAST_DEADLINE,
+      additional: buildWithdrawAdditionalData(
+        new Uint8Array(universalTxId16a),
+        new Uint8Array(subTxId16a),
+        new Uint8Array(pushAccount16a),
+        PublicKey.default,
+        adminKeypair.publicKey,
+        BigInt(1_000_000)
+      ),
+    });
+
+    const [executedSubTx16a] = PublicKey.findProgramAddressSync(
+      [Buffer.from("executed_sub_tx"), Buffer.from(subTxId16a)],
+      program.programId
+    );
+
+    try {
+      await program.methods
+        .finalizeUniversalTx(
+          1, subTxId16a, Array.from(universalTxId16a),
+          new anchor.BN(LAMPORTS_PER_SOL), pushAccount16a,
+          Buffer.alloc(0), Buffer.from([]),
+          new anchor.BN(1_000_000),
+          new anchor.BN(PAST_DEADLINE.toString()),
+          Array.from(sig16a.signature), sig16a.recoveryId, Array.from(sig16a.messageHash)
+        )
+        .accountsPartial({
+          caller: admin, config: configPda, vaultSol: vaultPda,
+          ceaAuthority: getCeaAuthorityPda(pushAccount16a), tssPda,
+          executedSubTx: executedSubTx16a,
+          destinationProgram: SystemProgram.programId,
+          storedIxData: null, storeRefundRecipient: null,
+          recipient: admin,
+          vaultAta: null, ceaAta: null, mint: null, tokenProgram: null,
+          rent: null, associatedTokenProgram: null, recipientAta: null,
+          rateLimitConfig: null, tokenRateLimit: null,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([adminKeypair]).rpc();
+      throw new Error("Should have been rejected");
+    } catch (e: any) {
+      if (e.message?.includes("SignatureExpired")) {
+        console.log("  ✅ 16.1 Expired finalize deadline rejected (SignatureExpired)");
+      } else {
+        throw new Error(`16.1 FAILED — expected SignatureExpired, got: ${e.message}`);
+      }
+    }
+  }
+
+  // ── 16.2 finalize_universal_tx: tampered deadline → MessageHashMismatch ────
+  {
+    const subTxId16b = Array.from(anchor.web3.Keypair.generate().publicKey.toBuffer());
+    const universalTxId16b = generateUniversalTxId();
+    const pushAccount16b = Array.from(anchor.web3.Keypair.generate().publicKey.toBuffer()).slice(0, 20);
+    const tssAccount16: any = await (program.account as any).tssPda.fetch(tssPda);
+
+    // Sign with DEFAULT_DEADLINE
+    const sig16b = await signTssMessage({
+      instruction: TssInstruction.Withdraw,
+      amount: BigInt(LAMPORTS_PER_SOL),
+      chainId: tssAccount16.chainId,
+      additional: buildWithdrawAdditionalData(
+        new Uint8Array(universalTxId16b),
+        new Uint8Array(subTxId16b),
+        new Uint8Array(pushAccount16b),
+        PublicKey.default,
+        adminKeypair.publicKey,
+        BigInt(1_000_000)
+      ),
+    });
+
+    const [executedSubTx16b] = PublicKey.findProgramAddressSync(
+      [Buffer.from("executed_sub_tx"), Buffer.from(subTxId16b)],
+      program.programId
+    );
+
+    // Submit with a different (still future) deadline — hash won't match
+    const WRONG_DEADLINE = DEFAULT_DEADLINE + BigInt(1);
+    try {
+      await program.methods
+        .finalizeUniversalTx(
+          1, subTxId16b, Array.from(universalTxId16b),
+          new anchor.BN(LAMPORTS_PER_SOL), pushAccount16b,
+          Buffer.alloc(0), Buffer.from([]),
+          new anchor.BN(1_000_000),
+          new anchor.BN(WRONG_DEADLINE.toString()),
+          Array.from(sig16b.signature), sig16b.recoveryId, Array.from(sig16b.messageHash)
+        )
+        .accountsPartial({
+          caller: admin, config: configPda, vaultSol: vaultPda,
+          ceaAuthority: getCeaAuthorityPda(pushAccount16b), tssPda,
+          executedSubTx: executedSubTx16b,
+          destinationProgram: SystemProgram.programId,
+          storedIxData: null, storeRefundRecipient: null,
+          recipient: admin,
+          vaultAta: null, ceaAta: null, mint: null, tokenProgram: null,
+          rent: null, associatedTokenProgram: null, recipientAta: null,
+          rateLimitConfig: null, tokenRateLimit: null,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([adminKeypair]).rpc();
+      throw new Error("Should have been rejected");
+    } catch (e: any) {
+      if (e.message?.includes("MessageHashMismatch")) {
+        console.log("  ✅ 16.2 Tampered deadline rejected (MessageHashMismatch)");
+      } else {
+        throw new Error(`16.2 FAILED — expected MessageHashMismatch, got: ${e.message}`);
+      }
+    }
+  }
+
+  // ── 16.3 revert_universal_tx: expired deadline → SignatureExpired ──────────
+  {
+    const subTxId16c = Array.from(anchor.web3.Keypair.generate().publicKey.toBuffer());
+    const universalTxId16c = generateUniversalTxId();
+    const tssAccount16: any = await (program.account as any).tssPda.fetch(tssPda);
+    const revertMsg16c = Buffer.from("deadline-test-revert");
+
+    const sig16c = await signTssMessage({
+      instruction: TssInstruction.Revert,
+      amount: BigInt(1_000_000),
+      chainId: tssAccount16.chainId,
+      deadline: PAST_DEADLINE,
+      additional: buildRevertAdditionalData(
+        new Uint8Array(subTxId16c),
+        new Uint8Array(universalTxId16c),
+        adminKeypair.publicKey,
+        revertMsg16c,
+        BigInt(1_000_000)
+      ),
+    });
+
+    const [executedSubTx16c] = PublicKey.findProgramAddressSync(
+      [Buffer.from("executed_sub_tx"), Buffer.from(subTxId16c)],
+      program.programId
+    );
+
+    try {
+      await program.methods
+        .revertUniversalTx(
+          subTxId16c, Array.from(universalTxId16c),
+          new anchor.BN(1_000_000),
+          { revertRecipient: adminKeypair.publicKey, revertMsg: revertMsg16c },
+          new anchor.BN(1_000_000),
+          new anchor.BN(PAST_DEADLINE.toString()),
+          Array.from(sig16c.signature), sig16c.recoveryId, Array.from(sig16c.messageHash)
+        )
+        .accountsPartial({
+          config: configPda, vault: vaultPda, feeVault: feeVaultPda, tssPda,
+          recipient: admin, executedSubTx: executedSubTx16c,
+          caller: admin, systemProgram: SystemProgram.programId,
+          tokenVault: null, recipientTokenAccount: null, tokenMint: null, tokenProgram: null,
+        })
+        .signers([adminKeypair]).rpc();
+      throw new Error("Should have been rejected");
+    } catch (e: any) {
+      if (e.message?.includes("SignatureExpired")) {
+        console.log("  ✅ 16.3 Expired revert deadline rejected (SignatureExpired)");
+      } else {
+        throw new Error(`16.3 FAILED — expected SignatureExpired, got: ${e.message}`);
+      }
+    }
+  }
+
+  console.log("✅ All deadline enforcement checks passed on devnet!\n");
 
   console.log("All tests completed successfully!");
 }

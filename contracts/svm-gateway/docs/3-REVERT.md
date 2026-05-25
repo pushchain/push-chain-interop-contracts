@@ -25,9 +25,12 @@ Event is emitted after the funds transfer but before the UV reimbursement.
 ## TSS Message Format
 
 ```
-message = PREFIX || instruction_id (1 byte) || chain_id || amount (8 BE) || additional_data
+PREFIX = b"PUSH_CHAIN_SVM"
+message = PREFIX || instruction_id (1 byte) || chain_id || deadline (8 bytes i64 BE) || amount (8 bytes u64 BE) || additional_data
 hash = keccak256(message)
 ```
+
+`deadline` is a Unix timestamp (seconds). The program rejects execution if `Clock::unix_timestamp > deadline`.
 
 ### SOL Revert (instruction_id=3) — additional_data
 ```
@@ -38,8 +41,6 @@ sub_tx_id[32] | universal_tx_id[32] | recipient[32] | gas_fee (8 BE) | keccak256
 ```
 sub_tx_id[32] | universal_tx_id[32] | mint[32] | recipient[32] | gas_fee (8 BE) | keccak256(revert_msg)[32]
 ```
-
-`PREFIX = b"PUSH_CHAIN_SVM"`
 
 ---
 

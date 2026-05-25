@@ -77,21 +77,33 @@ pub fn update_tss(
 /// Common validator: verify hash and ECDSA secp256k1 signature recovers stored ETH address.
 /// Used by withdraw, revert, and execute functions - single standard for all TSS-signed messages.
 /// Replay protection is ensured per-tx by the ExecutedSubTx PDA (seeded by sub_tx_id).
+///
+/// Message format: PREFIX || instruction_id || chain_id || deadline (i64 BE) || [amount (u64 BE)] || additional_data
+///
+/// `deadline` is a unix timestamp (seconds). The program rejects finalization if the
+/// current on-chain clock is past the deadline, preventing late execution after a
+/// source-chain revert/refund.
 pub fn validate_message(
     tss: &mut Account<TssPda>,
     instruction_id: u8,
     amount: Option<u64>,
+    deadline: i64,
     additional_data: &[&[u8]],
     message_hash: &[u8; 32],
     signature: &[u8; 64],
     recovery_id: u8,
 ) -> Result<()> {
+    // Reject if the current time has passed the signed validity window.
+    let now = Clock::get()?.unix_timestamp;
+    require!(now <= deadline, GatewayError::SignatureExpired);
+
     // Rebuild message
     let mut buf = Vec::new();
     const PREFIX: &[u8] = b"PUSH_CHAIN_SVM";
     buf.extend_from_slice(PREFIX);
     buf.push(instruction_id);
     buf.extend_from_slice(tss.chain_id.as_bytes());
+    buf.extend_from_slice(&deadline.to_be_bytes());
     if let Some(val) = amount {
         buf.extend_from_slice(&val.to_be_bytes());
     }

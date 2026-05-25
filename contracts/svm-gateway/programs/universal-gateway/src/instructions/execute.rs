@@ -257,6 +257,7 @@ pub fn finalize_universal_tx_common<'info>(
     store_upload_fee_lamports: u64,
     store_refund_recipient: Option<&AccountInfo<'info>>,
     gas_fee: u64,
+    deadline: i64,
     signature: [u8; 64],
     recovery_id: u8,
     message_hash: [u8; 32],
@@ -281,6 +282,7 @@ pub fn finalize_universal_tx_common<'info>(
         &writable_flags,
         &ix_data,
         gas_fee,
+        deadline,
         amount,
         &message_hash,
         &signature,
@@ -489,6 +491,7 @@ fn verify_finalize_tss(
     writable_flags: &[u8],
     ix_data: &[u8],
     gas_fee: u64,
+    deadline: i64,
     amount: u64,
     message_hash: &[u8; 32],
     signature: &[u8; 64],
@@ -503,6 +506,7 @@ fn verify_finalize_tss(
             request.token,
             request.target,
             gas_fee,
+            deadline,
             amount,
             message_hash,
             signature,
@@ -522,6 +526,7 @@ fn verify_finalize_tss(
         writable_flags,
         ix_data,
         gas_fee,
+        deadline,
         amount,
         message_hash,
         signature,
@@ -634,6 +639,7 @@ fn build_and_validate_tss_withdraw(
     token: Pubkey,
     target: Pubkey,
     gas_fee: u64,
+    deadline: i64,
     amount: u64,
     message_hash: &[u8; 32],
     signature: &[u8; 64],
@@ -648,7 +654,7 @@ fn build_and_validate_tss_withdraw(
         &gas_fee_buf,
         &target.to_bytes(),
     ];
-    validate_message(tss_pda, 1, Some(amount), &additional, message_hash, signature, recovery_id)
+    validate_message(tss_pda, 1, Some(amount), deadline, &additional, message_hash, signature, recovery_id)
 }
 
 /// Build and validate TSS signature for execute mode (instruction_id=2)
@@ -673,6 +679,7 @@ fn build_and_validate_tss_execute<'info>(
     writable_flags: &[u8],
     ix_data: &[u8],
     gas_fee: u64,
+    deadline: i64,
     amount: u64,
     message_hash: &[u8; 32],
     signature: &[u8; 64],
@@ -695,7 +702,7 @@ fn build_and_validate_tss_execute<'info>(
         &ix_data_buf,
     ];
 
-    validate_message(tss_pda, 2, Some(amount), &additional, message_hash, signature, recovery_id)?;
+    validate_message(tss_pda, 2, Some(amount), deadline, &additional, message_hash, signature, recovery_id)?;
     Ok(accounts)
 }
 

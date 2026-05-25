@@ -22,7 +22,7 @@ import {
 } from "@solana/spl-token";
 import { assert } from "chai";
 import { AltHelper } from "./alt-helper";
-import { signTssMessage, buildWithdrawAdditionalData, TssInstruction, generateUniversalTxId } from "../tests/helpers/tss";
+import { signTssMessage, buildWithdrawAdditionalData, TssInstruction, generateUniversalTxId, DEFAULT_DEADLINE } from "../tests/helpers/tss";
 
 /**
  * ALT Integration Test Script
@@ -313,6 +313,7 @@ async function main() {
         Buffer.alloc(0),
         gasFeeBn,
 
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         Array.from(signature),
         recoveryId,
         Array.from(messageHash),
@@ -466,6 +467,7 @@ async function main() {
             Buffer.alloc(0),
             gasFeeBn,
 
+            new anchor.BN(DEFAULT_DEADLINE.toString()),
             Array.from(splSig.signature),
             splSig.recoveryId,
             Array.from(splSig.messageHash),

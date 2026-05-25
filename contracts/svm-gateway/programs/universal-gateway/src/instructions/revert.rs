@@ -82,6 +82,7 @@ pub fn revert_universal_tx(
     amount: u64,
     revert_instruction: RevertInstructions,
     gas_fee: u64,
+    deadline: i64,
     signature: [u8; 64],
     recovery_id: u8,
     message_hash: [u8; 32],
@@ -117,11 +118,11 @@ pub fn revert_universal_tx(
     let gas_fee_buf = encode_u64_be(gas_fee);
     if is_native {
         let additional: [&[u8]; 5] = [&sub_tx_id, &universal_tx_id, &recipient_bytes, &gas_fee_buf, &revert_msg_hash];
-        validate_message(&mut ctx.accounts.tss_pda, 3, Some(amount), &additional, &message_hash, &signature, recovery_id)?;
+        validate_message(&mut ctx.accounts.tss_pda, 3, Some(amount), deadline, &additional, &message_hash, &signature, recovery_id)?;
     } else {
         let mint_bytes = ctx.accounts.token_mint.as_ref().unwrap().key().to_bytes();
         let additional: [&[u8]; 6] = [&sub_tx_id, &universal_tx_id, &mint_bytes, &recipient_bytes, &gas_fee_buf, &revert_msg_hash];
-        validate_message(&mut ctx.accounts.tss_pda, 3, Some(amount), &additional, &message_hash, &signature, recovery_id)?;
+        validate_message(&mut ctx.accounts.tss_pda, 3, Some(amount), deadline, &additional, &message_hash, &signature, recovery_id)?;
     }
 
     let seeds: &[&[u8]] = &[VAULT_SEED, &[ctx.accounts.config.vault_bump]];

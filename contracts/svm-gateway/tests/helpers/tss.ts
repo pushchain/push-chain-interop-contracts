@@ -16,6 +16,10 @@ export enum TssInstruction {
 export const TSS_CHAIN_ID =
   process.env.TSS_CHAIN_ID ?? "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 
+// Far-future deadline for tests: Jan 1 2100 (unix seconds). Use this as the
+// default so tests don't need to manage validity windows explicitly.
+export const DEFAULT_DEADLINE = BigInt(4102444800);
+
 function getTssPrivateKey(): string {
   const priv =
     process.env.TSS_PRIVKEY ||
@@ -53,6 +57,7 @@ interface SignParams {
   amount?: bigint;
   additional: BytesLike[];
   chainId?: string;
+  deadline?: bigint;
 }
 
 export async function signTssMessage({
@@ -60,14 +65,19 @@ export async function signTssMessage({
   amount,
   additional,
   chainId,
+  deadline,
 }: SignParams): Promise<TssSignature> {
-  // Build message EXACTLY like Rust program
+  // Build message EXACTLY like Rust program:
+  // PREFIX || instruction_id || chain_id || deadline (i64 BE) || [amount (u64 BE)] || additional_data
   const chainIdToUse = chainId ?? TSS_CHAIN_ID;
+  const deadlineToUse = deadline ?? DEFAULT_DEADLINE;
   const PREFIX = Buffer.from("PUSH_CHAIN_SVM");
   const instructionId = Buffer.from([instruction]);
   const chainIdBytes = Buffer.from(chainIdToUse, "utf8");
+  const deadlineBuf = Buffer.alloc(8);
+  deadlineBuf.writeBigInt64BE(deadlineToUse);
 
-  const segments: Buffer[] = [PREFIX, instructionId, chainIdBytes];
+  const segments: Buffer[] = [PREFIX, instructionId, chainIdBytes, deadlineBuf];
 
   if (typeof amount === "bigint") {
     const amountBE = Buffer.alloc(8);

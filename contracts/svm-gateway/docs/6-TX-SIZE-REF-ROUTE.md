@@ -68,10 +68,13 @@ push_account: [u8; 20],
 ix_data_hash: [u8; 32],  ← hash, not raw bytes
 writable_flags: Vec<u8>,
 gas_fee: u64,
+deadline: i64,           ← Unix timestamp; program rejects if now > deadline
 signature: [u8; 64],
 recovery_id: u8,
 message_hash: [u8; 32],
 ```
+
+TSS message format for ref-finalize is identical to the direct route (same `finalize_universal_tx` format — `deadline` is included right after `chain_id`). See `2-WITHDRAW-EXECUTE.md` for the full hash format.
 
 **Account struct:** same `FinalizeUniversalTx` struct as the direct route. `stored_ix_data` and `store_refund_recipient` are optional accounts that become required on this path.
 
