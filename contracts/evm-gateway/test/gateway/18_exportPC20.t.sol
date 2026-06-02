@@ -693,7 +693,6 @@ contract ExportPC20Test is Test {
             address(universalCore),
             "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         );
-        universalCore.setSupportedToken(address(prc20), true);
         prc20.mint(user1, 1_000_000e6);
         vm.prank(user1);
         prc20.approve(address(gateway), type(uint256).max);
@@ -704,6 +703,7 @@ contract ExportPC20Test is Test {
             token: address(prc20),
             amount: 1000e6,
             gasLimit: 0,
+            gasPrice: 0,
             maxPCForGas: 0,
             payload: bytes(""),
             revertRecipient: user2

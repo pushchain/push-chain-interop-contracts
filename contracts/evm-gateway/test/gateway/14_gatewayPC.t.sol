@@ -92,7 +92,7 @@ contract UniversalGatewayPCTest is Test {
         address token,
         uint256 amount,
         uint256 gasLimit,
-        uint256 gasPrice,
+        uint256 gasPrice_,
         uint256 maxPCForGas,
         bytes memory payload,
         address revertRecipient
@@ -102,7 +102,7 @@ contract UniversalGatewayPCTest is Test {
             token: token,
             amount: amount,
             gasLimit: gasLimit,
-            gasPrice: gasPrice,
+            gasPrice: gasPrice_,
             maxPCForGas: maxPCForGas,
             payload: payload,
             revertRecipient: revertRecipient
@@ -2500,6 +2500,7 @@ contract UniversalGatewayPCTest is Test {
             address(prc20Token),
             amount,
             gasLimit, 0, // 0 → resolved to BASE_GAS_LIMIT by UniversalCore
+            0,
             0,
             bytes(""),
             revertRecipient
