@@ -63,9 +63,6 @@ contract MockUniversalCoreReal is IUniversalCore {
     // Pause state
     bool private _paused;
 
-    // Supported tokens mapping
-    mapping(address => bool) private _supportedTokens;
-
     // ========= Events =========
     event SetGasPrice(string indexed chainID, uint256 price);
     event SetGasToken(string indexed chainID, address token);
@@ -113,15 +110,6 @@ contract MockUniversalCoreReal is IUniversalCore {
 
     function revokeRole(bytes32 role, address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _roles[role][account] = false;
-    }
-
-    // ========= Token Support Functions =========
-    function isSupportedToken(address token) external view returns (bool) {
-        return _supportedTokens[token];
-    }
-
-    function setSupportedToken(address token, bool supported) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _supportedTokens[token] = supported;
     }
 
     // ========= Core Functions =========

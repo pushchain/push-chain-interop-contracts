@@ -36,13 +36,6 @@ interface IUniversalCore {
         address caller
     ) external payable returns (uint256 gasTokenOut, uint256 refund);
 
-    /**
-     * @notice Returns whether a PRC20 token is supported by UniversalCore.
-     * @param token PRC20 token address to check
-     * @return supported True if the token is supported
-     */
-    function isSupportedToken(address token) external view returns (bool supported);
-
     function getRescueFundsGasLimit(address _prc20)
         external
         view

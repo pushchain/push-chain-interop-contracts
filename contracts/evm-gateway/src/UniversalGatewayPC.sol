@@ -113,8 +113,6 @@ contract UniversalGatewayPC is
     {
         _validateParams(req.token, req.revertRecipient);
 
-        if (!IUniversalCore(universalCore).isSupportedToken(req.token)) revert Errors.NotSupported();
-
         TX_TYPE txType = _fetchTxType(req);
 
         (

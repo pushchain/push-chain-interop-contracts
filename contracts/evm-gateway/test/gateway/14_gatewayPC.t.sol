@@ -1192,8 +1192,6 @@ contract UniversalGatewayPCTest is Test {
             SOURCE_TOKEN_ADDRESS
         );
 
-        // Mark token as supported so the support check passes and we reach fee-quote logic
-        universalCore.setSupportedToken(address(invalidToken), true);
         universalCore.setBaseGasLimitByChain(unconfiguredChainId, BASE_GAS_LIMIT);
 
         // Setup token for user1
@@ -1264,9 +1262,6 @@ contract UniversalGatewayPCTest is Test {
             SOURCE_TOKEN_ADDRESS
         );
 
-        // Mark token as supported so the support check passes and we reach fee-quote logic
-        universalCore.setSupportedToken(address(invalidToken), true);
-
         // Setup token for user1
         invalidToken.mint(user1, amount);
         vm.prank(user1);
@@ -1306,9 +1301,6 @@ contract UniversalGatewayPCTest is Test {
 
         // Create failing token
         MockPRC20 failingToken = _createFailingToken();
-
-        // Mark token as supported so the support check passes and we reach burn logic
-        universalCore.setSupportedToken(address(failingToken), true);
 
         // Setup token for user1
         failingToken.mint(user1, amount);
@@ -1840,9 +1832,6 @@ contract UniversalGatewayPCTest is Test {
         vm.prank(user2);
         prc20Token.approve(address(gateway), type(uint256).max);
 
-        // Mark prc20Token as supported in UniversalCore mock (required by isSupportedToken gate in sendUniversalTxOutbound)
-        vm.prank(address(this));
-        universalCore.setSupportedToken(address(prc20Token), true);
     }
 
     // =========================
@@ -2923,9 +2912,6 @@ contract UniversalGatewayPCTest is Test {
         );
         // protocolFeeByToken defaults to 0 — no setProtocolFeeByToken call needed
 
-        // Mark token as supported so the support check passes
-        universalCore.setSupportedToken(address(zeroFeeToken), true);
-
         uint256 amount = 1000 * 1e6;
         zeroFeeToken.mint(user1, amount);
         vm.prank(user1);
@@ -3009,9 +2995,6 @@ contract UniversalGatewayPCTest is Test {
             SOURCE_TOKEN_ADDRESS
         );
 
-        // Mark token as supported so the support check passes
-        universalCore.setSupportedToken(address(noFeeToken), true);
-
         uint256 amount = 1000 * 1e6;
         noFeeToken.mint(user1, amount);
         vm.prank(user1);
@@ -3063,47 +3046,8 @@ contract UniversalGatewayPCTest is Test {
     }
 
     // =========================
-    //   SUPPORTED-TOKEN + TRANSFERFROM-RETURN REGRESSION TESTS
+    //   TRANSFERFROM-RETURN REGRESSION TEST
     // =========================
-
-    /// @notice sendUniversalTxOutbound must revert when token is not supported.
-    ///         Before the fix, an unsupported (fake) token could emit a UniversalTxOutbound event
-    ///         without holding any real funds.
-    function test_SendUniversalTxOutbound_UnsupportedToken_Reverts() public {
-        // Deploy a fake token that is NOT registered in UniversalCore
-        MockPRC20 fakeToken = new MockPRC20(
-            "Fake Token",
-            "FAKE",
-            18,
-            SOURCE_CHAIN_NAMESPACE,
-            MockPRC20.TokenType.ERC20,
-            address(universalCore),
-            SOURCE_TOKEN_ADDRESS
-        );
-        // Explicitly NOT calling universalCore.setSupportedToken(fakeToken, true)
-
-        // Give user1 some fake tokens and approvals
-        fakeToken.mint(user1, LARGE_AMOUNT);
-        vm.prank(user1);
-        fakeToken.approve(address(gateway), type(uint256).max);
-
-        UniversalOutboundTxRequest memory req = _createOutboundRequest(
-            bytes(""),
-            address(fakeToken),
-            1000 * 1e18,
-            DEFAULT_GAS_LIMIT,
-            0,
-            0,
-            bytes(""),
-            user2
-        );
-
-        uint256 pcFee = calculateExpectedTotal(DEFAULT_GAS_LIMIT);
-
-        vm.prank(user1);
-        vm.expectRevert(Errors.NotSupported.selector);
-        gateway.sendUniversalTxOutbound{ value: pcFee }(req);
-    }
 
     /// @notice _burnPRC20 must revert when transferFrom returns false.
     ///         Before the fix, a token returning false on transferFrom was silently ignored —
@@ -3112,12 +3056,7 @@ contract UniversalGatewayPCTest is Test {
         // Deploy a token whose transferFrom always returns false
         MockReturnFalsePRC20 falseReturnToken = new MockReturnFalsePRC20(SOURCE_CHAIN_NAMESPACE);
 
-        // Register it as supported so we reach _burnPRC20
-        vm.prank(address(this));
-        universalCore.setSupportedToken(address(falseReturnToken), true);
-
-        // Set up gas config in UniversalCore for this token's chain namespace
-        // (already done via setUp — SOURCE_CHAIN_NAMESPACE is configured)
+        // Gas config for SOURCE_CHAIN_NAMESPACE already done via setUp
 
         UniversalOutboundTxRequest memory req = _createOutboundRequest(
             bytes(""),
