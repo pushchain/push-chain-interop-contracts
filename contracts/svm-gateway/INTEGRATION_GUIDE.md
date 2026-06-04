@@ -726,7 +726,7 @@ The extra `5000` covers the store UV's transaction fee.
    - **Execute (2)**:
      `PREFIX | 0x02 | chain_id | deadline (i64 BE 8 bytes) | amount | sub_tx_id | universal_tx_id | push_account | token | gas_fee | target_program | accounts_buf | ix_data_buf`
    - **Revert (3)** and **Rescue (4)** include `deadline` in the same position.
-   - `deadline` is the Unix timestamp (seconds) after which the program rejects the instruction with `SignatureExpired`.
+   - `deadline` is the Unix timestamp (seconds) after which the program rejects the instruction with `SignatureExpired`. The program does not enforce a maximum deadline — TSS signer policy is responsible for capping the validity window (recommended: 24–48 hours from signing time).
 4. For execute: build `accounts_buf` and `ix_data_buf` with length prefixes (section 3.3)
 
 ### 7.4 TSS Signing
@@ -763,7 +763,8 @@ The extra `5000` covers the store UV's transaction fee.
 
 **Retry logic**:
 - Solana blockhash expired: Rebuild transaction with a new blockhash and resubmit — the TSS signature covers the gateway instruction, not the Solana transaction envelope, so the same signature remains valid until the `deadline` expires.
-- `SignatureExpired`: The `deadline` in the TSS-signed payload has passed. Do NOT retry. Issue source-chain revert.
+- `SignatureExpired` on `finalize_universal_tx` / `finalize_universal_tx_with_ix_data_ref`: The deadline has passed. Do NOT retry. Issue source-chain revert.
+- `SignatureExpired` on `revert_universal_tx` or `rescue_funds`: TSS re-signs the same payload with a new deadline. No on-chain state cleanup is required — the `ExecutedSubTx` PDA is only written on success, so a rejected instruction leaves nothing to undo. Submit the new signature immediately.
 - Account errors: Verify PDA derivation and account order
 
 **CRITICAL — revert-after-deadline rule**:

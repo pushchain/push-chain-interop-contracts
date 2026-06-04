@@ -93,7 +93,10 @@ pub fn validate_message(
     signature: &[u8; 64],
     recovery_id: u8,
 ) -> Result<()> {
-    // Reject if the current time has passed the signed validity window.
+    // Deadline is checked before hash reconstruction and secp256k1 recovery. Both values are
+    // public — deadline is a tx argument and the clock is a sysvar — so early rejection leaks
+    // nothing while avoiding the recovery compute cost on already-expired payloads.
+    // No on-chain maximum deadline is enforced; TSS signer policy caps the validity window.
     let now = Clock::get()?.unix_timestamp;
     require!(now <= deadline, GatewayError::SignatureExpired);
 

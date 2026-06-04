@@ -298,6 +298,38 @@ npm run config:squads-execute -- --multisig <multisig-pda> --member-keypair <mem
 
 ---
 
+## Signature Expiry
+
+Each TSS-signed payload carries a `deadline` (Unix timestamp). The program rejects with `SignatureExpired` if `Clock::unix_timestamp > deadline` at execution time.
+
+**Finalize expired (outbound withdraw / execute)**
+
+1. Check whether `ExecutedSubTx` PDA exists for the `sub_tx_id`: if it does, the transaction already succeeded — no action needed.
+2. If it does not exist, the finalize never landed. Issue a source-chain revert on Push Chain.
+3. Do not re-sign a finalize after its deadline — the source chain will have already issued a revert, and re-signing risks double-spend.
+
+**Revert or rescue signature expired before submission**
+
+1. TSS re-signs the same payload (same `sub_tx_id`, same amounts) with a new deadline.
+2. No on-chain cleanup is required. The `ExecutedSubTx` PDA is only written on success; a rejected instruction leaves no state behind.
+3. Submit the new signature immediately via the normal UV flow.
+
+**Check whether ExecutedSubTx exists**
+
+```bash
+# Derive PDA and fetch account; non-existent account = not yet executed
+solana account $(node -e "
+  const { PublicKey } = require('@solana/web3.js');
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('executed_sub_tx'), Buffer.from('<sub_tx_id_hex>', 'hex')],
+    new PublicKey('<PROGRAM_ID>')
+  );
+  console.log(pda.toBase58());
+") --url <cluster>
+```
+
+---
+
 ## Common Issues
 
 **Deposit rejected with `Paused`:** Gateway is paused. Call `unpause` from the operator address.
