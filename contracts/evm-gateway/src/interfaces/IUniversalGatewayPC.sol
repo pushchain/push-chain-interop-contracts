@@ -2,34 +2,37 @@
 pragma solidity 0.8.26;
 
 import { TX_TYPE } from "../libraries/Types.sol";
-import { UniversalOutboundTxRequest, PC20ExportRequest } from "../libraries/TypesUGPC.sol";
+import { UniversalOutboundTxRequest } from "../libraries/TypesUGPC.sol";
 
 /**
  * @title  IUniversalGatewayPC
- * @notice Interface for UniversalGatewayPC contract
- * @dev    Defines all public functions and events for the Push Chain outbound gateway
+ * @notice Interface for the Push Chain outbound gateway.
+ * @dev    Covers both PRC20 outbound (burn-and-unlock) and PC20 export (lock-and-wrap) flows
+ *         through a single sendUniversalTxOutbound entry point. PC20 exports are identified by
+ *         a PC_20_SELECTOR prefix in the request payload (see TypesUGPC.sol).
  */
 interface IUniversalGatewayPC {
     // ==============================
     //      UGPC_1: EVENTS
     // ==============================
 
-    /// @notice                  Single event covering both flows (funds-only and funds+payload).
-    /// @param subTxId           Unique sub-transaction identifier
-    /// @param sender            EVM sender on Push Chain (burn initiator)
-    /// @param chainNamespace    Origin chain namespace string, fetched from PRC20
-    /// @param token             PRC20 token address being withdrawn (represents origin ERC20/native)
-    /// @param recipient         Raw destination address on the source chain (bytes for SVM compat);
-    ///                          bytes("") means park funds in the caller's CEA
-    /// @param amount            Amount burned on Push Chain
-    /// @param gasToken          PRC20 gas coin used to pay cross-chain execution fees
-    /// @param gasFee            Amount of gasToken charged on external chain
-    /// @param gasLimit          Gas limit used for fee quote on external chain
-    /// @param payload           Optional payload for arbitrary call on origin chain (empty for funds-only)
-    /// @param protocolFee       Flat protocol fee portion (as defined by PRC20)
-    /// @param revertRecipient   Address to receive funds in case of revert
-    /// @param txType            Inferred transaction type
-    /// @param gasPrice          Gas price on the external chain (wei per gas unit)
+    /// @notice                  Emitted for every outbound transaction — PRC20 and PC20 alike.
+    /// @param subTxId           Unique sub-transaction identifier.
+    /// @param sender            EVM sender on Push Chain.
+    /// @param chainNamespace    Target chain (CAIP-2). For PRC20: resolved from the token contract.
+    ///                          For PC20: decoded from the payload's destChainNamespace field.
+    /// @param token             PRC20 or PC20 token address on Push Chain.
+    /// @param recipient         Raw destination address on the target chain (bytes for SVM compat);
+    ///                          bytes("") means park funds in the caller's CEA.
+    /// @param amount            Amount burned (PRC20) or locked (PC20) on Push Chain.
+    /// @param gasToken          PRC20 gas coin used to pay cross-chain execution fees.
+    /// @param gasFee            Amount of gasToken charged on the external chain.
+    /// @param gasLimit          Gas limit used for fee quote on the external chain.
+    /// @param payload           Calldata or PC20-encoded payload (starts with PC_20_SELECTOR for PC20).
+    /// @param protocolFee       Flat protocol fee in native PC (from UniversalCore).
+    /// @param revertRecipient   Address to receive funds in case of revert.
+    /// @param txType            Inferred transaction type. PC20 always emits FUNDS_AND_PAYLOAD.
+    /// @param gasPrice          Gas price on the external chain (wei per gas unit).
     event UniversalTxOutbound(
         bytes32 indexed subTxId,
         address indexed sender,
@@ -77,27 +80,6 @@ interface IUniversalGatewayPC {
         uint256 gasLimit
     );
 
-    // ==============================
-    //    UGPC_1b: PC20 EVENTS
-    // ==============================
-
-    /// @notice                  Emitted when a PC20 token export is initiated.
-    event PC20ExportInitiated(
-        bytes32 indexed subTxId,
-        address indexed sender,
-        string  destChainNamespace,
-        address indexed token,
-        bytes   recipient,
-        uint256 amount,
-        address gasToken,
-        uint256 gasFee,
-        uint256 gasLimitUsed,
-        bytes   payload,
-        uint256 protocolFee,
-        address revertRecipient,
-        uint256 gasPrice
-    );
-
     /// @notice                  Emitted when VaultPC20 address is updated
     event VaultPC20Updated(
         address indexed oldVaultPC20,
@@ -108,12 +90,13 @@ interface IUniversalGatewayPC {
     //    UGPC_2: OUTBOUND TX
     // ==============================
 
-    /// @notice                  Send a universal outbound transaction from Push Chain to origin chain.
-    /// @dev                     Unified function for all outbound transaction types
-    ///                          (FUNDS, FUNDS_AND_PAYLOAD, GAS_AND_PAYLOAD).
-    ///                          TX_TYPE is automatically inferred based on the presence of payload and amount.
-    ///                          When req.gasPrice > 0, the gateway uses the caller's gas price
-    ///                          (must be >= base from UniversalCore) and recalculates gasFee.
+    /// @notice                  Send a universal outbound transaction from Push Chain to an external chain.
+    /// @dev                     Unified entry point for PRC20 outbound and PC20 export flows.
+    ///                          - **PRC20 path**: TX_TYPE inferred from amount/payload. gasPrice override
+    ///                            supported. Tokens are burned via _burnPRC20.
+    ///                          - **PC20 path**: Detected when payload starts with PC_20_SELECTOR
+    ///                            (see TypesUGPC.sol). Tokens are locked in VaultPC20; TX_TYPE is always
+    ///                            FUNDS_AND_PAYLOAD. gasPrice override is not supported.
     ///                          When req.maxPCForGas > 0, the gateway caps native PC forwarded to the gas
     ///                          swap at that amount and refunds any excess to msg.sender before the swap.
     /// @param req               UniversalOutboundTxRequest struct containing all transaction parameters.
@@ -134,15 +117,10 @@ interface IUniversalGatewayPC {
     function universalCore() external view returns (address);
 
     // ==============================
-    //    UGPC_4: PC20 EXPORT
+    //    UGPC_4: PC20 ADMIN
     // ==============================
 
-    /// @notice                  Export a PC20 token from Push Chain to an external chain.
-    /// @dev                     Locks tokens in VaultPC20, pays fees, emits PC20ExportInitiated.
-    /// @param req               PC20ExportRequest struct containing export parameters.
-    function exportPC20(PC20ExportRequest calldata req) external payable;
-
-    /// @notice                  Update the VaultPC20 contract address.
+    /// @notice                  Update the VaultPC20 contract address used for PC20 token custody.
     /// @param _vaultPC20        New VaultPC20 address.
     function updateVaultPC20(address _vaultPC20) external;
 }
