@@ -74,35 +74,36 @@ contract SendPC20UniversalTxTest is BaseTest {
         vm.prank(admin);
         gateway.updatePC20Factory(address(pc20Factory));
 
-        // Deploy a wrapper via Vault (which has VAULT_ROLE)
-        // Use finalizePC20Export to trigger wrapper deployment + mint
+        // Deploy a wrapper via Vault's unified finalizeUniversalTx (PC20 path)
+        bytes memory pc20Data1 = abi.encodePacked(
+            bytes4(0x50433230),
+            abi.encode("Push Token", "pTKN", uint8(18), bytes(""))
+        );
         vm.prank(tss);
-        vaultContract.finalizePC20Export(
+        vaultContract.finalizeUniversalTx(
             bytes32(uint256(9999)),
             bytes32(uint256(8888)),
             makeAddr("pushAccount"),
             user1,
             sourceAsset,
             10_000e18,
-            "Push Token",
-            "pTKN",
-            18,
-            ""
+            pc20Data1
         );
 
         // Mint additional tokens to user2
+        bytes memory pc20Data2 = abi.encodePacked(
+            bytes4(0x50433230),
+            abi.encode("Push Token", "pTKN", uint8(18), bytes(""))
+        );
         vm.prank(tss);
-        vaultContract.finalizePC20Export(
+        vaultContract.finalizeUniversalTx(
             bytes32(uint256(9998)),
             bytes32(uint256(8888)),
             makeAddr("pushAccount"),
             user2,
             sourceAsset,
             5_000e18,
-            "Push Token",
-            "pTKN",
-            18,
-            ""
+            pc20Data2
         );
 
         wrapper = PC20Wrapper(pc20Factory.getWrapper(sourceAsset));

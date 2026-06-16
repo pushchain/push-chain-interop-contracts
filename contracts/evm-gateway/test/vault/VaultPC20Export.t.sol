@@ -106,6 +106,8 @@ contract VaultPC20ExportTest is Test {
         return bytes32(id);
     }
 
+    bytes4 constant PC_20_SEL = 0x50433230;
+
     function _emptyMulticall()
         internal
         pure
@@ -115,6 +117,17 @@ contract VaultPC20ExportTest is Test {
         return abi.encode(calls);
     }
 
+    function _buildPC20Data(
+        string memory name,
+        string memory symbol,
+        uint8 decimals,
+        bytes memory userData
+    ) internal pure returns (bytes memory) {
+        return abi.encodePacked(
+            PC_20_SEL, abi.encode(name, symbol, decimals, userData)
+        );
+    }
+
     function _finalize(
         bytes32 subTxId,
         address source,
@@ -122,11 +135,10 @@ contract VaultPC20ExportTest is Test {
         bytes memory userData
     ) internal {
         vm.prank(tss);
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             subTxId, _tx(999), pushAccount, recipient,
             source, amount,
-            "Push Token", "pTKN", 18,
-            userData
+            _buildPC20Data("Push Token", "pTKN", 18, userData)
         );
     }
 
@@ -156,11 +168,10 @@ contract VaultPC20ExportTest is Test {
 
     function test_PathA_CorrectWrapperMetadata() public {
         vm.prank(tss);
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             _tx(1), _tx(999), pushAccount, recipient,
             sourceA, 100e18,
-            "Push USDC", "pUSDC", 6,
-            ""
+            _buildPC20Data("Push USDC", "pUSDC", 6, "")
         );
         address wrapper = factory.getWrapper(sourceA);
         assertEq(PC20Wrapper(wrapper).name(), "Push USDC");
@@ -171,11 +182,10 @@ contract VaultPC20ExportTest is Test {
     function test_PathA_DifferentSourceAssets() public {
         _finalize(_tx(1), sourceA, 100e18, "");
         vm.prank(tss);
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             _tx(2), _tx(999), pushAccount, recipient,
             sourceB, 200e18,
-            "Push B", "pB", 18,
-            ""
+            _buildPC20Data("Push B", "pB", 18, "")
         );
 
         assertTrue(
@@ -245,54 +255,60 @@ contract VaultPC20ExportTest is Test {
 
         vm.prank(tss);
         vm.expectRevert(Errors.PayloadExecuted.selector);
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             _tx(1), _tx(999), pushAccount, recipient,
-            sourceA, 100e18, "Push Token", "pTKN", 18, ""
+            sourceA, 100e18,
+            _buildPC20Data("Push Token", "pTKN", 18, "")
         );
     }
 
     function test_Reverts_ZeroPushAccount() public {
         vm.prank(tss);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             _tx(1), _tx(999), address(0), recipient,
-            sourceA, 100e18, "Push Token", "pTKN", 18, ""
+            sourceA, 100e18,
+            _buildPC20Data("Push Token", "pTKN", 18, "")
         );
     }
 
     function test_Reverts_ZeroSourceAsset() public {
         vm.prank(tss);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             _tx(1), _tx(999), pushAccount, recipient,
-            address(0), 100e18, "Push Token", "pTKN", 18, ""
+            address(0), 100e18,
+            _buildPC20Data("Push Token", "pTKN", 18, "")
         );
     }
 
     function test_Reverts_ZeroAmount() public {
         vm.prank(tss);
         vm.expectRevert(Errors.ZeroAmount.selector);
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             _tx(1), _tx(999), pushAccount, recipient,
-            sourceA, 0, "Push Token", "pTKN", 18, ""
+            sourceA, 0,
+            _buildPC20Data("Push Token", "pTKN", 18, "")
         );
     }
 
     function test_Reverts_ZeroRecipient() public {
         vm.prank(tss);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             _tx(1), _tx(999), pushAccount, address(0),
-            sourceA, 100e18, "Push Token", "pTKN", 18, ""
+            sourceA, 100e18,
+            _buildPC20Data("Push Token", "pTKN", 18, "")
         );
     }
 
     function test_Reverts_NonTSSRole() public {
         vm.prank(userA);
         vm.expectRevert();
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             _tx(1), _tx(999), pushAccount, recipient,
-            sourceA, 100e18, "Push Token", "pTKN", 18, ""
+            sourceA, 100e18,
+            _buildPC20Data("Push Token", "pTKN", 18, "")
         );
     }
 
@@ -302,9 +318,10 @@ contract VaultPC20ExportTest is Test {
 
         vm.prank(tss);
         vm.expectRevert();
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             _tx(1), _tx(999), pushAccount, recipient,
-            sourceA, 100e18, "Push Token", "pTKN", 18, ""
+            sourceA, 100e18,
+            _buildPC20Data("Push Token", "pTKN", 18, "")
         );
     }
 
@@ -314,9 +331,21 @@ contract VaultPC20ExportTest is Test {
 
         vm.prank(tss);
         vm.expectRevert();
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             _tx(1), _tx(999), pushAccount, recipient,
-            sourceA, 100e18, "Push Token", "pTKN", 18, ""
+            sourceA, 100e18,
+            _buildPC20Data("Push Token", "pTKN", 18, "")
+        );
+    }
+
+    function test_Reverts_PC20_WithMsgValue() public {
+        vm.deal(tss, 1 ether);
+        vm.prank(tss);
+        vm.expectRevert(Errors.InvalidAmount.selector);
+        vault.finalizeUniversalTx{value: 1 ether}(
+            _tx(1), _tx(999), pushAccount, recipient,
+            sourceA, 100e18,
+            _buildPC20Data("Push Token", "pTKN", 18, "")
         );
     }
 
@@ -336,10 +365,10 @@ contract VaultPC20ExportTest is Test {
 
         vm.prank(tss);
         vm.expectRevert("test fail");
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             _tx(2), _tx(999), pushAccount, recipient,
-            sourceA, 200e18, "Push Token", "pTKN", 18,
-            ud
+            sourceA, 200e18,
+            _buildPC20Data("Push Token", "pTKN", 18, ud)
         );
 
         assertEq(PC20Wrapper(wrapper).totalSupply(), supplyBefore);
@@ -362,9 +391,10 @@ contract VaultPC20ExportTest is Test {
 
     function test_Deploy_ZeroDecimals() public {
         vm.prank(tss);
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             _tx(1), _tx(999), pushAccount, recipient,
-            sourceA, 100, "Push Int", "pINT", 0, ""
+            sourceA, 100,
+            _buildPC20Data("Push Int", "pINT", 0, "")
         );
         address wrapper = factory.getWrapper(sourceA);
         assertEq(PC20Wrapper(wrapper).decimals(), 0);
@@ -431,9 +461,10 @@ contract VaultPC20ExportTest is Test {
     function test_AC_OnlyTSSCanFinalize() public {
         vm.prank(admin);
         vm.expectRevert();
-        vault.finalizePC20Export(
+        vault.finalizeUniversalTx(
             _tx(1), _tx(999), pushAccount, recipient,
-            sourceA, 100e18, "Push Token", "pTKN", 18, ""
+            sourceA, 100e18,
+            _buildPC20Data("Push Token", "pTKN", 18, "")
         );
     }
 

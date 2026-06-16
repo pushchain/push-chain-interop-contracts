@@ -3,10 +3,12 @@ pragma solidity 0.8.26;
 
 /**
  * @title  Vault
- * @notice Token custody vault for outbound flows (withdraw / withdraw+call) managed by TSS.
+ * @notice Token custody vault for outbound flows managed by TSS.
  * @dev    - TransparentUpgradeable (OZ Initializable pattern)
  *         - Handles both ERC20 and native tokens
- *         - Routes withdrawals (empty payload) and executions (non-empty payload) through CEA contracts
+ *         - finalizeUniversalTx is the single TSS entry point for both:
+ *           • PRC20 path: unlock tokens from Vault and route through CEA
+ *           • PC20 path: mint wrapped ERC-20 via PC20Factory (detected by PC_20_SELECTOR prefix)
  *         - Uses CEAFactory for deterministic CEA deployment
  */
 
@@ -16,7 +18,7 @@ import { ICEA } from "./interfaces/ICEA.sol";
 import { ICEAFactory } from "./interfaces/ICEAFactory.sol";
 import { IUniversalGateway } from "./interfaces/IUniversalGateway.sol";
 import { IPC20Factory } from "./interfaces/IPC20Factory.sol";
-import { RevertInstructions } from "./libraries/Types.sol";
+import { RevertInstructions, PC_20_SELECTOR } from "./libraries/Types.sol";
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -166,12 +168,17 @@ contract Vault is
         uint256 amount,
         bytes calldata data
     ) external payable nonReentrant whenNotPaused onlyRole(TSS_ROLE) {
+        if (_isPC20Export(data)) {
+            _finalizePC20Export(subTxId, universalTxId, pushAccount, recipient, token, amount, data);
+            return;
+        }
+
         (address cea, bool isDeployed) = CEAFactory.getCEAForPushAccount(pushAccount);
         if (!isDeployed) {
             cea = CEAFactory.deployCEA(pushAccount);
         }
 
-        _finalizeUniversalTx(subTxId, universalTxId, pushAccount, recipient, token, amount, data, cea);
+        _finalizeUniversalTxPRC20(subTxId, universalTxId, pushAccount, recipient, token, amount, data, cea);
 
         emit UniversalTxFinalized(subTxId, universalTxId, pushAccount, recipient, token, amount, data);
     }
@@ -242,19 +249,19 @@ contract Vault is
     //    Vault_2b: PC20 EXPORT
     // ==============================
 
-    /// @inheritdoc IVault
-    function finalizePC20Export(
+    /// @dev PC20 export finalization. Called internally when data starts with PC_20_SELECTOR.
+    ///      `token` carries the Push Chain sourceAsset address used as the wrapper key.
+    ///      `data` layout: [PC_20_SELECTOR (4 B)][abi.encode(name, symbol, decimals, userData)]
+    function _finalizePC20Export(
         bytes32 subTxId,
         bytes32 universalTxId,
         address pushAccount,
         address recipient,
         address sourceAsset,
         uint256 amount,
-        string calldata name,
-        string calldata symbol,
-        uint8 decimals,
-        bytes calldata userData
-    ) external nonReentrant whenNotPaused onlyRole(TSS_ROLE) {
+        bytes calldata data
+    ) private {
+        if (msg.value != 0) revert Errors.InvalidAmount();
         if (isPC20Executed[subTxId]) revert Errors.PayloadExecuted();
         isPC20Executed[subTxId] = true;
 
@@ -262,6 +269,9 @@ contract Vault is
         if (sourceAsset == address(0)) revert Errors.ZeroAddress();
         if (amount == 0) revert Errors.ZeroAmount();
         if (recipient == address(0)) revert Errors.ZeroAddress();
+
+        (string memory name, string memory symbol, uint8 decimals, bytes memory userData) =
+            abi.decode(data[4:], (string, string, uint8, bytes));
 
         if (pc20Factory.getWrapper(sourceAsset) == address(0)) {
             pc20Factory.deployWrapper(sourceAsset, name, symbol, decimals);
@@ -305,16 +315,14 @@ contract Vault is
         }
     }
 
-    /// @dev                   Unified execution handler — all operations route through CEA.
-    /// @param subTxId         Gateway transaction ID
-    /// @param universalTxId   Universal transaction ID
-    /// @param pushAccount     Push Chain account (UEA) this transaction is attributed to
-    /// @param recipient       Destination address on this chain; address(0) means park in CEA
-    /// @param token           Token address (address(0) for native)
-    /// @param amount          Amount of tokens to fund CEA with
-    /// @param data            Multicall payload (abi.encode(Multicall[]))
-    /// @param cea             CEA address (already deployed or newly created)
-    function _finalizeUniversalTx(
+    /// @dev Returns true when data starts with PC_20_SELECTOR (PC20 export path).
+    function _isPC20Export(bytes calldata data) private pure returns (bool) {
+        if (data.length < 4) return false;
+        return bytes4(data[:4]) == PC_20_SELECTOR;
+    }
+
+    /// @dev PRC20 execution handler — unlocks tokens from Vault and routes through CEA.
+    function _finalizeUniversalTxPRC20(
         bytes32 subTxId,
         bytes32 universalTxId,
         address pushAccount,
