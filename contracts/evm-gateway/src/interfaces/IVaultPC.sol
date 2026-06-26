@@ -11,23 +11,24 @@ interface IVaultPC {
     // =========================
 
     /// @notice              Emitted when fees are withdrawn from the vault
-    /// @param caller        The address that initiated the withdrawal (MANAGER_ROLE)
+    /// @param caller        The address that initiated the withdrawal (VPC_ADMIN_ROLE)
+    /// @param to            The recipient address that received the withdrawn funds
     /// @param token         The PRC20 token address (address(0) for native PC)
     /// @param amount        The amount withdrawn
-    event FeesWithdrawn(address indexed caller, address indexed token, uint256 amount);
+    event FeesWithdrawn(address indexed caller, address indexed to, address indexed token, uint256 amount);
 
     // =========================
     //      VPC_2: WITHDRAW
     // =========================
 
-    /// @notice              Allows MANAGER_ROLE to withdraw native PC tokens from the vault
-    /// @dev                 Only callable by MANAGER_ROLE
+    /// @notice              Allows VPC_ADMIN_ROLE to withdraw native PC tokens from the vault
+    /// @dev                 Only callable by VPC_ADMIN_ROLE
     /// @param to            Recipient address
     /// @param amount        Amount of native PC to transfer
     function withdraw(address to, uint256 amount) external;
 
-    /// @notice              Allows MANAGER_ROLE to withdraw PRC20 tokens from the vault
-    /// @dev                 Only callable by MANAGER_ROLE
+    /// @notice              Allows VPC_ADMIN_ROLE to withdraw PRC20 tokens from the vault
+    /// @dev                 Only callable by VPC_ADMIN_ROLE
     /// @param token         PRC20 token address to transfer
     /// @param to            Recipient address
     /// @param amount        Amount of token to transfer

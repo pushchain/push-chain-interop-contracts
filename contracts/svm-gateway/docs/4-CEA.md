@@ -27,19 +27,30 @@ When `destination_program == gateway_program_id` in execute mode, the flow route
 ```
 finalize_universal_tx (instruction_id=2, target=gateway)
   → Vault → CEA (amount)
-  → Vault → Caller (gas_fee, UV reimbursement)
-  → CEA → Vault (withdraw_amount)
+  → Vault → Caller (gas_used, UV reimbursement)
+  → CEA → Vault (withdraw_amount)   [skipped when amount == 0]
   → emit UniversalTx (from_cea=true)
   → emit UniversalTxFinalized
 ```
 
 The `UniversalTx` event is picked up by Push Chain Universal Validators (UVs) to credit the user's UEA.
 `UniversalTx` uses inner decoded values from `send_universal_tx_to_uea` args (`amount`, `payload`, `revert_recipient`).
-`UniversalTxFinalized` uses outer `finalize_universal_tx` values (`amount`, `gas_fee`, full `ix_data`).
+`UniversalTxFinalized` uses outer `finalize_universal_tx` values (`amount`, signed `gas_fee`, full `ix_data`) and includes `gas_used`, `gas_to_refund`, and `ata_created`.
 
 `from_cea` is always `true` on this path. This differs from EVM where FUNDS-only CEA withdrawals emit `from_cea=false` — an artifact of EVM routing that does not apply to SVM, where the gateway always knows it is handling a CEA withdrawal.
 
-This path also consumes the token's epoch rate limit (same as a standard inbound FUNDS deposit).
+### TX_TYPE in CEA → UEA
+
+| `amount` | `payload` | `tx_type` emitted |
+|----------|-----------|-------------------|
+| `> 0` | empty | `Funds` |
+| `> 0` | non-empty | `FundsAndPayload` |
+| `0` | non-empty | `GasAndPayload` — payload-only, no funds transferred |
+| `0` | empty | **invalid** — reverts with `InvalidInput` |
+
+When `amount == 0`, no balance check, rate limit check, or transfer occurs. Only the event is emitted.
+
+This path consumes the token's epoch rate limit only when `amount > 0` (same as a standard inbound FUNDS deposit).
 
 ---
 

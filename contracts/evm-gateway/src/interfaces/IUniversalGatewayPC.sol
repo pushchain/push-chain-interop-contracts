@@ -52,6 +52,11 @@ interface IUniversalGatewayPC {
     /// @param newVaultPC        New VaultPC address
     event VaultPCUpdated(address indexed oldVaultPC, address indexed newVaultPC);
 
+    /// @notice                       Emitted when UniversalCore address is updated
+    /// @param oldUniversalCore       Previous UniversalCore address
+    /// @param newUniversalCore       New UniversalCore address
+    event UniversalCoreUpdated(address indexed oldUniversalCore, address indexed newUniversalCore);
+
     /// @notice                  Emitted when a user initiates a rescue-funds request on Push Chain.
     /// @param universalTxId     Universal transaction identifier of the stuck funds
     /// @param prc20             PRC20 token whose source-chain counterpart is locked
@@ -80,6 +85,10 @@ interface IUniversalGatewayPC {
     /// @dev                     Unified function for all outbound transaction types
     ///                          (FUNDS, FUNDS_AND_PAYLOAD, GAS_AND_PAYLOAD).
     ///                          TX_TYPE is automatically inferred based on the presence of payload and amount.
+    ///                          When req.gasPrice > 0, the gateway uses the caller's gas price
+    ///                          (must be >= base from UniversalCore) and recalculates gasFee.
+    ///                          When req.maxPCForGas > 0, the gateway caps native PC forwarded to the gas
+    ///                          swap at that amount and refunds any excess to msg.sender before the swap.
     /// @param req               UniversalOutboundTxRequest struct containing all transaction parameters.
     function sendUniversalTxOutbound(UniversalOutboundTxRequest calldata req) external payable;
 
@@ -95,5 +104,5 @@ interface IUniversalGatewayPC {
 
     /// @notice                  Returns the UniversalCore contract address.
     /// @return                  Address of the UniversalCore contract.
-    function UNIVERSAL_CORE() external view returns (address);
+    function universalCore() external view returns (address);
 }

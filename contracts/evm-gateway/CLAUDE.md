@@ -184,10 +184,6 @@ function revertUniversalTxToken(
   - Native flow: `token == address(0)` → `msg.value == amount`
   - ERC20 flow: `token != address(0)` → `msg.value == 0`
 
-**Token Support Enforcement** (`_enforceSupported`):
-- All token operations validated against `UniversalGateway.isSupportedToken(token)`
-- Single source of truth for supported tokens across Vault and Gateway
-
 **Balance Checks**:
 - ERC20 operations verify `IERC20(token).balanceOf(address(this)) >= amount`
 - Prevents overdraft or insufficient balance reverts
@@ -219,7 +215,7 @@ function revertUniversalTxToken(
 **Update TSS** (`setTSS`):
 - Revokes `TSS_ROLE` from old TSS
 - Grants `TSS_ROLE` to new TSS
-- Updates `TSS_ADDRESS` state variable
+- Updates `tssAddress` state variable
 - Only `DEFAULT_ADMIN_ROLE`
 - Emits `TSSUpdated(old, new)`
 
@@ -333,8 +329,8 @@ When testing Vault operations:
 
    **A. Instant Transactions (Low Block Confirmation)**
    - Applies to: `TX_TYPE.GAS` and `TX_TYPE.GAS_AND_PAYLOAD`
-   - Per-transaction USD caps: `MIN_CAP_UNIVERSAL_TX_USD` to `MAX_CAP_UNIVERSAL_TX_USD` (enforced via `_checkUSDCaps`)
-   - Per-block USD budget: `BLOCK_USD_CAP` (enforced via `_checkBlockUSDCap`)
+   - Per-transaction USD caps: `minCapUniversalTxUsd` to `maxCapUniversalTxUsd` (enforced via `checkUSDCaps`)
+   - Per-block USD budget: `blockUsdCap` (enforced via `_checkBlockUSDCap`)
    - Uses Chainlink ETH/USD oracle for USD valuation
 
    **B. Standard Transactions (High Block Confirmation)**
@@ -352,7 +348,7 @@ When testing Vault operations:
    - `quoteEthAmountInUsd1e18(amountWei)` converts wei to USD(1e18)
 
 5. **Uniswap v3 Integration**
-   - `swapToNative(tokenIn, amountIn, amountOutMinETH, deadline)` for ERC-20 → native gas conversion
+   - `_swapToNative(tokenIn, amountIn, amountOutMinETH, deadline)` for ERC-20 → native gas conversion
    - Supports WETH unwrapping
    - Scans `v3FeeOrder` for optimal direct `tokenIn/WETH` pool
    - Uses `_findV3PoolWithNative(tokenIn)` to locate pools
@@ -410,7 +406,7 @@ Key foundry.toml profiles:
 ### Common Development Tasks
 
 When modifying rate limits:
-- Update `_checkUSDCaps` or `_checkBlockUSDCap` for instant routes
+- Update `checkUSDCaps` or `_checkBlockUSDCap` for instant routes
 - Update `_consumeRateLimit` for standard routes
 - Test both paths in `test/gateway/12_rateLimit_BlockBased.t.sol` and `13_rateLimit_EpochBased.t.sol`
 
@@ -473,7 +469,7 @@ When a CEA sends `FUNDS_AND_PAYLOAD` with `msg.value > req.amount` (native batch
 
 - `req.recipient` must always equal the CEA's mapped UEA — never `address(0)`, never an arbitrary address
 - All events emitted via CEA path have `fromCEA=true` and `recipient=mappedUEA`
-- Normal `sendUniversalTx` path is unchanged: still emits `fromCEA=false` and `recipient=address(0)`
+- Normal `sendUniversalTx` path emits `fromCEA=false`. Recipient is `address(0)` for GAS, GAS_AND_PAYLOAD, and FUNDS_AND_PAYLOAD paths; the FUNDS path emits `req.recipient` as-is
 - CEAs are blocked from calling `sendUniversalTx` directly (reverts `InvalidInput`)
 
 ### Related Files

@@ -17,7 +17,12 @@ import { Program } from "@coral-xyz/anchor";
 import { UniversalGateway } from "../target/types/universal_gateway";
 import { PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import {
+    TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+    createAssociatedTokenAccountInstruction,
+    getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
 import * as sharedState from "./shared-state";
 import {
     signTssMessage,
@@ -50,6 +55,7 @@ describe("Universal Gateway - Rescue Tests", () => {
     });
 
     let admin: Keypair;
+    let operator: Keypair;
     let pauser: Keypair;
     let recipient: Keypair;
     let relayer: Keypair;
@@ -78,6 +84,7 @@ describe("Universal Gateway - Rescue Tests", () => {
         instruction: TssInstruction;
         amount?: bigint;
         additional: (Uint8Array | number[])[];
+        deadline?: bigint;
     }) => {
         const tssAccount = await program.account.tssPda.fetch(tssPda);
         return signTssMessage({ ...params, chainId: tssAccount.chainId });
@@ -109,6 +116,7 @@ describe("Universal Gateway - Rescue Tests", () => {
 
     before(async () => {
         admin = sharedState.getAdmin();
+        operator = sharedState.getOperator();
         pauser = sharedState.getPauser();
         mockUSDT = sharedState.getMockUSDT();
         user1 = sharedState.getUser1();
@@ -125,14 +133,14 @@ describe("Universal Gateway - Rescue Tests", () => {
         [configPda] = PublicKey.findProgramAddressSync([Buffer.from("config")], program.programId);
         [vaultPda] = PublicKey.findProgramAddressSync([Buffer.from("vault")], program.programId);
         [feeVaultPda] = PublicKey.findProgramAddressSync([Buffer.from("fee_vault")], program.programId);
-        [tssPda] = PublicKey.findProgramAddressSync([Buffer.from("tsspda_v2")], program.programId);
+        [tssPda] = PublicKey.findProgramAddressSync([Buffer.from("final_tss_pda")], program.programId);
         [rateLimitConfigPda] = PublicKey.findProgramAddressSync(
             [Buffer.from("rate_limit_config")], program.programId
         );
 
-        // Disable protocol fee so vault seeding is deterministic.
+        // Disable inbound fee so vault seeding is deterministic.
         await program.methods
-            .setProtocolFee(new anchor.BN(0))
+            .setInboundFee(new anchor.BN(0))
             .accountsPartial({ config: configPda, feeVault: feeVaultPda, admin: admin.publicKey, systemProgram: SystemProgram.programId })
             .signers([admin])
             .rpc();
@@ -160,7 +168,7 @@ describe("Universal Gateway - Rescue Tests", () => {
 
         const nativeSolRateLimitPda = getTokenRateLimitPda(PublicKey.default);
         await program.methods
-            .setTokenRateLimit(new anchor.BN("1000000000000000000000"))
+            .setTokenRateLimit(new anchor.BN("1000000000000000000000"), false, false)
             .accountsPartial({
                 config: configPda,
                 tokenRateLimit: nativeSolRateLimitPda,
@@ -208,12 +216,33 @@ describe("Universal Gateway - Rescue Tests", () => {
             await mockUSDT.mintTo(user1UsdtAccount, 5_000 - currentBalance);
         }
 
-        vaultUsdtAccount = await mockUSDT.createTokenAccount(vaultPda, true);
+        vaultUsdtAccount = getAssociatedTokenAddressSync(
+            mockUSDT.mint.publicKey,
+            vaultPda,
+            true,
+            TOKEN_PROGRAM_ID,
+            ASSOCIATED_TOKEN_PROGRAM_ID
+        );
+        const vaultAtaInfo = await provider.connection.getAccountInfo(vaultUsdtAccount);
+        if (!vaultAtaInfo) {
+            const createVaultAtaIx = createAssociatedTokenAccountInstruction(
+                admin.publicKey,
+                vaultUsdtAccount,
+                vaultPda,
+                mockUSDT.mint.publicKey,
+                TOKEN_PROGRAM_ID,
+                ASSOCIATED_TOKEN_PROGRAM_ID
+            );
+            await provider.sendAndConfirm(
+                new anchor.web3.Transaction().add(createVaultAtaIx),
+                [admin]
+            );
+        }
         recipientUsdtAccount = await mockUSDT.createTokenAccount(recipient.publicKey);
 
         const splRateLimitPda = getTokenRateLimitPda(mockUSDT.mint.publicKey);
         await program.methods
-            .setTokenRateLimit(new anchor.BN("1000000000000000000000"))
+            .setTokenRateLimit(new anchor.BN("1000000000000000000000"), true, true)
             .accountsPartial({
                 config: configPda,
                 tokenRateLimit: splRateLimitPda,
@@ -285,6 +314,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     Array.from(universalTxId),
                     new anchor.BN(rescueAmount),
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     sig.signature,
                     sig.recoveryId,
                     sig.messageHash,
@@ -346,6 +376,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(rescueAmount),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         corrupted,
                         valid.recoveryId,
                         valid.messageHash,
@@ -394,6 +425,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(0),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -449,6 +481,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(rescueAmount),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -474,8 +507,8 @@ describe("Universal Gateway - Rescue Tests", () => {
 
             await program.methods
                 .unpause()
-                .accountsPartial({ pauser: pauser.publicKey, config: configPda })
-                .signers([pauser])
+                .accountsPartial({ operator: operator.publicKey, config: configPda })
+                .signers([operator])
                 .rpc();
         });
 
@@ -506,6 +539,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(rescueAmount),
                         new anchor.BN(Number(tooLargeGasFee)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -555,6 +589,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     Array.from(universalTxId),
                     new anchor.BN(rescueAmount),
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     sig.signature,
                     sig.recoveryId,
                     sig.messageHash,
@@ -584,6 +619,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(rescueAmount),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -651,6 +687,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     Array.from(universalTxId),
                     new anchor.BN(Number(rescueRaw)),
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     sig.signature,
                     sig.recoveryId,
                     sig.messageHash,
@@ -713,6 +750,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(Number(rescueRaw)),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         corrupted,
                         valid.recoveryId,
                         valid.messageHash,
@@ -766,6 +804,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(Number(rescueRaw)),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -822,6 +861,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(Number(rescueRaw)),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -873,6 +913,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     Array.from(universalTxId),
                     new anchor.BN(Number(rescueRaw)),
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     sig.signature,
                     sig.recoveryId,
                     sig.messageHash,
@@ -902,6 +943,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(universalTxId),
                         new anchor.BN(Number(rescueRaw)),
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
                         sig.messageHash,
@@ -933,6 +975,59 @@ describe("Universal Gateway - Rescue Tests", () => {
                     allLogs.includes("AccountDiscriminatorAlreadySet");
                 expect(isReplayError).to.be.true;
             }
+        });
+
+        it("rejects rescue_funds with an expired deadline (SignatureExpired)", async () => {
+            const rescueRaw = BigInt(100) * TOKEN_MULTIPLIER;
+            const subTxId = generateTxId();
+            const executedSubTxPda = getExecutedTxPda(subTxId);
+            const universalTxId = generateUniversalTxId();
+            const pastDeadline = BigInt(1);
+
+            const additional = buildRescueAdditionalData(
+                subTxId,
+                universalTxId,
+                recipient.publicKey,
+                DEFAULT_GAS_FEE,
+                mockUSDT.mint.publicKey
+            );
+            const sig = await signTssMessageWithChainId({
+                instruction: TssInstruction.Rescue,
+                amount: rescueRaw,
+                additional,
+                deadline: pastDeadline,
+            });
+
+            await expectRejection(
+                program.methods
+                    .rescueFunds(
+                        Array.from(subTxId),
+                        Array.from(universalTxId),
+                        new anchor.BN(Number(rescueRaw)),
+                        new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(pastDeadline.toString()),
+                        sig.signature,
+                        sig.recoveryId,
+                        sig.messageHash,
+                    )
+                    .accountsPartial({
+                        config: configPda,
+                        vault: vaultPda,
+                        feeVault: feeVaultPda,
+                        tssPda,
+                        recipient: recipient.publicKey,
+                        executedSubTx: executedSubTxPda,
+                        caller: relayer.publicKey,
+                        systemProgram: SystemProgram.programId,
+                        tokenVault: vaultUsdtAccount,
+                        recipientTokenAccount: recipientUsdtAccount,
+                        tokenMint: mockUSDT.mint.publicKey,
+                        tokenProgram: TOKEN_PROGRAM_ID,
+                    })
+                    .signers([relayer])
+                    .rpc(),
+                "SignatureExpired"
+            );
         });
     });
 });

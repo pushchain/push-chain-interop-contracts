@@ -89,6 +89,13 @@ TX_TYPE is **automatically inferred** from request structure — users never spe
 
 SVM entrypoint: `finalize_universal_tx` (withdraw/execute) and separate `revert_universal_tx` / `rescue_funds` instructions.
 
+**TX-size ref route** (execute only): when `ix_data` exceeds ~900 bytes, use the two-step ref route:
+1. `store_execute_ix_data(sub_tx_id, keccak256(ix_data), ix_data)` — uploads bytes to a `StoredIxData` PDA.
+2. `finalize_universal_tx_with_ix_data_ref(...)` — loads `ix_data` from the PDA, same TSS message format and execution logic as `finalize_universal_tx`. Gas cost is `base_finalize_gas + 5000` (extra 5000 reimburses the store UV).
+3. `close_stored_ix_data()` — no args; only needed on failure/abort path (finalize auto-closes on success). Recovers PDA rent to `store_refund_recipient`. Supports orphan recovery via `getProgramAccounts` — `sub_tx_id` is stored inside the PDA so no local UV state is required.
+
+See `contracts/svm-gateway/docs/6-TX-SIZE-REF-ROUTE.md` for full details.
+
 ### Outbound (EVM)
 
 EVM uses `Vault.finalizeUniversalTx()` as the main outbound entrypoint. All operations route through deterministic CEA (Chain Execution Account) contracts deployed per user via CREATE2. The CEA executes multicall payloads (`Multicall[]` struct). Separate functions: `revertUniversalTx()`, `rescueFunds()`.
@@ -141,6 +148,7 @@ rate_limit_config → b"rate_limit_config"
 rate_limit       → b"rate_limit"        (per-token epoch state)
 executed_sub_tx  → b"executed_sub_tx"   (replay protection, existence check)
 push_identity    → b"push_identity"     (CEA per-user signing authority)
+stored_ix_data   → b"stored_ix_data"    (sub_tx_id[32], keccak256(ix_data)[32]) — tx-size ref route
 ```
 
 **Key patterns:**
@@ -158,7 +166,10 @@ push_identity    → b"push_identity"     (CEA per-user signing authority)
 - Shared state: `tests/shared-state.ts`
 - Payload encoding: `app/execute-payload.ts`
 
-**TSS message format:** `keccak256("PUSH_CHAIN_SVM" || instruction_id || chain_id || nonce || additional_data)`
+**TSS message format:** `keccak256("PUSH_CHAIN_SVM" || instruction_id || chain_id || amount || additional_data)` — replay protection is via `ExecutedSubTx` PDA, not a nonce.
+
+**Test files also include:**
+- `tx-size-ref.test.ts` — ref-finalize route (store + finalize-by-reference)
 
 See `contracts/svm-gateway/docs/` for detailed architecture, flows, threat model, and runbook.
 

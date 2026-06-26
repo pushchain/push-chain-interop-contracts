@@ -45,6 +45,9 @@ const TOKEN_MULTIPLIER = BigInt(10 ** USDT_DECIMALS);
 // This covers Solana transaction fees (~5-20k) and compute unit costs
 const COMPUTE_BUFFER = BigInt(100_000); // 0.0001 SOL buffer for compute + tx fees
 
+/** Base fee per Solana signature — matches SIGNATURE_FEE_LAMPORTS in execute.rs. */
+const SIGNATURE_FEE_LAMPORTS = BigInt(5_000);
+
 // Helper to calculate actual rent for ExecutedSubTx account (8 bytes)
 // ExecutedSubTx::LEN = 8 (discriminator only)
 const getExecutedTxRent = async (
@@ -73,50 +76,34 @@ const ceaAtaExists = async (
 };
 
 /**
- * Calculate gas_fee dynamically for SOL execute operations
- *
- * gas_fee = executed_sub_tx_rent + compute_buffer
- * - executed_sub_tx_rent: Gateway account creation cost (paid by relayer, reimbursed via gas_fee)
- * - compute_buffer: Transaction fees and compute unit costs
- *
- * @param connection - Solana connection
- * @returns Object with gasFee as BigInt
+ * Calculate gas_fee for SOL execute operations.
+ * gasUsed = SIGNATURE_FEE + executed_sub_tx_rent  (matches on-chain execute.rs accounting)
+ * gasFee  = gasUsed + COMPUTE_BUFFER             (COMPUTE_BUFFER becomes gas_to_refund)
  */
 const calculateSolExecuteFees = async (
   connection: anchor.web3.Connection
-): Promise<{ gasFee: bigint }> => {
+): Promise<{ gasFee: bigint; gasUsed: bigint }> => {
   const executedTxRent = BigInt(await getExecutedTxRent(connection));
-
-  const gasFee = executedTxRent + COMPUTE_BUFFER;
-
-  return { gasFee };
+  const gasUsed = SIGNATURE_FEE_LAMPORTS + executedTxRent;
+  return { gasFee: executedTxRent + COMPUTE_BUFFER, gasUsed };
 };
 
 /**
- * Calculate gas_fee dynamically for SPL execute operations
- *
- * gas_fee = executed_sub_tx_rent + (cea_ata_rent if created) + compute_buffer
- * - executed_sub_tx_rent: Gateway account creation cost (paid by relayer, reimbursed via gas_fee)
- * - cea_ata_rent: CEA ATA creation cost if account doesn't exist (paid by relayer, reimbursed via gas_fee)
- * - compute_buffer: Transaction fees and compute unit costs
- *
- * @param connection - Solana connection
- * @param ceaAta - CEA ATA public key to check if it exists
- * @returns Object with gasFee as BigInt
+ * Calculate gas_fee for SPL execute operations.
+ * gasUsed = SIGNATURE_FEE + executed_sub_tx_rent + cea_ata_rent (if not yet created)
+ * gasFee  = gasUsed + COMPUTE_BUFFER  (COMPUTE_BUFFER becomes gas_to_refund)
  */
 const calculateSplExecuteFees = async (
   connection: anchor.web3.Connection,
   ceaAta: PublicKey
-): Promise<{ gasFee: bigint }> => {
+): Promise<{ gasFee: bigint; gasUsed: bigint }> => {
   const executedTxRent = BigInt(await getExecutedTxRent(connection));
   const ceaAtaExisted = await ceaAtaExists(connection, ceaAta);
   const ceaAtaRent = ceaAtaExisted
     ? BigInt(0)
     : BigInt(await getTokenAccountRent(connection));
-
-  const gasFee = executedTxRent + ceaAtaRent + COMPUTE_BUFFER;
-
-  return { gasFee };
+  const gasUsed = SIGNATURE_FEE_LAMPORTS + executedTxRent + ceaAtaRent;
+  return { gasFee: executedTxRent + ceaAtaRent + COMPUTE_BUFFER, gasUsed };
 };
 
 const asLamports = (sol: number) =>
@@ -162,6 +149,7 @@ describe("Universal Gateway - Execute Tests", () => {
   });
 
   let admin: Keypair;
+  let operator: Keypair;
   let recipient: Keypair; // Recipient for test-counter
 
   let configPda: PublicKey;
@@ -180,6 +168,25 @@ describe("Universal Gateway - Execute Tests", () => {
   let counterAuthority: Keypair; // Authority for counter
 
   let txIdCounter = 0;
+
+  const expectRejection = async (promise: Promise<unknown>, message: string) => {
+    let rejected = false;
+    try {
+      await promise;
+    } catch (error: any) {
+      rejected = true;
+      const errorStr = error.toString();
+      const errorMessage = error.error?.errorMessage || error.message || errorStr;
+      const errorCode = error.error?.errorCode?.code || error.error?.errorCode || error.code;
+      const matches =
+        errorStr.includes(message) ||
+        errorMessage.includes(message) ||
+        (errorCode && errorCode.toString().includes(message)) ||
+        error.error?.errorCode?.code === message;
+      expect(matches, `Expected error "${message}", got ${errorStr}`).to.be.true;
+    }
+    expect(rejected, `Expected rejection with "${message}" but call succeeded`).to.be.true;
+  };
 
   const generateTxId = (): number[] => {
     txIdCounter++;
@@ -242,6 +249,7 @@ describe("Universal Gateway - Execute Tests", () => {
 
   before(async () => {
     admin = sharedState.getAdmin();
+    operator = sharedState.getOperator();
     mockUSDT = sharedState.getMockUSDT();
 
     recipient = Keypair.generate();
@@ -270,7 +278,7 @@ describe("Universal Gateway - Execute Tests", () => {
     );
 
     [tssPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("tsspda_v2")],
+      [Buffer.from("final_tss_pda")],
       gatewayProgram.programId
     );
 
@@ -296,7 +304,7 @@ describe("Universal Gateway - Execute Tests", () => {
       [usdtTokenRateLimitPda, mockUSDT.mint.publicKey],
     ] as [PublicKey, PublicKey][]) {
       await gatewayProgram.methods
-        .setTokenRateLimit(veryLargeThreshold)
+        .setTokenRateLimit(veryLargeThreshold, true, true)
         .accountsPartial({
           config: configPda,
           tokenRateLimit: pda,
@@ -381,6 +389,12 @@ describe("Universal Gateway - Execute Tests", () => {
         throw e;
       }
     }
+    const existingCounter = await counterProgram.account.counter.fetch(
+      counterPda
+    );
+    counterAuthority = {
+      publicKey: existingCounter.authority,
+    } as Keypair;
 
     // Fund vault with SOL (admin pays)
     const vaultAmount = asLamports(100);
@@ -464,6 +478,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(counterIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -478,6 +493,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -495,19 +512,15 @@ describe("Universal Gateway - Execute Tests", () => {
       const balanceAfter = await provider.connection.getBalance(
         admin.publicKey
       );
-      // Option 1: Relayer pays gateway costs, gets relayer_fee reimbursement
-      // Caller pays for:
-      // 1. executed_sub_tx account rent (~890k)
-      // 2. Transaction fees (varies by transaction size)
-      // Caller receives: relayer_fee = gas_fee (reimbursement for gateway costs)
+      // Relayer pays executed_sub_tx rent upfront; receives gas_used back from vault.
+      // gas_used = SIGNATURE_FEE + sub_tx_rent (no ATA for SOL execute).
+      // Net change for relayer ≈ SIGNATURE_FEE - tx_fees ≈ 0.
       const actualRentForExecutedTx = await getExecutedTxRent(
         provider.connection
       );
-      const relayerFee = Number(gasFee);
+      const gasUsedSol = Number(SIGNATURE_FEE_LAMPORTS) + actualRentForExecutedTx;
       const actualBalanceChange = balanceAfter - balanceBefore;
-      // Expected: -executed_sub_tx_rent + relayer_fee - transaction_fees
-      // relayer_fee = gas_fee = executed_sub_tx_rent + compute_buffer
-      const expectedBalanceChange = -actualRentForExecutedTx + relayerFee;
+      const expectedBalanceChange = -actualRentForExecutedTx + gasUsedSol;
       expect(actualBalanceChange).to.be.closeTo(expectedBalanceChange, 15000); // Allow for transaction fees
 
       const counterAfter = await counterProgram.account.counter.fetch(
@@ -572,6 +585,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(preseedIx.data),
           new anchor.BN(Number(preseedGasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(preseedSig.signature),
           preseedSig.recoveryId,
           Array.from(preseedSig.messageHash)
@@ -586,6 +600,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -646,6 +662,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(transferIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(transferSig.signature),
           transferSig.recoveryId,
           Array.from(transferSig.messageHash)
@@ -660,6 +677,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -743,6 +762,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(sysTransferIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -757,6 +777,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: anchor.web3.SystemProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -842,6 +864,7 @@ describe("Universal Gateway - Execute Tests", () => {
             Buffer.from(transferIx.data),
             new anchor.BN(Number(gasFee)),
 
+            new anchor.BN(4102444800),
             Array.from(transferSig.signature),
             transferSig.recoveryId,
             Array.from(transferSig.messageHash)
@@ -856,6 +879,8 @@ describe("Universal Gateway - Execute Tests", () => {
             rateLimitConfig: null,
             tokenRateLimit: null,
             destinationProgram: anchor.web3.SystemProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
             recipient: null,
             vaultAta: null,
             ceaAta: null,
@@ -934,6 +959,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(counterIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig1.signature),
           sig1.recoveryId,
           Array.from(sig1.messageHash)
@@ -948,6 +974,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -991,6 +1019,7 @@ describe("Universal Gateway - Execute Tests", () => {
             Buffer.from(counterIx.data),
             new anchor.BN(Number(gasFee)),
 
+            new anchor.BN(4102444800),
             Array.from(sig2.signature),
             sig2.recoveryId,
             Array.from(sig2.messageHash)
@@ -1005,6 +1034,8 @@ describe("Universal Gateway - Execute Tests", () => {
             rateLimitConfig: null,
             tokenRateLimit: null,
             destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
             recipient: null,
             vaultAta: null,
             ceaAta: null,
@@ -1104,6 +1135,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(counterIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -1121,6 +1153,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -1135,25 +1169,20 @@ describe("Universal Gateway - Execute Tests", () => {
       const balanceAfter = await provider.connection.getBalance(
         admin.publicKey
       );
-      // Option 1: Relayer pays gateway costs, gets relayer_fee reimbursement
-      // Caller pays for:
-      // 1. executed_sub_tx account rent (~890k)
-      // 2. CEA ATA rent (if it doesn't exist - caller is payer per line 465 in execute.rs) (~2M)
-      // 3. Transaction fees (varies by transaction size)
-      // Caller receives: relayer_fee = gas_fee (reimbursement for gateway costs)
-      // relayer_fee = gas_fee = executed_sub_tx_rent + cea_ata_rent + compute_buffer
+      // Relayer pays sub_tx_rent + ata_rent (if created) upfront; receives gas_used back.
+      // gas_used = SIGNATURE_FEE + sub_tx_rent + ata_rent.
+      // Net change for relayer ≈ SIGNATURE_FEE - tx_fees ≈ 0.
       const actualRentForExecutedTx = await getExecutedTxRent(
         provider.connection
       );
       const actualRentForCeaAta = ceaAtaExistedBefore
         ? 0
         : await getTokenAccountRent(provider.connection);
-      const relayerFee = Number(gasFee);
+      const gasUsedSpl = Number(SIGNATURE_FEE_LAMPORTS) + actualRentForExecutedTx + actualRentForCeaAta;
 
       const actualBalanceChange = balanceAfter - balanceBefore;
-      // Expected: -executed_sub_tx_rent - cea_ata_rent (if created) + relayer_fee - transaction_fees
       const expectedBalanceChange =
-        -actualRentForExecutedTx - actualRentForCeaAta + relayerFee;
+        -actualRentForExecutedTx - actualRentForCeaAta + gasUsedSpl;
       expect(actualBalanceChange).to.be.closeTo(expectedBalanceChange, 20000); // Allow for transaction fees (SPL txs are larger)
 
       // Verify executed_sub_tx account exists
@@ -1233,6 +1262,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(preseedIx.data),
           new anchor.BN(Number(preseedGasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(preseedSig.signature),
           preseedSig.recoveryId,
           Array.from(preseedSig.messageHash)
@@ -1250,6 +1280,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -1310,6 +1342,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(transferIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(transferSig.signature),
           transferSig.recoveryId,
           Array.from(transferSig.messageHash)
@@ -1327,6 +1360,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -1421,6 +1456,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(splTransferIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -1438,6 +1474,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: TOKEN_PROGRAM_ID,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -1536,6 +1574,7 @@ describe("Universal Gateway - Execute Tests", () => {
             Buffer.from(transferIx.data),
             new anchor.BN(Number(gasFee)),
 
+            new anchor.BN(4102444800),
             Array.from(transferSig.signature),
             transferSig.recoveryId,
             Array.from(transferSig.messageHash)
@@ -1553,6 +1592,8 @@ describe("Universal Gateway - Execute Tests", () => {
             rateLimitConfig: null,
             tokenRateLimit: null,
             destinationProgram: TOKEN_PROGRAM_ID,
+          storedIxData: null,
+          storeRefundRecipient: null,
             recipient: null,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
@@ -1656,6 +1697,7 @@ describe("Universal Gateway - Execute Tests", () => {
             Buffer.from(counterIx.data),
             new anchor.BN(Number(gasFee)),
 
+            new anchor.BN(4102444800),
             Array.from(sig.signature),
             sig.recoveryId,
             Array.from(sig.messageHash)
@@ -1673,6 +1715,8 @@ describe("Universal Gateway - Execute Tests", () => {
             rateLimitConfig: null,
             tokenRateLimit: null,
             destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
             recipient: null,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
@@ -1767,6 +1811,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(counterIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -1784,6 +1829,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -1798,25 +1845,23 @@ describe("Universal Gateway - Execute Tests", () => {
       const balanceAfter = await provider.connection.getBalance(
         admin.publicKey
       );
-      // Option 1: Relayer pays gateway costs, gets relayer_fee reimbursement
-      // Caller pays for:
-      // 1. executed_sub_tx account rent (~890k)
-      // 2. CEA ATA rent (if it doesn't exist - caller is payer per line 465 in execute.rs) (~2M)
-      // 3. Transaction fees (varies by transaction size)
-      // Caller receives: relayer_fee = gas_fee (reimbursement for gateway costs)
-      // relayer_fee = gas_fee = executed_sub_tx_rent + cea_ata_rent + compute_buffer
+      // Caller pays sub_tx rent + optional CEA ATA rent upfront, then receives gas_used back.
+      // gas_used = SIGNATURE_FEE + sub_tx_rent + ata_rent (if ATA was created).
       const actualRentForExecutedTx = await getExecutedTxRent(
         provider.connection
       );
       const actualRentForCeaAta = ceaAtaExistedBeforeZeroAmount
         ? 0
         : await getTokenAccountRent(provider.connection);
-      const relayerFee = Number(gasFee);
+      const gasUsedZeroAmountSpl =
+        Number(SIGNATURE_FEE_LAMPORTS) +
+        actualRentForExecutedTx +
+        actualRentForCeaAta;
 
       const actualBalanceChange = balanceAfter - balanceBefore;
-      // Expected: -executed_sub_tx_rent - cea_ata_rent (if created) + relayer_fee - transaction_fees
+      // Expected: -sub_tx_rent - ata_rent + gas_used - tx_fees
       const expectedBalanceChange =
-        -actualRentForExecutedTx - actualRentForCeaAta + relayerFee;
+        -actualRentForExecutedTx - actualRentForCeaAta + gasUsedZeroAmountSpl;
       expect(actualBalanceChange).to.be.closeTo(expectedBalanceChange, 20000); // Allow for transaction fees (SPL txs are larger)
 
       const counterAfter = await counterProgram.account.counter.fetch(
@@ -1921,6 +1966,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(decoded.ixData),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -1935,6 +1981,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: targetProgram,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -1955,19 +2003,18 @@ describe("Universal Gateway - Execute Tests", () => {
         .signers([admin])
         .rpc();
 
-      // Verify caller received relayer_fee reimbursement
+      // Relayer pays sub_tx_rent upfront; receives gas_used back.
+      // gas_used = SIGNATURE_FEE + sub_tx_rent; net ≈ SIGNATURE_FEE - tx_fees.
       const callerBalanceAfter = await provider.connection.getBalance(
         admin.publicKey
       );
       const actualBalanceChange = callerBalanceAfter - callerBalanceBefore;
-      // Option 1: Relayer pays gateway costs, gets relayer_fee reimbursement
       const actualRentForExecutedTx = await getExecutedTxRent(
         provider.connection
       );
-      const relayerFee = Number(gasFee);
-      // Expected: -executed_sub_tx_rent + relayer_fee - transaction_fees
-      const minExpectedChange = -actualRentForExecutedTx + relayerFee - 10000; // Allow up to 10k for tx fees
-      const maxExpectedChange = -actualRentForExecutedTx + relayerFee - 1000; // Minimum tx fee ~1k
+      const gasUsedSolDecode = Number(SIGNATURE_FEE_LAMPORTS) + actualRentForExecutedTx;
+      const minExpectedChange = -actualRentForExecutedTx + gasUsedSolDecode - 10000; // Allow up to 10k for tx fees
+      const maxExpectedChange = -actualRentForExecutedTx + gasUsedSolDecode + 1000; // small positive buffer
       expect(actualBalanceChange).to.be.at.least(minExpectedChange);
       expect(actualBalanceChange).to.be.at.most(maxExpectedChange);
 
@@ -2079,6 +2126,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(decoded.ixData),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -2096,6 +2144,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: targetProgram,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -2107,22 +2157,21 @@ describe("Universal Gateway - Execute Tests", () => {
         .signers([admin])
         .rpc();
 
-      // Verify caller received relayer_fee reimbursement
+      // Relayer pays sub_tx_rent + ata_rent (if created) upfront; receives gas_used back.
+      // gas_used = SIGNATURE_FEE + sub_tx_rent + ata_rent; net ≈ SIGNATURE_FEE - tx_fees.
       const callerBalanceAfter = await provider.connection.getBalance(
         admin.publicKey
       );
       const actualBalanceChange = callerBalanceAfter - callerBalanceBefore;
-      // Option 1: Relayer pays gateway costs, gets relayer_fee reimbursement
       const actualRentForExecutedTx = await getExecutedTxRent(
         provider.connection
       );
       const actualRentForCeaAta = ceaAtaExistedBeforeDecodeSpl
         ? 0
         : await getTokenAccountRent(provider.connection);
-      const relayerFee = Number(gasFee);
-      // Expected: -executed_sub_tx_rent - cea_ata_rent (if created) + relayer_fee - transaction_fees
+      const gasUsedSplDecode = Number(SIGNATURE_FEE_LAMPORTS) + actualRentForExecutedTx + actualRentForCeaAta;
       const expectedBalanceChange =
-        -actualRentForExecutedTx - actualRentForCeaAta + relayerFee;
+        -actualRentForExecutedTx - actualRentForCeaAta + gasUsedSplDecode;
       expect(actualBalanceChange).to.be.closeTo(expectedBalanceChange, 20000); // Allow for transaction fees (SPL txs are larger)
 
       const counterAfter = await counterProgram.account.counter.fetch(
@@ -2227,6 +2276,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 accountsToWritableFlagsOnly(accounts),
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -2249,6 +2299,8 @@ describe("Universal Gateway - Execute Tests", () => {
                 rent: null,
                 associatedTokenProgram: null,
                 recipientAta: null,
+                storedIxData: null,
+                storeRefundRecipient: null,
                 systemProgram: SystemProgram.programId,
               })
               .remainingAccounts(remainingAccounts)
@@ -2259,8 +2311,8 @@ describe("Universal Gateway - Execute Tests", () => {
       } finally {
         await gatewayProgram.methods
           .unpause()
-          .accountsPartial({ pauser: admin.publicKey, config: configPda })
-          .signers([admin])
+          .accountsPartial({ operator: operator.publicKey, config: configPda })
+          .signers([operator])
           .rpc();
       }
     });
@@ -2328,6 +2380,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -2342,6 +2395,8 @@ describe("Universal Gateway - Execute Tests", () => {
                 rateLimitConfig: null,
                 tokenRateLimit: null,
                 destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
                 recipient: null,
                 vaultAta: null,
                 ceaAta: null,
@@ -2418,6 +2473,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -2432,6 +2488,8 @@ describe("Universal Gateway - Execute Tests", () => {
                 rateLimitConfig: null,
                 tokenRateLimit: null,
                 destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
                 recipient: null,
                 vaultAta: null,
                 ceaAta: null,
@@ -2510,6 +2568,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -2524,6 +2583,8 @@ describe("Universal Gateway - Execute Tests", () => {
                 rateLimitConfig: null,
                 tokenRateLimit: null,
                 destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
                 recipient: null,
                 vaultAta: null,
                 ceaAta: null,
@@ -2601,6 +2662,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -2615,6 +2677,8 @@ describe("Universal Gateway - Execute Tests", () => {
                 rateLimitConfig: null,
                 tokenRateLimit: null,
                 destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
                 recipient: null,
                 vaultAta: null,
                 ceaAta: null,
@@ -2668,6 +2732,7 @@ describe("Universal Gateway - Execute Tests", () => {
               Buffer.from([]),
               new anchor.BN(Number(gasFee)),
 
+              new anchor.BN(4102444800),
               dummySig,
               0,
               dummyHash
@@ -2682,6 +2747,8 @@ describe("Universal Gateway - Execute Tests", () => {
               rateLimitConfig: null,
               tokenRateLimit: null,
               destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
               recipient: null,
               vaultAta: null,
               ceaAta: null,
@@ -2765,6 +2832,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 corruptedSignature, // Invalid!
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -2779,6 +2847,8 @@ describe("Universal Gateway - Execute Tests", () => {
                 rateLimitConfig: null,
                 tokenRateLimit: null,
                 destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
                 recipient: null,
                 vaultAta: null,
                 ceaAta: null,
@@ -2854,6 +2924,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 tamperedHash // Tampered!
@@ -2868,6 +2939,8 @@ describe("Universal Gateway - Execute Tests", () => {
                 rateLimitConfig: null,
                 tokenRateLimit: null,
                 destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
                 recipient: null,
                 vaultAta: null,
                 ceaAta: null,
@@ -2938,6 +3011,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from([0x01]),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -2952,6 +3026,8 @@ describe("Universal Gateway - Execute Tests", () => {
                 rateLimitConfig: null,
                 tokenRateLimit: null,
                 destinationProgram: nonExecutableAccount,
+          storedIxData: null,
+          storeRefundRecipient: null,
                 recipient: null,
                 vaultAta: null,
                 ceaAta: null,
@@ -3028,6 +3104,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -3042,6 +3119,8 @@ describe("Universal Gateway - Execute Tests", () => {
                 rateLimitConfig: null,
                 tokenRateLimit: null,
                 destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
                 recipient: null,
                 vaultAta: null,
                 ceaAta: null,
@@ -3121,6 +3200,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(counterIx.data),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -3135,6 +3215,8 @@ describe("Universal Gateway - Execute Tests", () => {
                 rateLimitConfig: null,
                 tokenRateLimit: null,
                 destinationProgram: differentProgram,
+          storedIxData: null,
+          storeRefundRecipient: null,
                 recipient: null,
                 vaultAta: null,
                 ceaAta: null,
@@ -3230,6 +3312,7 @@ describe("Universal Gateway - Execute Tests", () => {
                 Buffer.from(decoded.ixData),
                 new anchor.BN(Number(gasFee)),
 
+                new anchor.BN(4102444800),
                 Array.from(sig.signature),
                 sig.recoveryId,
                 Array.from(sig.messageHash)
@@ -3252,6 +3335,8 @@ describe("Universal Gateway - Execute Tests", () => {
                 rent: null,
                 associatedTokenProgram: null,
                 recipientAta: null,
+                storedIxData: null,
+                storeRefundRecipient: null,
                 systemProgram: SystemProgram.programId,
               })
               .remainingAccounts(remainingAccounts)
@@ -3397,6 +3482,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(stakeIx.data),
           new anchor.BN(Number(gasFee1)),
 
+          new anchor.BN(4102444800),
           Array.from(sig1.signature),
           sig1.recoveryId,
           Array.from(sig1.messageHash)
@@ -3411,6 +3497,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -3500,6 +3588,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(stakeIx2.data),
           new anchor.BN(Number(gasFee2)),
 
+          new anchor.BN(4102444800),
           Array.from(sig2.signature),
           sig2.recoveryId,
           Array.from(sig2.messageHash)
@@ -3514,6 +3603,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -3603,6 +3694,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(unstakeIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -3617,6 +3709,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -3764,6 +3858,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(stakeIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -3778,6 +3873,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -3855,6 +3952,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(unstakeIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -3869,6 +3967,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -3977,6 +4077,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(stakeIx.data),
           gasFeeBn,
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -3997,6 +4098,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -4083,6 +4186,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(unstakeIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(4102444800),
           Array.from(sig.signature),
           sig.recoveryId,
           Array.from(sig.messageHash)
@@ -4100,6 +4204,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -4291,6 +4397,7 @@ describe("Universal Gateway - Execute Tests", () => {
           Buffer.from(stakeIx.data),
           gasFeeBn,
 
+          new anchor.BN(4102444800),
           Array.from(sig1.signature),
           sig1.recoveryId,
           Array.from(sig1.messageHash)
@@ -4311,6 +4418,8 @@ describe("Universal Gateway - Execute Tests", () => {
           rateLimitConfig: null,
           tokenRateLimit: null,
           destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
           recipient: null,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -4386,6 +4495,7 @@ describe("Universal Gateway - Execute Tests", () => {
             Buffer.from(crossUnstakeIx.data),
             new anchor.BN(Number(gasFee2)),
 
+            new anchor.BN(4102444800),
             Array.from(sigCross.signature),
             sigCross.recoveryId,
             Array.from(sigCross.messageHash)
@@ -4406,6 +4516,8 @@ describe("Universal Gateway - Execute Tests", () => {
             rateLimitConfig: null,
             tokenRateLimit: null,
             destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
             recipient: null,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
@@ -4437,6 +4549,92 @@ describe("Universal Gateway - Execute Tests", () => {
           user3StakeAfter.amount.toString()
         );
       }
+    });
+  });
+
+  describe("deadline enforcement", () => {
+    const PAST_DEADLINE = BigInt(1);
+
+    it("rejects execute finalize with an expired deadline (SignatureExpired)", async () => {
+      const subTxId = generateTxId();
+      const universalTxId = generateUniversalTxId();
+      const pushAccount = generateSender();
+
+      const counterIx = await counterProgram.methods
+        .increment(new anchor.BN(1))
+        .accountsPartial({
+          counter: counterPda,
+          authority: counterAuthority.publicKey,
+        })
+        .instruction();
+
+      const remainingAccounts = instructionAccountsToRemaining(counterIx);
+      const accounts = remainingAccounts.map((acc) => ({
+        pubkey: acc.pubkey,
+        isWritable: acc.isWritable,
+      }));
+      const { gasFee } = await calculateSolExecuteFees(provider.connection);
+      const writableFlags = accountsToWritableFlagsOnly(accounts);
+
+      const sig = await signTssMessage({
+        instruction: TssInstruction.Execute,
+        amount: BigInt(0),
+        chainId: (await gatewayProgram.account.tssPda.fetch(tssPda)).chainId,
+        deadline: PAST_DEADLINE,
+        additional: buildExecuteAdditionalData(
+          new Uint8Array(universalTxId),
+          new Uint8Array(subTxId),
+          counterProgram.programId,
+          new Uint8Array(pushAccount),
+          accounts,
+          counterIx.data,
+          gasFee
+        ),
+      });
+
+      await expectRejection(
+        gatewayProgram.methods
+          .finalizeUniversalTx(
+            2,
+            Array.from(subTxId),
+            Array.from(universalTxId),
+            new anchor.BN(0),
+            Array.from(pushAccount),
+            writableFlags,
+            Buffer.from(counterIx.data),
+            new anchor.BN(Number(gasFee)),
+            new anchor.BN(PAST_DEADLINE.toString()),
+            Array.from(sig.signature),
+            sig.recoveryId,
+            Array.from(sig.messageHash)
+          )
+          .accountsPartial({
+            caller: admin.publicKey,
+            config: configPda,
+            vaultSol: vaultPda,
+            ceaAuthority: getCeaAuthorityPda(pushAccount),
+            tssPda,
+            executedSubTx: getExecutedTxPda(subTxId),
+            rateLimitConfig: null,
+            tokenRateLimit: null,
+            destinationProgram: counterProgram.programId,
+            storedIxData: null,
+            storeRefundRecipient: null,
+            recipient: null,
+            vaultAta: null,
+            ceaAta: null,
+            mint: null,
+            tokenProgram: null,
+            rent: null,
+            associatedTokenProgram: null,
+            recipientAta: null,
+            systemProgram: SystemProgram.programId,
+          })
+          .remainingAccounts(remainingAccounts)
+          .signers([admin])
+          .rpc(),
+        "SignatureExpired"
+      );
     });
   });
 

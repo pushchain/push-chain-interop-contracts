@@ -38,7 +38,7 @@ contract VaultTest is Test {
 
     // Events
     event GatewayUpdated(address indexed oldGateway, address indexed newGateway);
-    event TSSUpdated(address indexed oldTss, address indexed newTss);
+    // TSSUpdated event removed — TSS role managed via OZ grantRole/revokeRole
     event UniversalTxFinalized(
         bytes32 indexed subTxId,
         bytes32 indexed universalTxId,
@@ -96,14 +96,14 @@ contract VaultTest is Test {
             Vault.initialize.selector, admin, pauser, tss, address(gateway), address(ceaFactory)
         );
         ERC1967Proxy vaultProxy = new ERC1967Proxy(address(vaultImpl), vaultInitData);
-        vault = Vault(address(vaultProxy));
+        vault = Vault(payable(address(vaultProxy)));
 
         // Set vault in CEAFactory
         ceaFactory.setVault(address(vault));
 
         // Update gateway's VAULT_ROLE to point to actual vault
         vm.prank(admin);
-        gateway.setVault(address(vault));
+        gateway.updateVault(address(vault));
 
         // Deploy tokens
         token = new MockERC20("Test Token", "TST", 18, 1_000_000e18);
@@ -245,8 +245,8 @@ contract VaultTest is Test {
         assertEq(address(vault.gateway()), address(gateway));
     }
 
-    function test_Initialization_TSSAddressSet() public view {
-        assertEq(vault.TSS_ADDRESS(), tss);
+    function test_Initialization_TSSRoleGranted() public view {
+        assertTrue(vault.hasRole(vault.TSS_ROLE(), tss));
     }
 
     function test_Initialization_StartsUnpaused() public view {
@@ -312,11 +312,11 @@ contract VaultTest is Test {
         vault.pause();
     }
 
-    function test_Unpause_OnlyPauserCanUnpause() public {
+    function test_Unpause_OnlyOperatorCanUnpause() public {
         vm.prank(pauser);
         vault.pause();
 
-        vm.prank(pauser);
+        vm.prank(admin);
         vault.unpause();
         assertFalse(vault.paused());
     }
@@ -339,20 +339,20 @@ contract VaultTest is Test {
         UniversalGateway newGateway = UniversalGateway(payable(address(newProxy)));
 
         vm.prank(admin);
-        vault.setGateway(address(newGateway));
+        vault.updateGateway(address(newGateway));
         assertEq(address(vault.gateway()), address(newGateway));
     }
 
     function test_SetGateway_NonAdminReverts() public {
         vm.prank(user1);
         vm.expectRevert();
-        vault.setGateway(address(gateway));
+        vault.updateGateway(address(gateway));
     }
 
     function test_SetGateway_ZeroAddressReverts() public {
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        vault.setGateway(address(0));
+        vault.updateGateway(address(0));
     }
 
     function test_SetGateway_EmitsEvent() public {
@@ -366,47 +366,46 @@ contract VaultTest is Test {
         vm.prank(admin);
         vm.expectEmit(true, true, false, false);
         emit GatewayUpdated(address(gateway), address(newGateway));
-        vault.setGateway(address(newGateway));
+        vault.updateGateway(address(newGateway));
     }
 
-    function test_SetTSS_OnlyAdminCanSet() public {
+    function test_TSS_GrantRole_OnlyAdminCanGrant() public {
         address newTSS = makeAddr("newTSS");
+        bytes32 tssRole = vault.TSS_ROLE();
 
         vm.prank(admin);
-        vault.setTSS(newTSS);
-        assertEq(vault.TSS_ADDRESS(), newTSS);
-        assertTrue(vault.hasRole(vault.TSS_ROLE(), newTSS));
+        vault.grantRole(tssRole, newTSS);
+        assertTrue(vault.hasRole(tssRole, newTSS));
     }
 
-    function test_SetTSS_NonAdminReverts() public {
+    function test_TSS_GrantRole_NonAdminReverts() public {
         address newTSS = makeAddr("newTSS");
+        bytes32 tssRole = vault.TSS_ROLE();
 
         vm.prank(user1);
         vm.expectRevert();
-        vault.setTSS(newTSS);
+        vault.grantRole(tssRole, newTSS);
     }
 
-    function test_SetTSS_ZeroAddressReverts() public {
-        vm.prank(admin);
-        vm.expectRevert(Errors.ZeroAddress.selector);
-        vault.setTSS(address(0));
-    }
-
-    function test_SetTSS_RevokesOldTSSRole() public {
+    function test_TSS_RevokeRole_RemovesAccess() public {
         address newTSS = makeAddr("newTSS");
 
-        vm.prank(admin);
-        vault.setTSS(newTSS);
+        vm.startPrank(admin);
+        vault.grantRole(vault.TSS_ROLE(), newTSS);
+        vault.revokeRole(vault.TSS_ROLE(), tss);
+        vm.stopPrank();
 
         assertFalse(vault.hasRole(vault.TSS_ROLE(), tss));
         assertTrue(vault.hasRole(vault.TSS_ROLE(), newTSS));
     }
 
-    function test_SetTSS_OldTSSCannotCallFunctions() public {
+    function test_TSS_OldTSSCannotCallAfterRevoke() public {
         address newTSS = makeAddr("newTSS");
 
-        vm.prank(admin);
-        vault.setTSS(newTSS);
+        vm.startPrank(admin);
+        vault.grantRole(vault.TSS_ROLE(), newTSS);
+        vault.revokeRole(vault.TSS_ROLE(), tss);
+        vm.stopPrank();
 
         vm.prank(tss);
         vm.expectRevert();
@@ -421,11 +420,13 @@ contract VaultTest is Test {
         );
     }
 
-    function test_SetTSS_NewTSSCanCallFunctions() public {
+    function test_TSS_NewTSSCanCallAfterGrant() public {
         address newTSS = makeAddr("newTSS");
 
-        vm.prank(admin);
-        vault.setTSS(newTSS);
+        vm.startPrank(admin);
+        vault.grantRole(vault.TSS_ROLE(), newTSS);
+        vault.revokeRole(vault.TSS_ROLE(), tss);
+        vm.stopPrank();
 
         vm.prank(newTSS);
         vault.finalizeUniversalTx(
@@ -438,26 +439,6 @@ contract VaultTest is Test {
             _withdrawalPayloadDirect(address(token), user1, 100e18)
         );
         assertEq(token.balanceOf(user1), 100e18);
-    }
-
-    function test_SetTSS_EmitsEvent() public {
-        address newTSS = makeAddr("newTSS");
-
-        vm.prank(admin);
-        vm.expectEmit(true, true, false, false);
-        emit TSSUpdated(tss, newTSS);
-        vault.setTSS(newTSS);
-    }
-
-    function test_SetTSS_AllowedWhenPaused() public {
-        address newTSS = makeAddr("newTSS");
-
-        vm.prank(pauser);
-        vault.pause();
-
-        vm.prank(admin);
-        vault.setTSS(newTSS);
-        assertEq(vault.TSS_ADDRESS(), newTSS);
     }
 
     function test_Withdraw_OnlyTSSCanCall() public {
@@ -526,7 +507,7 @@ contract VaultTest is Test {
         UniversalGateway newGateway = UniversalGateway(payable(address(newProxy)));
 
         vm.prank(admin);
-        vault.setGateway(address(newGateway));
+        vault.updateGateway(address(newGateway));
         assertEq(address(vault.gateway()), address(newGateway));
     }
 
@@ -540,7 +521,7 @@ contract VaultTest is Test {
     }
 
     function test_Unpause_DoubleUnpauseReverts() public {
-        vm.prank(pauser);
+        vm.prank(admin);
         vm.expectRevert();
         vault.unpause();
     }
@@ -549,7 +530,7 @@ contract VaultTest is Test {
         vm.prank(pauser);
         vault.pause();
 
-        vm.prank(pauser);
+        vm.prank(admin);
         vault.unpause();
 
         vm.prank(tss);
@@ -820,7 +801,7 @@ contract VaultTest is Test {
     }
 
     function test_ExecuteUniversalTx_Setup_MockCEAFactoryVaultSet() public view {
-        assertEq(ceaFactory.VAULT(), address(vault));
+        assertEq(ceaFactory.vault(), address(vault));
     }
 
     // B. Access Control (3 tests)
@@ -1373,23 +1354,25 @@ contract VaultTest is Test {
     }
 
     // ============================================================================
-    // NO NATIVE INVARIANT TESTS
+    // NATIVE ETH RECEIVE TESTS
     // ============================================================================
 
-    function test_NoNative_DirectETHSendReverts() public {
+    function test_Receive_DirectETHSendSucceeds() public {
         vm.deal(user1, 1 ether);
 
         vm.prank(user1);
         (bool success,) = address(vault).call{ value: 1 ether }("");
-        assertFalse(success);
+        assertTrue(success);
+        assertEq(address(vault).balance, 1 ether);
     }
 
-    function test_NoNative_NoReceiveFunction() public {
+    function test_Receive_SendViaCallSucceeds() public {
         vm.deal(user1, 1 ether);
 
         vm.prank(user1);
-        vm.expectRevert();
-        payable(address(vault)).transfer(1 ether);
+        (bool success,) = payable(address(vault)).call{ value: 1 ether }("");
+        assertTrue(success);
+        assertEq(address(vault).balance, 1 ether);
     }
 
     function test_NoNative_FunctionsDoNotAcceptValue() public {
@@ -1735,7 +1718,7 @@ contract VaultTest is Test {
         UniversalGateway newGateway = UniversalGateway(payable(address(newProxy)));
 
         vm.prank(admin);
-        vault.setGateway(address(newGateway));
+        vault.updateGateway(address(newGateway));
 
         assertEq(address(vault.gateway()), address(newGateway));
     }
@@ -1755,16 +1738,7 @@ contract VaultTest is Test {
         vm.prank(admin);
         vm.expectEmit(true, true, false, false);
         emit GatewayUpdated(address(gateway), address(newGateway));
-        vault.setGateway(address(newGateway));
-    }
-
-    function test_Events_TSSUpdated() public {
-        address newTSS = makeAddr("newTSS");
-
-        vm.prank(admin);
-        vm.expectEmit(true, true, false, false);
-        emit TSSUpdated(tss, newTSS);
-        vault.setTSS(newTSS);
+        vault.updateGateway(address(newGateway));
     }
 
     function test_Events_VaultWithdraw() public {
@@ -1796,9 +1770,8 @@ contract VaultTest is Test {
     }
 
     function test_Events_InitializationNoEvents() public {
-        // NOTE: Vault.initialize() does NOT emit GatewayUpdated or TSSUpdated events
-        // Events are only emitted by setGateway() and setTSS() functions
-        // This test verifies that initialization works without events
+        // NOTE: Vault.initialize() does NOT emit GatewayUpdated events
+        // Events are only emitted by setGateway()
         Vault newImpl = new Vault();
         MockCEAFactory newCeaFactory = new MockCEAFactory();
 
@@ -1809,9 +1782,8 @@ contract VaultTest is Test {
         ERC1967Proxy proxy = new ERC1967Proxy(address(newImpl), initData);
 
         // Verify the proxy was created and initialized correctly
-        Vault newVault = Vault(address(proxy));
+        Vault newVault = Vault(payable(address(proxy)));
         assertEq(address(newVault.gateway()), address(gateway));
-        assertEq(newVault.TSS_ADDRESS(), tss);
         assertEq(address(newVault.CEAFactory()), address(newCeaFactory));
         assertTrue(newVault.hasRole(newVault.DEFAULT_ADMIN_ROLE(), admin));
         assertTrue(newVault.hasRole(newVault.PAUSER_ROLE(), pauser));
@@ -2171,7 +2143,7 @@ contract VaultTest is Test {
         vm.prank(admin);
         vm.expectEmit(true, true, false, false);
         emit CEAFactoryUpdated(address(ceaFactory), address(newFactory));
-        vault.setCEAFactory(address(newFactory));
+        vault.updateCEAFactory(address(newFactory));
 
         assertEq(address(vault.CEAFactory()), address(newFactory));
     }
@@ -2179,27 +2151,24 @@ contract VaultTest is Test {
     function test_SetCEAFactory_ZeroAddressReverts() public {
         vm.prank(admin);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        vault.setCEAFactory(address(0));
+        vault.updateCEAFactory(address(0));
     }
 
     function test_SetCEAFactory_NonAdminReverts() public {
         vm.prank(user1);
         vm.expectRevert();
-        vault.setCEAFactory(address(ceaFactory));
+        vault.updateCEAFactory(address(ceaFactory));
     }
 
-    function test_SetTSS_WhenOldTSSAlreadyRevokedRole() public {
-        // Revoke TSS_ROLE from old TSS via admin before calling setTSS
+    function test_TSS_RevokeAndGrantNewTSS() public {
         vm.startPrank(admin);
         vault.revokeRole(vault.TSS_ROLE(), tss);
         assertFalse(vault.hasRole(vault.TSS_ROLE(), tss));
 
-        // Call setTSS — the hasRole(TSS_ROLE, old) check returns false
         address newTSS = makeAddr("newTSS2");
-        vault.setTSS(newTSS);
+        vault.grantRole(vault.TSS_ROLE(), newTSS);
         vm.stopPrank();
 
-        assertEq(vault.TSS_ADDRESS(), newTSS);
         assertTrue(vault.hasRole(vault.TSS_ROLE(), newTSS));
     }
 

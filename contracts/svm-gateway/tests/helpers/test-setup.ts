@@ -1,7 +1,11 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { UniversalGateway } from "../../target/types/universal_gateway";
-import { PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
+import {
+    PublicKey,
+    Keypair,
+    SystemProgram,
+} from "@solana/web3.js";
 import { createMockUSDT, createMockUSDC } from "./mockSpl";
 import * as sharedState from "../shared-state";
 import { getTssEthAddress, TSS_CHAIN_ID } from "./tss";
@@ -9,17 +13,76 @@ import { setupPriceFeed } from "../setup-pricefeed";
 
 // Module-level promise to ensure setup runs only once per process
 let setupPromise: Promise<void> | null = null;
+const UPGRADEABLE_LOADER_PROGRAM_ID = new PublicKey(
+    "BPFLoaderUpgradeab1e11111111111111111111111"
+);
+
+async function normalizeGatewayAuthoritiesAndPauseState(
+    program: Program<UniversalGateway>,
+    admin: Keypair,
+    operator: Keypair,
+    pauser: Keypair,
+): Promise<void> {
+    const [configPda] = PublicKey.findProgramAddressSync([Buffer.from("config")], program.programId);
+    let configAccount = await program.account.config.fetch(configPda);
+
+    if (configAccount.admin.toString() !== admin.publicKey.toString()) {
+        throw new Error(
+            `Config admin ${configAccount.admin.toString()} does not match provider wallet ${admin.publicKey.toString()}. Delete .anchor/test-ledger and rerun tests.`
+        );
+    }
+
+    if (configAccount.operator.toString() !== operator.publicKey.toString()) {
+        await program.methods
+            .setOperator(operator.publicKey)
+            .accountsPartial({
+                config: configPda,
+                admin: admin.publicKey,
+            })
+            .signers([admin])
+            .rpc();
+        configAccount = await program.account.config.fetch(configPda);
+    }
+
+    if (configAccount.pauser.toString() !== pauser.publicKey.toString()) {
+        await program.methods
+            .proposeAuthorities(null, pauser.publicKey)
+            .accountsPartial({
+                config: configPda,
+                admin: admin.publicKey,
+            })
+            .signers([admin])
+            .rpc();
+        await program.methods
+            .acceptPauser()
+            .accountsPartial({
+                config: configPda,
+                pendingPauser: pauser.publicKey,
+            })
+            .signers([pauser])
+            .rpc();
+        configAccount = await program.account.config.fetch(configPda);
+    }
+
+    if (configAccount.paused) {
+        await program.methods
+            .unpause()
+            .accountsPartial({
+                operator: operator.publicKey,
+                config: configPda,
+            })
+            .signers([operator])
+            .rpc();
+    }
+}
 
 /**
  * Ensures test setup is complete. Idempotent - runs exactly once per process.
  * Can be called from any test file's before() hook.
  */
 export async function ensureTestSetup(): Promise<void> {
-    if (setupPromise) {
-        return setupPromise;
-    }
-
-    setupPromise = (async () => {
+    if (!setupPromise) {
+        setupPromise = (async () => {
         // Initialize Anchor provider if not already set
         if (!anchor.getProvider()) {
             anchor.setProvider(anchor.AnchorProvider.env());
@@ -30,13 +93,13 @@ export async function ensureTestSetup(): Promise<void> {
         // Step 1: Create keypairs and set shared state
         const adminWallet = provider.wallet as anchor.Wallet;
         const admin = adminWallet.payer as Keypair;
-        const tssAddress = Keypair.generate();
+        const operator = Keypair.generate();
         const pauser = Keypair.generate();
         const user1 = Keypair.generate();
         const user2 = Keypair.generate();
 
         sharedState.setAdmin(admin);
-        sharedState.setTssAddress(tssAddress);
+        sharedState.setOperator(operator);
         sharedState.setPauser(pauser);
         sharedState.setUser1(user1);
         sharedState.setUser2(user2);
@@ -45,7 +108,7 @@ export async function ensureTestSetup(): Promise<void> {
         const airdropAmount = 10 * anchor.web3.LAMPORTS_PER_SOL;
         await Promise.all([
             provider.connection.requestAirdrop(admin.publicKey, airdropAmount),
-            provider.connection.requestAirdrop(tssAddress.publicKey, airdropAmount),
+            provider.connection.requestAirdrop(operator.publicKey, airdropAmount),
             provider.connection.requestAirdrop(pauser.publicKey, airdropAmount),
             provider.connection.requestAirdrop(user1.publicKey, airdropAmount),
             provider.connection.requestAirdrop(user2.publicKey, airdropAmount),
@@ -105,25 +168,31 @@ export async function ensureTestSetup(): Promise<void> {
         let configAccount: any;
         try {
             configAccount = await program.account.config.fetch(configPda);
-            if (configAccount.admin.toString() !== admin.publicKey.toString()) {
-                throw new Error(
-                    `Config admin ${configAccount.admin.toString()} does not match provider wallet ${admin.publicKey.toString()}. Delete .anchor/test-ledger and rerun tests.`
-                );
-            }
             // Use existing price feed from config
             sharedState.setMockPriceFeed(configAccount.pythPriceFeed);
         } catch {
+            const [programData] = PublicKey.findProgramAddressSync(
+                [program.programId.toBuffer()],
+                UPGRADEABLE_LOADER_PROGRAM_ID
+            );
             // Initialize with mock-pyth price feed
             await program.methods
                 .initialize(
                     admin.publicKey,
                     pauser.publicKey,
-                    tssAddress.publicKey,
+                    operator.publicKey,
                     new anchor.BN(100_000_000),
                     new anchor.BN(1_000_000_000),
                     mockPriceFeed
                 )
-                .accountsPartial({ admin: admin.publicKey })
+                .accountsPartial({
+                    config: configPda,
+                    vault: vaultPda,
+                    program: program.programId,
+                    programData,
+                    admin: admin.publicKey,
+                    systemProgram: SystemProgram.programId,
+                })
                 .signers([admin])
                 .rpc();
             configAccount = await program.account.config.fetch(configPda);
@@ -131,7 +200,7 @@ export async function ensureTestSetup(): Promise<void> {
         }
 
         // Step 7: Initialize or update TSS
-        const [tssPda] = PublicKey.findProgramAddressSync([Buffer.from("tsspda_v2")], program.programId);
+        const [tssPda] = PublicKey.findProgramAddressSync([Buffer.from("final_tss_pda")], program.programId);
         const expectedTssEthAddress = getTssEthAddress();
         const expectedChainId = TSS_CHAIN_ID; // String: Solana cluster pubkey
 
@@ -142,8 +211,8 @@ export async function ensureTestSetup(): Promise<void> {
             if (!storedAddress.equals(expectedAddress) || existingTss.chainId !== expectedChainId) {
                 await program.methods
                     .updateTss(expectedTssEthAddress, expectedChainId)
-                    .accountsPartial({ tssPda, config: configPda, authority: admin.publicKey })
-                    .signers([admin])
+                    .accountsPartial({ tssPda, config: configPda, authority: operator.publicKey })
+                    .signers([operator])
                     .rpc();
             }
         } catch {
@@ -178,7 +247,7 @@ export async function ensureTestSetup(): Promise<void> {
 
         // Step 9: Ensure fee_vault exists (devnet-safe path) and starts disabled
         await program.methods
-            .setProtocolFee(new anchor.BN(0))
+            .setInboundFee(new anchor.BN(0))
             .accountsPartial({
                 config: configPda,
                 feeVault: feeVaultPda,
@@ -207,7 +276,11 @@ export async function ensureTestSetup(): Promise<void> {
             [mockUSDC.mint.publicKey, usdcTokenRateLimitPda],
         ] as const) {
             await program.methods
-                .setTokenRateLimit(veryLargeThreshold)
+                .setTokenRateLimit(
+                    veryLargeThreshold,
+                    tokenMint.equals(PublicKey.default) ? false : true,
+                    tokenMint.equals(PublicKey.default) ? false : true,
+                )
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,
@@ -218,7 +291,17 @@ export async function ensureTestSetup(): Promise<void> {
                 .signers([admin])
                 .rpc();
         }
-    })();
+        })();
+    }
 
-    return setupPromise;
+    await setupPromise;
+
+    const provider = anchor.getProvider() as anchor.AnchorProvider;
+    const program = anchor.workspace.UniversalGateway as Program<UniversalGateway>;
+    await normalizeGatewayAuthoritiesAndPauseState(
+        program,
+        sharedState.getAdmin(),
+        sharedState.getOperator(),
+        sharedState.getPauser(),
+    );
 }

@@ -29,7 +29,7 @@ contract MockPRC20 {
     TokenType public TOKEN_TYPE;
 
     /// @notice UniversalCore contract providing gas oracles (gas coin token & gas price)
-    address public UNIVERSAL_CORE;
+    address public universalCore;
 
     string private _name;
     string private _symbol;
@@ -73,7 +73,7 @@ contract MockPRC20 {
 
         SOURCE_CHAIN_NAMESPACE = sourceChainId_;
         TOKEN_TYPE = tokenType_;
-        UNIVERSAL_CORE = universalCore_;
+        universalCore = universalCore_;
         SOURCE_TOKEN_ADDRESS = sourceTokenAddress_;
     }
 
@@ -137,11 +137,11 @@ contract MockPRC20 {
     //*** BRIDGE ENTRYPOINTS ***//
 
     /// @notice         Mint PRC20 on inbound bridge (lock on source)
-    /// @dev            Only callable by UNIVERSAL_CORE or UNIVERSAL_EXECUTOR_MODULE
+    /// @dev            Only callable by universalCore or UNIVERSAL_EXECUTOR_MODULE
     /// @param to       Recipient on Push EVM
     /// @param amount   Amount to mint
     function deposit(address to, uint256 amount) external returns (bool) {
-        require(msg.sender == UNIVERSAL_CORE || msg.sender == UNIVERSAL_EXECUTOR_MODULE, "MockPRC20: Invalid sender");
+        require(msg.sender == universalCore || msg.sender == UNIVERSAL_EXECUTOR_MODULE, "MockPRC20: Invalid sender");
 
         _mint(to, amount);
 
@@ -151,18 +151,20 @@ contract MockPRC20 {
 
     //*** GAS FEE DELEGATION TO UNIVERSAL CORE ***//
 
-    /// @notice Get the gas limit (delegates to UniversalCore)
-    function GAS_LIMIT() external view returns (uint256) {
-        return IUniversalCore(UNIVERSAL_CORE).BASE_GAS_LIMIT();
-    }
-
     /// @notice Get gas fee with custom gas limit (delegates to UniversalCore)
     function withdrawGasFeeWithGasLimit(uint256 gasLimit)
         external
         view
-        returns (address gasToken, uint256 gasFee, uint256 protocolFee, uint256 gasPrice, string memory chainNamespace)
+        returns (
+            address gasToken,
+            uint256 gasFee,
+            uint256 protocolFee,
+            uint256 gasPrice,
+            string memory chainNamespace,
+            uint256 gasLimitUsed
+        )
     {
-        return IUniversalCore(UNIVERSAL_CORE).getOutboundTxGasAndFees(address(this), gasLimit);
+        return IUniversalCore(universalCore).getOutboundTxGasAndFees(address(this), gasLimit);
     }
 
     //*** ADMIN FUNCTIONS ***//
@@ -171,7 +173,7 @@ contract MockPRC20 {
     /// @dev only Universal Executor may update
     function updateUniversalCore(address addr) external onlyUniversalExecutor {
         require(addr != address(0), "MockPRC20: zero address");
-        UNIVERSAL_CORE = addr;
+        universalCore = addr;
         emit UpdatedUniversalCore(addr);
     }
 

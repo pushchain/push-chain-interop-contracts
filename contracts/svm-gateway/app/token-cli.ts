@@ -290,8 +290,8 @@ program_cli
 
             const decimals = parseInt(options.decimals);
             const { mint, tokenAccount, metadataAccount } = await createSPLToken(
-                userProvider,
-                userKeypair,
+                adminProvider,
+                adminKeypair,
                 options.name,
                 options.symbol,
                 options.description,
@@ -338,19 +338,9 @@ program_cli
 
             const amount = parseFloat(options.amount);
 
-            // Get the mint authority (secret key) for this token
-            let mintAuthority: Keypair;
-            if (options.mint.length === 44) {
-                // Using mint address directly, use user keypair as mint authority
-                mintAuthority = userKeypair;
-            } else {
-                // Using token symbol, load the secret key
-                mintAuthority = loadSecretKey(options.mint);
-            }
-
             await mintTokensToAddress(
-                userProvider,
-                mintAuthority,
+                adminProvider,
+                adminKeypair,
                 mintAddress,
                 options.recipient,
                 amount,
@@ -406,6 +396,8 @@ program_cli
     .description('Whitelist a token by setting its rate limit threshold to non-zero and creating its vault ATA')
     .requiredOption('-m, --mint <mint>', 'Mint address or token symbol')
     .option('-t, --threshold <threshold>', 'Rate limit threshold in token natural units (default: max u64)', '18446744073709551615')
+    .option('--trusted-mint-authority', 'Acknowledge that this token retains mint authority')
+    .option('--trusted-freeze-authority', 'Acknowledge that this token retains freeze authority')
     .action(async (options) => {
         try {
             console.log("=== WHITELISTING TOKEN ===\n");
@@ -438,7 +430,11 @@ program_cli
             console.log(`Setting rate limit threshold to ${threshold.toString()}...`);
             const veryLargeThreshold = new anchor.BN(threshold.toString());
             await program.methods
-                .setTokenRateLimit(veryLargeThreshold)
+                .setTokenRateLimit(
+                    veryLargeThreshold,
+                    Boolean(options.trustedMintAuthority),
+                    Boolean(options.trustedFreezeAuthority),
+                )
                 .accountsPartial({
                     admin,
                     config: configPda,
@@ -497,7 +493,7 @@ program_cli
 
             console.log(`Setting rate limit threshold to 0...`);
             await program.methods
-                .setTokenRateLimit(new anchor.BN(0))
+                .setTokenRateLimit(new anchor.BN(0), false, false)
                 .accountsPartial({
                     admin,
                     config: configPda,
@@ -512,6 +508,53 @@ program_cli
 
         } catch (error) {
             console.error("❌ Error unwhitelisting token:", error.message);
+            process.exit(1);
+        }
+    });
+
+// Transfer mint authority command
+program_cli
+    .command('transfer-mint-authority')
+    .description('Transfer mint authority of a token from clean-user-keypair to upgrade-keypair (admin)')
+    .requiredOption('-m, --mint <mint>', 'Mint address or token symbol')
+    .action(async (options) => {
+        try {
+            console.log("=== TRANSFERRING MINT AUTHORITY ===\n");
+
+            let mintAddress: string;
+            if (options.mint.length >= 32 && options.mint.length <= 44) {
+                mintAddress = options.mint;
+            } else {
+                const tokenInfo = loadTokenInfo(options.mint);
+                mintAddress = tokenInfo.mint;
+                console.log(`Found token: ${tokenInfo.name} (${tokenInfo.symbol})`);
+            }
+
+            const mintPubkey = new PublicKey(mintAddress);
+
+            console.log(`Current authority: ${userKeypair.publicKey.toString()}`);
+            console.log(`New authority:     ${adminKeypair.publicKey.toString()}`);
+
+            const tx = new anchor.web3.Transaction().add(
+                spl.createSetAuthorityInstruction(
+                    mintPubkey,
+                    userKeypair.publicKey,
+                    spl.AuthorityType.MintTokens,
+                    adminKeypair.publicKey,
+                )
+            );
+
+            const sig = await anchor.web3.sendAndConfirmTransaction(
+                userProvider.connection as any,
+                tx,
+                [userKeypair]
+            );
+
+            console.log(`✅ Mint authority transferred`);
+            console.log(`   Tx: ${sig}\n`);
+
+        } catch (error) {
+            console.error("❌ Error transferring mint authority:", error.message);
             process.exit(1);
         }
     });

@@ -29,9 +29,11 @@ import {
 import {
   signTssMessage,
   buildExecuteAdditionalData,
+  buildRevertAdditionalData,
   buildWithdrawAdditionalData,
   TssInstruction,
   generateUniversalTxId,
+  DEFAULT_DEADLINE,
 } from "../tests/helpers/tss";
 
 const KNOWN_PROGRAMS: Record<string, string> = {
@@ -39,8 +41,20 @@ const KNOWN_PROGRAMS: Record<string, string> = {
   dummy: "DJoFYDpgbTfxbXBv1QYhYGc9FK4J5FUKpYXAfSkHryXp",
 };
 
+const programArg = process.argv[2]; // "main", "dummy", or undefined
+if (programArg && !(programArg in KNOWN_PROGRAMS)) {
+  throw new Error(`Unknown program label "${programArg}". Use "main" or "dummy".`);
+}
+
+const programIdStr =
+  (programArg && KNOWN_PROGRAMS[programArg]) ??
+  KNOWN_PROGRAMS["dummy"];
+
 const PROGRAM_ID = new PublicKey(
-  process.env.PROGRAM_ID ?? KNOWN_PROGRAMS["dummy"]
+  programIdStr
+);
+const UPGRADEABLE_LOADER_PROGRAM_ID = new PublicKey(
+  "BPFLoaderUpgradeab1e11111111111111111111111"
 );
 const CONFIG_SEED = "config";
 const VAULT_SEED = "vault";
@@ -131,6 +145,16 @@ function getCeaAuthorityPda(pushAccount: Uint8Array | number[]): PublicKey {
   )[0];
 }
 
+function getStoredIxDataPda(
+  subTxId: Uint8Array | number[],
+  ixDataHash: Uint8Array | Buffer
+): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("stored_ix_data"), Buffer.from(subTxId), Buffer.from(ixDataHash)],
+    PROGRAM_ID
+  )[0];
+}
+
 async function getCeaAta(
   pushAccount: Uint8Array | number[],
   mint: PublicKey
@@ -145,8 +169,9 @@ async function getCeaAta(
   );
 }
 
-// Fee calculation helpers (matching execute.test.ts)
+// Fee calculation helpers (matching execute.test.ts / test-utils.ts)
 const COMPUTE_BUFFER = BigInt(100_000); // 0.0001 SOL buffer for compute + tx fees
+const SIGNATURE_FEE_LAMPORTS = BigInt(5_000); // Base Solana fee per signature — matches execute.rs
 
 const getExecutedTxRent = async (
   connection: anchor.web3.Connection
@@ -170,31 +195,44 @@ const ceaAtaExists = async (
   return accountInfo !== null && accountInfo.data.length > 0;
 };
 
+/**
+ * Calculate gas_fee for SOL execute operations.
+ * gasUsed = SIGNATURE_FEE + executed_sub_tx_rent  (matches on-chain execute.rs accounting)
+ * gasFee  = executed_sub_tx_rent + COMPUTE_BUFFER (COMPUTE_BUFFER - SIGNATURE_FEE = gas_to_refund)
+ */
 const calculateSolExecuteFees = async (
   connection: anchor.web3.Connection
-): Promise<{ gasFee: bigint }> => {
+): Promise<{ gasFee: bigint; gasUsed: bigint }> => {
   const executedTxRent = BigInt(await getExecutedTxRent(connection));
-  const gasFee = executedTxRent + COMPUTE_BUFFER;
-  return { gasFee };
+  const gasUsed = SIGNATURE_FEE_LAMPORTS + executedTxRent;
+  return { gasFee: executedTxRent + COMPUTE_BUFFER, gasUsed };
 };
 
+/**
+ * Calculate gas_fee for SPL execute operations.
+ * gasUsed = SIGNATURE_FEE + executed_sub_tx_rent + cea_ata_rent (if not yet created)
+ * gasFee  = executed_sub_tx_rent + cea_ata_rent + COMPUTE_BUFFER
+ */
 const calculateSplExecuteFees = async (
   connection: anchor.web3.Connection,
   ceaAta: PublicKey
-): Promise<{ gasFee: bigint }> => {
+): Promise<{ gasFee: bigint; gasUsed: bigint }> => {
   const executedTxRent = BigInt(await getExecutedTxRent(connection));
   const ceaAtaExisted = await ceaAtaExists(connection, ceaAta);
   const ceaAtaRent = ceaAtaExisted
     ? BigInt(0)
     : BigInt(await getTokenAccountRent(connection));
-  const gasFee = executedTxRent + ceaAtaRent + COMPUTE_BUFFER;
-  return { gasFee };
+  const gasUsed = SIGNATURE_FEE_LAMPORTS + executedTxRent + ceaAtaRent;
+  return { gasFee: executedTxRent + ceaAtaRent + COMPUTE_BUFFER, gasUsed };
 };
 
-// Load IDL
+// Load IDL and bind it to the explicit runtime target. The local IDL is baked
+// from the current build, but this script supports selecting the destination
+// program at runtime.
 const idl = JSON.parse(
   fs.readFileSync("./target/idl/universal_gateway.json", "utf8")
 );
+idl.address = PROGRAM_ID.toBase58();
 const program = new Program(idl, adminProvider);
 const userProgram = new Program(idl, userProvider);
 
@@ -207,12 +245,6 @@ const relayerProvider = new anchor.AnchorProvider(
 );
 const relayerProgram = new Program(idl, relayerProvider);
 
-// (idl as any).metadata = (idl.metadata ?? { address: PROGRAM_ID.toBase58() });
-// idl.metadata.address = PROGRAM_ID.toBase58();
-// const idlTyped = idl as UniversalGateway;
-// const program = new Program<UniversalGateway>(idlTyped, adminProvider);
-// const userProgram = new Program<UniversalGateway>(idlTyped, userProvider);
-
 const counterIdl = JSON.parse(
   fs.readFileSync("./target/idl/test_counter.json", "utf8")
 );
@@ -221,7 +253,7 @@ const counterProgram: any = new Program(counterIdl as any, adminProvider);
 // Helper: Get dynamic gas amount based on current SOL price
 async function getDynamicGasAmount(
   targetUsd: number,
-  fallbackSol: number = 0.01
+  fallbackSol: number = 0.02
 ): Promise<anchor.BN> {
   try {
     const solPriceResult = await program.methods
@@ -323,7 +355,7 @@ async function run() {
     PROGRAM_ID
   );
   const [tssPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("tsspda_v2")],
+    [Buffer.from("final_tss_pda")],
     PROGRAM_ID
   );
   const [rateLimitConfigPda] = PublicKey.findProgramAddressSync(
@@ -437,11 +469,15 @@ async function run() {
   console.log("1. Initializing Gateway...");
   const configAccount = await connection.getAccountInfo(configPda);
   if (!configAccount) {
+    const [programData] = PublicKey.findProgramAddressSync(
+      [program.programId.toBuffer()],
+      UPGRADEABLE_LOADER_PROGRAM_ID
+    );
     const tx = await program.methods
       .initialize(
         admin, // admin
         admin, // pauser
-        admin, // tss (using admin for simplicity)
+        admin, // operator (using admin for simplicity)
         new anchor.BN(100_000_000), // min_cap_usd ($1 with 8 decimals = 1e8)
         new anchor.BN(1_000_000_000), // max_cap_usd ($10 with 8 decimals = 10e8)
         new PublicKey("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE") // pyth_price_feed (SOL/USD feed ID)
@@ -449,6 +485,8 @@ async function run() {
       .accountsPartial({
         config: configPda,
         vault: vaultPda,
+        program: program.programId,
+        programData,
         admin: admin,
         systemProgram: SystemProgram.programId,
       })
@@ -491,7 +529,7 @@ async function run() {
     console.log("Native SOL rate limit already initialized");
   } catch {
     await program.methods
-      .setTokenRateLimit(veryLargeThreshold)
+      .setTokenRateLimit(veryLargeThreshold, false, false)
       .accountsPartial({
         admin: admin,
         config: configPda,
@@ -622,7 +660,7 @@ async function run() {
       console.log("SPL token rate limit already initialized");
     } catch {
       await program.methods
-        .setTokenRateLimit(veryLargeThreshold)
+        .setTokenRateLimit(veryLargeThreshold, true, true)
         .accountsPartial({
           admin: admin,
           config: configPda,
@@ -1629,7 +1667,7 @@ async function run() {
       .unpause()
       .accountsPartial({
         config: configPda,
-        pauser: admin,
+        operator: admin,
       })
       .rpc();
     console.log(`✅ Gateway unpaused: ${unpauseTx}\n`);
@@ -1697,7 +1735,10 @@ async function run() {
 
   // 12.2 Build message for SOL withdraw to admin using instruction_id=1
   const withdrawAmountTss = new anchor.BN(0.0005 * LAMPORTS_PER_SOL).toNumber();
-  const withdrawGasFee = new anchor.BN(0.001 * LAMPORTS_PER_SOL).toNumber(); // Gas fee for withdraw
+  const { gasFee: withdrawGasFeeBigInt } = await calculateSolExecuteFees(
+    connection
+  );
+  const withdrawGasFee = Number(withdrawGasFeeBigInt);
   // Fetch chain_id from TSS account (chain_id is now a String - Solana cluster pubkey)
   let chainId = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"; // Default to Devnet cluster pubkey
   try {
@@ -1766,6 +1807,7 @@ async function run() {
       Buffer.alloc(0), // writable_flags (empty for withdraw)
       Buffer.from([]), // ix_data (empty for withdraw)
       new anchor.BN(withdrawGasFee), // gas_fee
+      new anchor.BN(DEFAULT_DEADLINE.toString()), // deadline
       Array.from(signature) as any,
       recoveryId,
       Array.from(messageHash) as any
@@ -1778,6 +1820,8 @@ async function run() {
       tssPda: tssPda,
       executedSubTx: executedTxPda,
       destinationProgram: SystemProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
       recipient: admin, // THE ACTUAL RECIPIENT
       vaultAta: null,
       ceaAta: null,
@@ -1801,26 +1845,26 @@ async function run() {
   );
 
   // Verify withdraw results
-  // Admin receives withdrawAmount + gas_fee (as caller/relayer reimbursement) but pays executed_sub_tx rent
+  // Admin receives withdraw amount + gas_used (as caller/relayer reimbursement) and pays executed_sub_tx rent.
   const adminBalanceAfter = await connection.getBalance(admin);
   const vaultBalanceAfter = await connection.getBalance(vaultPda);
   const adminNetChange = adminBalanceAfter - adminBalanceBefore;
-  // Admin receives: withdrawAmount + gas_fee (relayer reimbursement)
-  // Admin pays: executedTxRent (for PDA creation)
-  // Net = withdrawAmount + gas_fee - executedTxRent
-  const expectedAdminNet = withdrawAmountTss + withdrawGasFee - executedTxRent;
+  const signatureFeeLamports = 5_000;
+  const gasUsed = signatureFeeLamports + executedTxRent;
+  // Net = withdrawAmount + gas_used - executedTxRent
+  const expectedAdminNet = withdrawAmountTss + gasUsed - executedTxRent;
 
   // Allow small tolerance for transaction fees (compute units)
   const tolerance = 10000; // ~0.00001 SOL for tx fees
   assert.isAtLeast(
     adminNetChange,
     expectedAdminNet - tolerance,
-    `Admin net should be ~${expectedAdminNet} (receives ${withdrawAmountTss} + ${withdrawGasFee} gas, pays ${executedTxRent} rent)`
+    `Admin net should be ~${expectedAdminNet} (receives ${withdrawAmountTss} + ${gasUsed} gas_used, pays ${executedTxRent} rent)`
   );
   assert.equal(
     vaultBalanceBefore - vaultBalanceAfter,
-    withdrawAmountTss + withdrawGasFee,
-    "Vault should lose withdraw amount + gas_fee"
+    withdrawAmountTss + gasUsed,
+    "Vault should lose withdraw amount + gas_used"
   );
 
   const executedTxExistsAfterWithdraw =
@@ -1885,10 +1929,14 @@ async function run() {
       );
       const universalTxIdSplWithdraw = generateUniversalTxId();
 
-      // Build message for SPL withdraw using unified instruction_id=1
-      const splWithdrawGasFee = new anchor.BN(
-        0.001 * LAMPORTS_PER_SOL
-      ).toNumber(); // Gas fee for SPL withdraw
+      const ceaAuthoritySPL = getCeaAuthorityPda(pushAccountSPL);
+      const ceaAtaSPL = await getCeaAta(pushAccountSPL, mint);
+
+      // Withdraw gas accounting matches finalize gas settlement:
+      // signature fee + ExecutedSubTx rent + optional CEA ATA rent.
+      const { gasFee: splWithdrawGasFeeBigInt } =
+        await calculateSplExecuteFees(connection, ceaAtaSPL);
+      const splWithdrawGasFee = Number(splWithdrawGasFeeBigInt);
       const splWithdrawAdditional = buildWithdrawAdditionalData(
         Buffer.from(universalTxIdSplWithdraw),
         Buffer.from(txIdSPL),
@@ -1918,9 +1966,6 @@ async function run() {
       const executedTxExistsBeforeSplWithdraw =
         (await connection.getAccountInfo(executedTxPdaSPL)) !== null;
 
-      const ceaAuthoritySPL = getCeaAuthorityPda(pushAccountSPL);
-      const ceaAtaSPL = await getCeaAta(pushAccountSPL, mint);
-
       const tssSplWithdrawTx = await program.methods
         .finalizeUniversalTx(
           1, // instruction_id = withdraw
@@ -1931,6 +1976,7 @@ async function run() {
           Buffer.alloc(0), // writable_flags (empty for withdraw)
           Buffer.from([]), // ix_data (empty for withdraw)
           new anchor.BN(splWithdrawGasFee), // gas_fee
+          new anchor.BN(DEFAULT_DEADLINE.toString()),
           Array.from(signatureSPL) as any,
           recoveryIdSPL,
           Array.from(messageHashSPL) as any
@@ -1943,6 +1989,8 @@ async function run() {
           tssPda: tssPda,
           executedSubTx: executedTxPdaSPL,
           destinationProgram: SystemProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
           recipient: adminKeypair.publicKey, // SPL recipient (token account)
           vaultAta: vaultAta.address,
           ceaAta: ceaAtaSPL,
@@ -2019,7 +2067,7 @@ async function run() {
       .initialize(new anchor.BN(0))
       .accountsPartial({
         counter: counterPda,
-        authority: admin, // Admin is authority, but relayer signs execute txs
+        authority: admin, // Operator signer (admin used as operator in this script), relayer signs execute txs
         systemProgram: SystemProgram.programId,
       })
       .signers([adminKeypair])
@@ -2060,7 +2108,7 @@ async function run() {
       .increment(new anchor.BN(3))
       .accountsPartial({
         counter: counterPda,
-        authority: admin, // Admin is authority, but relayer signs the execute tx
+        authority: admin, // Operator signer (admin used as operator in this script), relayer signs the execute tx
       })
       .instruction();
 
@@ -2142,6 +2190,7 @@ async function run() {
         Buffer.from(decoded.ixData),
         new anchor.BN(Number(gasFee)),
 
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         sig.signature,
         sig.recoveryId,
         sig.messageHash
@@ -2154,6 +2203,8 @@ async function run() {
         tssPda,
         executedSubTx,
         destinationProgram: targetProgram,
+      storedIxData: null,
+      storeRefundRecipient: null,
         recipient: null, // null for execute mode
         vaultAta: null,
         ceaAta: null,
@@ -2186,18 +2237,18 @@ async function run() {
       "execute amount must not be transferred to CEA"
     );
 
-    // Relayer receives relayer_fee but pays executedSubTx rent (as fee payer) and transaction fees
+    // Relayer pays executedSubTx rent upfront; receives gas_used = SIGNATURE_FEE + executedTxRent from vault.
+    // Net ≈ SIGNATURE_FEE (5_000 lamports) minus network transaction fees.
     const relayerBalanceAfter = await connection.getBalance(relayer);
     const relayerNetChange = relayerBalanceAfter - relayerBalanceBefore;
-    const relayerFeeReceived = Number(gasFee);
-    // Net = relayer_fee - executedTxRent - computeFees (approximate)
-    const expectedRelayerNet = relayerFeeReceived - executedTxRent;
+    const gasUsedSol = Number(SIGNATURE_FEE_LAMPORTS) + executedTxRent;
+    const expectedRelayerNet = gasUsedSol - executedTxRent; // = SIGNATURE_FEE = 5_000
     // Allow tolerance for compute fees (~50k-100k lamports)
     const computeFeeTolerance = 150000;
     assert.isAtLeast(
       relayerNetChange,
       expectedRelayerNet - computeFeeTolerance,
-      `Relayer net should be ~${expectedRelayerNet} (receives ${relayerFeeReceived}, pays ${executedTxRent} rent + compute fees)`
+      `Relayer net should be ~${expectedRelayerNet} (receives gas_used=${gasUsedSol}, pays ${executedTxRent} rent + compute fees)`
     );
 
     const executedTxExistsAfter =
@@ -2245,7 +2296,10 @@ async function run() {
       .instruction();
 
     // Check CEA ATA existence BEFORE calculating fees (ceaAtaForSpl already calculated above)
-    const { gasFee } = await calculateSplExecuteFees(connection, ceaAtaForSpl);
+    const { gasFee, gasUsed } = await calculateSplExecuteFees(
+      connection,
+      ceaAtaForSpl
+    );
 
     // Encode payload with execution data (accounts, ixData, targetProgram)
     const payloadFields = instructionToPayloadFields({
@@ -2325,6 +2379,7 @@ async function run() {
         Buffer.from(decoded.ixData),
         new anchor.BN(Number(gasFee)),
 
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         sig.signature,
         sig.recoveryId,
         sig.messageHash
@@ -2337,6 +2392,8 @@ async function run() {
         tssPda,
         executedSubTx,
         destinationProgram: targetProgram,
+      storedIxData: null,
+      storeRefundRecipient: null,
         recipient: null, // null for execute mode
         vaultAta: vaultAta.address,
         ceaAta: ceaAtaForSpl, // CEA ATA
@@ -2377,19 +2434,20 @@ async function run() {
       "Vault ATA should lose exact SPL amount"
     );
 
-    // Relayer receives relayer_fee but pays executedSubTx rent (as fee payer) and transaction fees
+    // Relayer pays executedSubTx rent (+ cea_ata_rent if created) upfront; receives gas_used from vault.
+    // gas_used = SIGNATURE_FEE + executedTxRent [+ ataRent]. Net is always SIGNATURE_FEE regardless of ATA creation.
     const relayerBalanceAfterSpl = await connection.getBalance(relayer);
     const relayerNetChangeSpl =
       relayerBalanceAfterSpl - relayerBalanceBeforeSpl;
-    const relayerFeeReceivedSpl = Number(gasFee);
-    // Net = relayer_fee - executedTxRent - computeFees (approximate)
-    const expectedRelayerNetSpl = relayerFeeReceivedSpl - executedTxRentSpl;
+    const expectedRelayerNetSpl = Number(SIGNATURE_FEE_LAMPORTS); // always 5_000: gas_used - rents_paid = SIGNATURE_FEE
     // Allow tolerance for compute fees (~50k-100k lamports)
     const computeFeeToleranceSpl = 150000;
     assert.isAtLeast(
       relayerNetChangeSpl,
       expectedRelayerNetSpl - computeFeeToleranceSpl,
-      `Relayer net should be ~${expectedRelayerNetSpl} (receives ${relayerFeeReceivedSpl}, pays ${executedTxRentSpl} rent + compute fees)`
+      `Relayer net should be ~${expectedRelayerNetSpl} (receives gas_used=${Number(
+        gasUsed
+      )}, pays ${executedTxRentSpl} rent + compute fees)`
     );
 
     const executedTxExistsAfterSpl =
@@ -2479,6 +2537,7 @@ async function run() {
         ixData,
         new anchor.BN(Number(gasFee)),
 
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         Array.from(sig.signature),
         sig.recoveryId,
         Array.from(sig.messageHash)
@@ -2491,6 +2550,8 @@ async function run() {
         tssPda,
         executedSubTx,
         destinationProgram: program.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
         recipient: null,
         vaultAta: null,
         ceaAta: null,
@@ -2631,6 +2692,7 @@ async function run() {
           Buffer.from(securityCounterIx.data),
           new anchor.BN(Number(gasFee1)),
 
+          new anchor.BN(DEFAULT_DEADLINE.toString()),
           securitySig1.signature,
           securitySig1.recoveryId,
           securitySig1.messageHash
@@ -2643,6 +2705,8 @@ async function run() {
           tssPda,
           executedSubTx: getExecutedTxPda(securityTxId1),
           destinationProgram: counterProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -2720,6 +2784,7 @@ async function run() {
           Buffer.from(securityCounterIx2.data),
           new anchor.BN(Number(gasFee2)),
 
+          new anchor.BN(DEFAULT_DEADLINE.toString()),
           corruptedSig,
           securitySig2.recoveryId,
           securitySig2.messageHash
@@ -2732,6 +2797,8 @@ async function run() {
           tssPda,
           executedSubTx: getExecutedTxPda(securityTxId2),
           destinationProgram: counterProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -2820,6 +2887,7 @@ async function run() {
           Buffer.from(securityCounterIx4.data),
           new anchor.BN(Number(gasFee4)),
 
+          new anchor.BN(DEFAULT_DEADLINE.toString()),
           securitySig4.signature,
           securitySig4.recoveryId,
           securitySig4.messageHash
@@ -2832,6 +2900,8 @@ async function run() {
           tssPda,
           executedSubTx: getExecutedTxPda(securityTxId4),
           destinationProgram: counterProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
           recipient: null,
           vaultAta: null,
           ceaAta: null,
@@ -2936,6 +3006,8 @@ async function run() {
       tssPda,
       executedSubTx: getExecutedTxPda(testTxId),
       destinationProgram: counterProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
       recipient: null,
       vaultAta: null,
       ceaAta: null,
@@ -2969,6 +3041,7 @@ async function run() {
           Buffer.from(batchIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(DEFAULT_DEADLINE.toString()),
           sig.signature,
           sig.recoveryId,
           sig.messageHash
@@ -3002,6 +3075,7 @@ async function run() {
           Buffer.from(batchIx.data),
           new anchor.BN(Number(gasFee)),
 
+          new anchor.BN(DEFAULT_DEADLINE.toString()),
           sig.signature,
           sig.recoveryId,
           sig.messageHash
@@ -3270,6 +3344,7 @@ async function run() {
         Buffer.from(batchIx.data),
         new anchor.BN(Number(gasFeeHeavy)),
 
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         heavySig.signature,
         heavySig.recoveryId,
         heavySig.messageHash
@@ -3282,6 +3357,8 @@ async function run() {
         tssPda,
         executedSubTx: getExecutedTxPda(heavyTxId),
         destinationProgram: counterProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
         recipient: null,
         vaultAta: null,
         ceaAta: null,
@@ -3402,6 +3479,7 @@ async function run() {
         Buffer.from(batchIxSpl.data),
         new anchor.BN(Number(gasFeeHeavySpl)),
 
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         heavySigSpl.signature,
         heavySigSpl.recoveryId,
         heavySigSpl.messageHash
@@ -3414,6 +3492,8 @@ async function run() {
         tssPda,
         executedSubTx: getExecutedTxPda(heavyTxIdSpl),
         destinationProgram: counterProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
         recipient: null,
         vaultAta: vaultAta.address,
         ceaAta: heavyCeaAtaSpl,
@@ -3491,6 +3571,222 @@ async function run() {
 
   console.log(`\n✅ Transaction size limit tests completed!\n`);
 
+  // 14. Ref-finalize route: store + finalize-by-reference + close
+  console.log("14. Testing ref-finalize route (store + finalize-by-reference + close)...");
+  try {
+    const tssAccountRef: any = await (program.account as any).tssPda.fetch(tssPda);
+
+    const refSubTxId = anchor.web3.Keypair.generate().publicKey.toBytes();
+    const refPushAccount = Buffer.alloc(20, 0x44);
+    const refCeaAuthority = getCeaAuthorityPda(Array.from(refPushAccount));
+    const refExecutedSubTx = getExecutedTxPda(refSubTxId);
+
+    // Build ix_data: counter increment
+    const refCounterIx = await counterProgram.methods
+      .increment(new anchor.BN(7))
+      .accountsPartial({ counter: counterPda, authority: admin })
+      .instruction();
+    const refIxData = Buffer.from(refCounterIx.data);
+    const refIxDataHash = Buffer.from(keccak_256(refIxData), "hex");
+    const refStoredIxDataPda = getStoredIxDataPda(refSubTxId, refIxDataHash);
+
+    // Step 1: store_execute_ix_data
+    const storeTx = await relayerProgram.methods
+      .storeExecuteIxData(
+        Array.from(refSubTxId),
+        refIxDataHash as unknown as number[],
+        refIxData
+      )
+      .accountsPartial({
+        caller: relayer,
+        storedIxData: refStoredIxDataPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+    console.log(`  ✅ store_execute_ix_data: ${storeTx}`);
+
+    const stored = await (program.account as any).storedIxData.fetch(refStoredIxDataPda);
+    assert.equal(
+      stored.storeRefundRecipient.toString(),
+      relayer.toString(),
+      "storeRefundRecipient must be the store caller"
+    );
+    assert.equal(
+      Buffer.from(stored.ixData).toString("hex"),
+      refIxData.toString("hex"),
+      "Stored ix_data must match"
+    );
+    console.log("  ✅ StoredIxData PDA verified: storeRefundRecipient and ix_data correct");
+
+    // Step 2: finalize_universal_tx_with_ix_data_ref
+    const { gasFee: refGasFee } = await calculateSolExecuteFees(connection);
+    const universalTxIdRef = generateUniversalTxId();
+
+    const refRemainingAccounts = [
+      { pubkey: counterPda, isWritable: true, isSigner: false },
+      { pubkey: admin, isWritable: false, isSigner: false },
+    ];
+    const refWritableFlags = accountsToWritableFlags(
+      refRemainingAccounts.map((a) => ({ pubkey: a.pubkey, isWritable: a.isWritable }))
+    );
+
+    const refSig = await signTssMessage({
+      instruction: TssInstruction.Execute,
+      amount: BigInt(0),
+      chainId: tssAccountRef.chainId,
+      additional: buildExecuteAdditionalData(
+        universalTxIdRef,
+        refSubTxId,
+        counterProgram.programId,
+        refPushAccount,
+        refRemainingAccounts.map((a) => ({
+          pubkey: a.pubkey,
+          isWritable: a.isWritable,
+        })),
+        refIxData,
+        refGasFee
+      ),
+    });
+
+    const pdaLamports = (await connection.getAccountInfo(refStoredIxDataPda))!.lamports;
+    const counterBeforeRef = await counterProgram.account.counter.fetch(counterPda);
+    const relayerBalBeforeRef = await connection.getBalance(relayer);
+
+    const refFinalizeTx = await relayerProgram.methods
+      .finalizeUniversalTxWithIxDataRef(
+        2,
+        Array.from(refSubTxId),
+        Array.from(universalTxIdRef),
+        new anchor.BN(0),
+        Array.from(refPushAccount),
+        refIxDataHash as unknown as number[],
+        refWritableFlags,
+        new anchor.BN(Number(refGasFee)),
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
+        refSig.signature,
+        refSig.recoveryId,
+        refSig.messageHash
+      )
+      .accountsPartial({
+        caller: relayer,
+        config: configPda,
+        vaultSol: vaultPda,
+        ceaAuthority: refCeaAuthority,
+        tssPda,
+        executedSubTx: refExecutedSubTx,
+        destinationProgram: counterProgram.programId,
+        storedIxData: refStoredIxDataPda,
+        storeRefundRecipient: relayer,
+        recipient: null,
+        vaultAta: null,
+        ceaAta: null,
+        mint: null,
+        tokenProgram: null,
+        rent: null,
+        associatedTokenProgram: null,
+        recipientAta: null,
+        rateLimitConfig: null,
+        tokenRateLimit: null,
+        systemProgram: SystemProgram.programId,
+      })
+      .remainingAccounts(refRemainingAccounts)
+      .rpc();
+    console.log(`  ✅ finalize_universal_tx_with_ix_data_ref: ${refFinalizeTx}`);
+
+    const counterAfterRef = await counterProgram.account.counter.fetch(counterPda);
+    assert.equal(
+      counterAfterRef.value.toNumber(),
+      counterBeforeRef.value.toNumber() + 7,
+      "Counter must increment by 7"
+    );
+    console.log(
+      `  ✅ Counter incremented: ${counterBeforeRef.value.toNumber()} → ${counterAfterRef.value.toNumber()}`
+    );
+
+    const executedSubTxInfo = await connection.getAccountInfo(refExecutedSubTx);
+    assert.isNotNull(executedSubTxInfo, "ExecutedSubTx PDA must exist (replay protection)");
+    console.log("  ✅ ExecutedSubTx PDA exists (replay protection active)");
+
+    // StoredIxData PDA is auto-closed by finalize
+    const storedAfterFinalize = await connection.getAccountInfo(refStoredIxDataPda);
+    assert.isNull(storedAfterFinalize, "StoredIxData PDA must be auto-closed by finalize");
+    console.log("  ✅ StoredIxData PDA auto-closed by finalize, rent returned to storeRefundRecipient");
+
+    // Relayer (same account for store + finalize) receives: SIGNATURE_FEE + PDA rent.
+    // Allow compute fee tolerance of ~0.001 SOL.
+    const relayerBalAfterRef = await connection.getBalance(relayer);
+    const relayerNet = relayerBalAfterRef - relayerBalBeforeRef;
+    const expectedMin = Number(SIGNATURE_FEE_LAMPORTS) + pdaLamports - 100_000;
+    assert.isAtLeast(relayerNet, expectedMin, `Relayer net (${relayerNet}) should be at least SIGNATURE_FEE + PDA rent - compute buffer`);
+    console.log(`  ✅ Relayer net change: ${relayerNet} lamports (SIGNATURE_FEE=${SIGNATURE_FEE_LAMPORTS} + PDA rent=${pdaLamports})`);
+
+    await parseAndPrintEvents(refFinalizeTx, "finalize_universal_tx_with_ix_data_ref events");
+
+    // 14.4 Orphan recovery — simulate UV crash, recover PDA via getProgramAccounts
+    console.log("  14.4 Testing orphan PDA recovery via getProgramAccounts...");
+    const orphanSubTxId = anchor.web3.Keypair.generate().publicKey.toBytes();
+    const orphanCounterIx = await counterProgram.methods
+      .increment(new anchor.BN(1))
+      .accountsPartial({ counter: counterPda, authority: admin })
+      .instruction();
+    const orphanIxData = Buffer.from(orphanCounterIx.data);
+    const orphanIxDataHash = Buffer.from(keccak_256(orphanIxData), "hex");
+    const orphanStoredPda = getStoredIxDataPda(orphanSubTxId, orphanIxDataHash);
+
+    await relayerProgram.methods
+      .storeExecuteIxData(
+        Array.from(orphanSubTxId),
+        orphanIxDataHash as unknown as number[],
+        orphanIxData
+      )
+      .accountsPartial({
+        caller: relayer,
+        storedIxData: orphanStoredPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    // UV "crashes" — sub_tx_id lost. Recover by scanning chain.
+    const discriminatorHex = require("crypto")
+      .createHash("sha256")
+      .update("account:StoredIxData")
+      .digest("hex")
+      .slice(0, 16);
+    const discriminator = Buffer.from(discriminatorHex, "hex").slice(0, 8);
+    const STORE_REFUND_RECIPIENT_OFFSET = 8 + 1 + 32; // disc + bump + sub_tx_id
+
+    const discovered = await connection.getProgramAccounts(PROGRAM_ID, {
+      filters: [
+        { memcmp: { offset: 0, bytes: anchor.utils.bytes.bs58.encode(discriminator) } },
+        { memcmp: { offset: STORE_REFUND_RECIPIENT_OFFSET, bytes: relayer.toBase58() } },
+      ],
+    });
+    assert.isAtLeast(discovered.length, 1, "Must discover at least one orphaned PDA");
+    const orphan = discovered.find((a) => a.pubkey.equals(orphanStoredPda));
+    assert.isNotNull(orphan, "Orphaned PDA must be discoverable on-chain");
+    console.log(`  ✅ Discovered ${discovered.length} orphaned PDA(s) via getProgramAccounts`);
+
+    await relayerProgram.methods
+      .closeStoredIxData()
+      .accountsPartial({
+        caller: relayer,
+        storedIxData: orphan!.pubkey,
+        storeRefundRecipient: relayer,
+        executedSubTx: null,
+      })
+      .rpc();
+
+    assert.isNull(
+      await connection.getAccountInfo(orphanStoredPda),
+      "Orphaned PDA must be closed"
+    );
+    console.log("  ✅ Orphaned PDA recovered and closed without local state");
+  } catch (error: any) {
+    console.log(`❌ Ref-finalize route test failed: ${error.message}`);
+    throw error;
+  }
+  console.log("✅ Ref-finalize route test completed!\n");
+
   // 15. Test revert function with real TSS signature
   console.log("15. Testing revert function with real TSS signature...");
 
@@ -3525,7 +3821,6 @@ async function run() {
     const instructionId = 3;
     const amount = 1000000; // 0.001 SOL
     const revertGasFee = 1000000; // 0.001 SOL gas fee for revert
-    const recipientBytes = admin.toBytes();
     const chainIdString = tssAccount.chainId; // String: Solana cluster pubkey
 
     // Generate universal_tx_id for revert
@@ -3538,20 +3833,25 @@ async function run() {
     const chainIdBytes = Buffer.from(chainIdString, "utf8"); // UTF-8 bytes of cluster pubkey string
     const amountBE = Buffer.alloc(8);
     amountBE.writeBigUInt64BE(BigInt(amount));
-    const recipientBytesBE = admin.toBuffer();
-    const gasFeeBE = Buffer.alloc(8);
-    gasFeeBE.writeBigUInt64BE(BigInt(revertGasFee));
+    const revertMsg = Buffer.from("test_revert");
+    const revertAdditional = buildRevertAdditionalData(
+      new Uint8Array(txIdRevert),
+      new Uint8Array(universalTxIdRevert),
+      admin,
+      revertMsg,
+      BigInt(revertGasFee)
+    );
 
-    // Order matches revert_universal_tx.rs
+    // Order matches revert_universal_tx.rs: PREFIX || instruction_id || chain_id || deadline (i64 BE) || amount || additional_data
+    const deadlineBuf = Buffer.alloc(8);
+    deadlineBuf.writeBigInt64BE(DEFAULT_DEADLINE);
     const messageData = Buffer.concat([
       PREFIX,
       instructionIdBE,
-      chainIdBytes, // UTF-8 bytes of chain_id string
+      chainIdBytes,
+      deadlineBuf,
       amountBE,
-      Buffer.from(txIdRevert), // sub_tx_id (32 bytes) - MUST be first in additional_data
-      Buffer.from(universalTxIdRevert), // universal_tx_id (32 bytes)
-      recipientBytesBE, // recipient (32 bytes)
-      gasFeeBE, // gas_fee (8 bytes, u64 BE)
+      ...revertAdditional.map((item) => Buffer.from(item)),
     ]);
 
     // Hash with keccak (same as program)
@@ -3583,9 +3883,10 @@ async function run() {
         new anchor.BN(amount),
         {
           revertRecipient: admin,
-          revertMsg: Buffer.from("test_revert"),
+          revertMsg,
         },
         new anchor.BN(revertGasFee),
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         Array.from(signature),
         recoveryId,
         Array.from(messageHash)
@@ -3611,6 +3912,190 @@ async function run() {
   } catch (error) {
     console.log(`❌ revertWithdraw failed: ${error.message}`);
   }
+
+  // ===========================================================================
+  // 16. Deadline enforcement tests
+  // ===========================================================================
+  console.log("\n16. Testing deadline enforcement on devnet...");
+
+  const PAST_DEADLINE = BigInt(1); // Unix epoch 1970 — always expired
+
+  // ── 16.1 finalize_universal_tx: expired deadline → SignatureExpired ────────
+  {
+    const subTxId16a = Array.from(anchor.web3.Keypair.generate().publicKey.toBuffer());
+    const universalTxId16a = generateUniversalTxId();
+    const pushAccount16a = Array.from(anchor.web3.Keypair.generate().publicKey.toBuffer()).slice(0, 20);
+    const tssAccount16: any = await (program.account as any).tssPda.fetch(tssPda);
+
+    const sig16a = await signTssMessage({
+      instruction: TssInstruction.Withdraw,
+      amount: BigInt(LAMPORTS_PER_SOL),
+      chainId: tssAccount16.chainId,
+      deadline: PAST_DEADLINE,
+      additional: buildWithdrawAdditionalData(
+        new Uint8Array(universalTxId16a),
+        new Uint8Array(subTxId16a),
+        new Uint8Array(pushAccount16a),
+        PublicKey.default,
+        adminKeypair.publicKey,
+        BigInt(1_000_000)
+      ),
+    });
+
+    const [executedSubTx16a] = PublicKey.findProgramAddressSync(
+      [Buffer.from("executed_sub_tx"), Buffer.from(subTxId16a)],
+      program.programId
+    );
+
+    try {
+      await program.methods
+        .finalizeUniversalTx(
+          1, subTxId16a, Array.from(universalTxId16a),
+          new anchor.BN(LAMPORTS_PER_SOL), pushAccount16a,
+          Buffer.alloc(0), Buffer.from([]),
+          new anchor.BN(1_000_000),
+          new anchor.BN(PAST_DEADLINE.toString()),
+          Array.from(sig16a.signature), sig16a.recoveryId, Array.from(sig16a.messageHash)
+        )
+        .accountsPartial({
+          caller: admin, config: configPda, vaultSol: vaultPda,
+          ceaAuthority: getCeaAuthorityPda(pushAccount16a), tssPda,
+          executedSubTx: executedSubTx16a,
+          destinationProgram: SystemProgram.programId,
+          storedIxData: null, storeRefundRecipient: null,
+          recipient: admin,
+          vaultAta: null, ceaAta: null, mint: null, tokenProgram: null,
+          rent: null, associatedTokenProgram: null, recipientAta: null,
+          rateLimitConfig: null, tokenRateLimit: null,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([adminKeypair]).rpc();
+      throw new Error("Should have been rejected");
+    } catch (e: any) {
+      if (e.message?.includes("SignatureExpired")) {
+        console.log("  ✅ 16.1 Expired finalize deadline rejected (SignatureExpired)");
+      } else {
+        throw new Error(`16.1 FAILED — expected SignatureExpired, got: ${e.message}`);
+      }
+    }
+  }
+
+  // ── 16.2 finalize_universal_tx: tampered deadline → MessageHashMismatch ────
+  {
+    const subTxId16b = Array.from(anchor.web3.Keypair.generate().publicKey.toBuffer());
+    const universalTxId16b = generateUniversalTxId();
+    const pushAccount16b = Array.from(anchor.web3.Keypair.generate().publicKey.toBuffer()).slice(0, 20);
+    const tssAccount16: any = await (program.account as any).tssPda.fetch(tssPda);
+
+    // Sign with DEFAULT_DEADLINE
+    const sig16b = await signTssMessage({
+      instruction: TssInstruction.Withdraw,
+      amount: BigInt(LAMPORTS_PER_SOL),
+      chainId: tssAccount16.chainId,
+      additional: buildWithdrawAdditionalData(
+        new Uint8Array(universalTxId16b),
+        new Uint8Array(subTxId16b),
+        new Uint8Array(pushAccount16b),
+        PublicKey.default,
+        adminKeypair.publicKey,
+        BigInt(1_000_000)
+      ),
+    });
+
+    const [executedSubTx16b] = PublicKey.findProgramAddressSync(
+      [Buffer.from("executed_sub_tx"), Buffer.from(subTxId16b)],
+      program.programId
+    );
+
+    // Submit with a different (still future) deadline — hash won't match
+    const WRONG_DEADLINE = DEFAULT_DEADLINE + BigInt(1);
+    try {
+      await program.methods
+        .finalizeUniversalTx(
+          1, subTxId16b, Array.from(universalTxId16b),
+          new anchor.BN(LAMPORTS_PER_SOL), pushAccount16b,
+          Buffer.alloc(0), Buffer.from([]),
+          new anchor.BN(1_000_000),
+          new anchor.BN(WRONG_DEADLINE.toString()),
+          Array.from(sig16b.signature), sig16b.recoveryId, Array.from(sig16b.messageHash)
+        )
+        .accountsPartial({
+          caller: admin, config: configPda, vaultSol: vaultPda,
+          ceaAuthority: getCeaAuthorityPda(pushAccount16b), tssPda,
+          executedSubTx: executedSubTx16b,
+          destinationProgram: SystemProgram.programId,
+          storedIxData: null, storeRefundRecipient: null,
+          recipient: admin,
+          vaultAta: null, ceaAta: null, mint: null, tokenProgram: null,
+          rent: null, associatedTokenProgram: null, recipientAta: null,
+          rateLimitConfig: null, tokenRateLimit: null,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([adminKeypair]).rpc();
+      throw new Error("Should have been rejected");
+    } catch (e: any) {
+      if (e.message?.includes("MessageHashMismatch")) {
+        console.log("  ✅ 16.2 Tampered deadline rejected (MessageHashMismatch)");
+      } else {
+        throw new Error(`16.2 FAILED — expected MessageHashMismatch, got: ${e.message}`);
+      }
+    }
+  }
+
+  // ── 16.3 revert_universal_tx: expired deadline → SignatureExpired ──────────
+  {
+    const subTxId16c = Array.from(anchor.web3.Keypair.generate().publicKey.toBuffer());
+    const universalTxId16c = generateUniversalTxId();
+    const tssAccount16: any = await (program.account as any).tssPda.fetch(tssPda);
+    const revertMsg16c = Buffer.from("deadline-test-revert");
+
+    const sig16c = await signTssMessage({
+      instruction: TssInstruction.Revert,
+      amount: BigInt(1_000_000),
+      chainId: tssAccount16.chainId,
+      deadline: PAST_DEADLINE,
+      additional: buildRevertAdditionalData(
+        new Uint8Array(subTxId16c),
+        new Uint8Array(universalTxId16c),
+        adminKeypair.publicKey,
+        revertMsg16c,
+        BigInt(1_000_000)
+      ),
+    });
+
+    const [executedSubTx16c] = PublicKey.findProgramAddressSync(
+      [Buffer.from("executed_sub_tx"), Buffer.from(subTxId16c)],
+      program.programId
+    );
+
+    try {
+      await program.methods
+        .revertUniversalTx(
+          subTxId16c, Array.from(universalTxId16c),
+          new anchor.BN(1_000_000),
+          { revertRecipient: adminKeypair.publicKey, revertMsg: revertMsg16c },
+          new anchor.BN(1_000_000),
+          new anchor.BN(PAST_DEADLINE.toString()),
+          Array.from(sig16c.signature), sig16c.recoveryId, Array.from(sig16c.messageHash)
+        )
+        .accountsPartial({
+          config: configPda, vault: vaultPda, feeVault: feeVaultPda, tssPda,
+          recipient: admin, executedSubTx: executedSubTx16c,
+          caller: admin, systemProgram: SystemProgram.programId,
+          tokenVault: null, recipientTokenAccount: null, tokenMint: null, tokenProgram: null,
+        })
+        .signers([adminKeypair]).rpc();
+      throw new Error("Should have been rejected");
+    } catch (e: any) {
+      if (e.message?.includes("SignatureExpired")) {
+        console.log("  ✅ 16.3 Expired revert deadline rejected (SignatureExpired)");
+      } else {
+        throw new Error(`16.3 FAILED — expected SignatureExpired, got: ${e.message}`);
+      }
+    }
+  }
+
+  console.log("✅ All deadline enforcement checks passed on devnet!\n");
 
   console.log("All tests completed successfully!");
 }

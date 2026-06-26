@@ -13,6 +13,16 @@ describe("Universal Gateway - Admin Functions Tests", () => {
     const provider = anchor.getProvider() as anchor.AnchorProvider;
     const program = anchor.workspace.UniversalGateway as Program<UniversalGateway>;
 
+    const getErrorCode = (error: any): string | undefined => {
+        return (
+            error?.error?.errorCode?.code ||
+            error?.errorCode?.code ||
+            error?.error?.errorCode ||
+            error?.code ||
+            /Error Code: ([A-Za-z0-9_]+)/.exec(String(error))?.[1]
+        );
+    };
+
     before(async () => {
         await ensureTestSetup();
     });
@@ -20,7 +30,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
     // Test accounts
     let admin: Keypair;
     let newAdmin: Keypair;
-    let tssAddress: Keypair;
+    let operator: Keypair;
     let pauser: Keypair;
     let newPauser: Keypair;
     let unauthorizedUser: Keypair;
@@ -36,7 +46,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
     let mockUSDT: any;
     before(async () => {
         admin = sharedState.getAdmin();
-        tssAddress = sharedState.getTssAddress();
+        operator = sharedState.getOperator();
         pauser = sharedState.getPauser();
         mockUSDT = sharedState.getMockUSDT();
         mockPriceFeed = sharedState.getMockPriceFeed();
@@ -69,7 +79,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
         );
 
         [tssPda] = PublicKey.findProgramAddressSync(
-            [Buffer.from("tsspda_v2")],
+            [Buffer.from("final_tss_pda")],
             program.programId
         );
 
@@ -81,7 +91,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
         const config = await program.account.config.fetch(configPda);
         expect(config.admin.toString()).to.equal(admin.publicKey.toString());
         expect(config.pauser.toString()).to.equal(pauser.publicKey.toString());
-        expect(config.tssAddress.toString()).to.equal(tssAddress.publicKey.toString());
+        expect(config.operator.toString()).to.equal(operator.publicKey.toString());
 
     });
 
@@ -91,16 +101,165 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             const config = await program.account.config.fetch(configPda);
 
             expect(config.admin.toString()).to.equal(admin.publicKey.toString());
-            expect(config.tssAddress.toString()).to.equal(tssAddress.publicKey.toString());
+            expect(config.operator.toString()).to.equal(operator.publicKey.toString());
             expect(config.pauser.toString()).to.equal(pauser.publicKey.toString());
+            expect(config.pendingAdmin.toString()).to.equal(PublicKey.default.toString());
+            expect(config.pendingPauser.toString()).to.equal(PublicKey.default.toString());
             expect(config.paused).to.be.false;
 
         });
 
+        it("Updates operator authority and emits OperatorChanged", async () => {
+            const newOperator = Keypair.generate();
+            await provider.connection.requestAirdrop(
+                newOperator.publicKey,
+                2 * anchor.web3.LAMPORTS_PER_SOL
+            );
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            let rotated = false;
+            let config = await program.account.config.fetch(configPda);
+
+            try {
+                const txSig = await program.methods
+                    .setOperator(newOperator.publicKey)
+                    .accountsPartial({
+                        admin: admin.publicKey,
+                        config: configPda,
+                    })
+                    .signers([admin])
+                    .rpc();
+                rotated = true;
+
+                config = await program.account.config.fetch(configPda);
+                expect(config.operator.toString()).to.equal(newOperator.publicKey.toString());
+
+                let tx = null;
+                for (let i = 0; i < 10; i++) {
+                    tx = await provider.connection.getTransaction(txSig, {
+                        commitment: "confirmed",
+                        maxSupportedTransactionVersion: 0,
+                    });
+                    if (tx?.meta?.logMessages) break;
+                    await new Promise(resolve => setTimeout(resolve, 250));
+                }
+                expect(tx?.meta?.logMessages).to.exist;
+
+                const eventCoder = new anchor.BorshEventCoder(program.idl);
+                const events = (tx?.meta?.logMessages ?? [])
+                    .filter((log) => log.includes("Program data:"))
+                    .map((log) => {
+                        try {
+                            return eventCoder.decode(log.split("Program data: ")[1]);
+                        } catch {
+                            return null;
+                        }
+                    })
+                    .filter((event) => event !== null);
+
+                const operatorChanged = events.find(event => event.name === "operatorChanged");
+                expect(operatorChanged).to.exist;
+                expect((operatorChanged!.data as any).oldOperator.toString()).to.equal(operator.publicKey.toString());
+                expect((operatorChanged!.data as any).newOperator.toString()).to.equal(newOperator.publicKey.toString());
+
+                await program.methods
+                    .pause()
+                    .accountsPartial({
+                        pauser: pauser.publicKey,
+                        config: configPda,
+                    })
+                    .signers([pauser])
+                    .rpc();
+
+                try {
+                    await program.methods
+                        .unpause()
+                        .accountsPartial({
+                            operator: operator.publicKey,
+                            config: configPda,
+                        })
+                        .signers([operator])
+                        .rpc();
+                    expect.fail("Old operator should not retain unpause access after rotation");
+                } catch (error: any) {
+                    const errorCode = getErrorCode(error);
+                    expect(errorCode).to.equal("Unauthorized");
+                }
+            } finally {
+                if (rotated) {
+                    const latestConfig = await program.account.config.fetch(configPda);
+                    if (latestConfig.paused) {
+                        await program.methods
+                            .unpause()
+                            .accountsPartial({
+                                operator: newOperator.publicKey,
+                                config: configPda,
+                            })
+                            .signers([newOperator])
+                            .rpc();
+                    }
+
+                    await program.methods
+                        .setOperator(operator.publicKey)
+                        .accountsPartial({
+                            admin: admin.publicKey,
+                            config: configPda,
+                        })
+                        .signers([admin])
+                        .rpc();
+                }
+            }
+
+            config = await program.account.config.fetch(configPda);
+            expect(config.operator.toString()).to.equal(operator.publicKey.toString());
+        });
+
+        it("Rejects operator updates from non-admin", async () => {
+            const anotherOperator = Keypair.generate();
+
+            try {
+                await program.methods
+                    .setOperator(anotherOperator.publicKey)
+                    .accountsPartial({
+                        admin: unauthorizedUser.publicKey,
+                        config: configPda,
+                    })
+                    .signers([unauthorizedUser])
+                    .rpc();
+                expect.fail("Unauthorized set_operator should have failed");
+            } catch (error: any) {
+                const errorCode = getErrorCode(error);
+                expect(errorCode).to.equal("Unauthorized");
+            }
+
+            const config = await program.account.config.fetch(configPda);
+            expect(config.operator.toString()).to.equal(operator.publicKey.toString());
+        });
+
+        it("Rejects zero-address operator updates", async () => {
+            try {
+                await program.methods
+                    .setOperator(PublicKey.default)
+                    .accountsPartial({
+                        admin: admin.publicKey,
+                        config: configPda,
+                    })
+                    .signers([admin])
+                    .rpc();
+                expect.fail("Zero-address operator update should have failed");
+            } catch (error: any) {
+                const errorCode = getErrorCode(error);
+                expect(errorCode).to.equal("ZeroAddress");
+            }
+
+            const config = await program.account.config.fetch(configPda);
+            expect(config.operator.toString()).to.equal(operator.publicKey.toString());
+        });
+
         it("Rotates admin authority", async () => {
-            // Rotate admin -> newAdmin
+            // Propose admin -> newAdmin
             await program.methods
-                .setAuthorities(newAdmin.publicKey, null)
+                .proposeAuthorities(newAdmin.publicKey, null)
                 .accountsPartial({
                     config: configPda,
                     admin: admin.publicKey,
@@ -109,7 +268,36 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 .rpc();
 
             let config = await program.account.config.fetch(configPda);
+            expect(config.admin.toString()).to.equal(admin.publicKey.toString());
+            expect(config.pendingAdmin.toString()).to.equal(newAdmin.publicKey.toString());
+
+            try {
+                await program.methods
+                    .acceptAdmin()
+                    .accountsPartial({
+                        config: configPda,
+                        pendingAdmin: unauthorizedUser.publicKey,
+                    })
+                    .signers([unauthorizedUser])
+                    .rpc();
+                expect.fail("Only the proposed admin should be able to accept");
+            } catch (error: any) {
+                const errorCode = getErrorCode(error);
+                expect(errorCode).to.equal("Unauthorized");
+            }
+
+            await program.methods
+                .acceptAdmin()
+                .accountsPartial({
+                    config: configPda,
+                    pendingAdmin: newAdmin.publicKey,
+                })
+                .signers([newAdmin])
+                .rpc();
+
+            config = await program.account.config.fetch(configPda);
             expect(config.admin.toString()).to.equal(newAdmin.publicKey.toString());
+            expect(config.pendingAdmin.toString()).to.equal(PublicKey.default.toString());
 
             // Old admin should now fail admin-only action
             try {
@@ -123,13 +311,13 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                     .rpc();
                 expect.fail("Old admin should not have access after rotation");
             } catch (error: any) {
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
 
             // Rotate back to original admin to keep suite stable
             await program.methods
-                .setAuthorities(admin.publicKey, null)
+                .proposeAuthorities(admin.publicKey, null)
                 .accountsPartial({
                     config: configPda,
                     admin: newAdmin.publicKey,
@@ -138,12 +326,26 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 .rpc();
 
             config = await program.account.config.fetch(configPda);
+            expect(config.admin.toString()).to.equal(newAdmin.publicKey.toString());
+            expect(config.pendingAdmin.toString()).to.equal(admin.publicKey.toString());
+
+            await program.methods
+                .acceptAdmin()
+                .accountsPartial({
+                    config: configPda,
+                    pendingAdmin: admin.publicKey,
+                })
+                .signers([admin])
+                .rpc();
+
+            config = await program.account.config.fetch(configPda);
             expect(config.admin.toString()).to.equal(admin.publicKey.toString());
+            expect(config.pendingAdmin.toString()).to.equal(PublicKey.default.toString());
         });
 
         it("Updates pauser authority", async () => {
             await program.methods
-                .setAuthorities(null, newPauser.publicKey)
+                .proposeAuthorities(null, newPauser.publicKey)
                 .accountsPartial({
                     config: configPda,
                     admin: admin.publicKey,
@@ -152,9 +354,23 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 .rpc();
 
             let config = await program.account.config.fetch(configPda);
-            expect(config.pauser.toString()).to.equal(newPauser.publicKey.toString());
+            expect(config.pauser.toString()).to.equal(pauser.publicKey.toString());
+            expect(config.pendingPauser.toString()).to.equal(newPauser.publicKey.toString());
 
-            // New pauser can pause/unpause
+            await program.methods
+                .acceptPauser()
+                .accountsPartial({
+                    config: configPda,
+                    pendingPauser: newPauser.publicKey,
+                })
+                .signers([newPauser])
+                .rpc();
+
+            config = await program.account.config.fetch(configPda);
+            expect(config.pauser.toString()).to.equal(newPauser.publicKey.toString());
+            expect(config.pendingPauser.toString()).to.equal(PublicKey.default.toString());
+
+            // New pauser can pause
             await program.methods
                 .pause()
                 .accountsPartial({
@@ -167,15 +383,30 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             await program.methods
                 .unpause()
                 .accountsPartial({
-                    pauser: newPauser.publicKey,
+                    operator: operator.publicKey,
                     config: configPda,
                 })
-                .signers([newPauser])
+                .signers([operator])
                 .rpc();
+
+            try {
+                await program.methods
+                    .pause()
+                    .accountsPartial({
+                        pauser: pauser.publicKey,
+                        config: configPda,
+                    })
+                    .signers([pauser])
+                    .rpc();
+                expect.fail("Old pauser should not have access after acceptance");
+            } catch (error: any) {
+                const errorCode = getErrorCode(error);
+                expect(errorCode).to.equal("Unauthorized");
+            }
 
             // Restore original pauser for remaining tests
             await program.methods
-                .setAuthorities(null, pauser.publicKey)
+                .proposeAuthorities(null, pauser.publicKey)
                 .accountsPartial({
                     config: configPda,
                     admin: admin.publicKey,
@@ -184,7 +415,21 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 .rpc();
 
             config = await program.account.config.fetch(configPda);
+            expect(config.pauser.toString()).to.equal(newPauser.publicKey.toString());
+            expect(config.pendingPauser.toString()).to.equal(pauser.publicKey.toString());
+
+            await program.methods
+                .acceptPauser()
+                .accountsPartial({
+                    config: configPda,
+                    pendingPauser: pauser.publicKey,
+                })
+                .signers([pauser])
+                .rpc();
+
+            config = await program.account.config.fetch(configPda);
             expect(config.pauser.toString()).to.equal(pauser.publicKey.toString());
+            expect(config.pendingPauser.toString()).to.equal(PublicKey.default.toString());
         });
 
         it("Updates USD caps", async () => {
@@ -207,36 +452,36 @@ describe("Universal Gateway - Admin Functions Tests", () => {
 
         });
 
-        it("Rejects set_authorities from non-admin", async () => {
+        it("Rejects propose_authorities from non-admin", async () => {
             try {
                 await program.methods
-                    .setAuthorities(unauthorizedUser.publicKey, null)
+                    .proposeAuthorities(unauthorizedUser.publicKey, null)
                     .accountsPartial({
                         config: configPda,
                         admin: unauthorizedUser.publicKey,
                     })
                     .signers([unauthorizedUser])
                     .rpc();
-                expect.fail("Unauthorized set_authorities should have failed");
+                expect.fail("Unauthorized propose_authorities should have failed");
             } catch (error: any) {
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
         });
 
-        it("Rejects set_authorities with both args null", async () => {
+        it("Rejects propose_authorities with both args null", async () => {
             try {
                 await program.methods
-                    .setAuthorities(null, null)
+                    .proposeAuthorities(null, null)
                     .accountsPartial({
                         config: configPda,
                         admin: admin.publicKey,
                     })
                     .signers([admin])
                     .rpc();
-                expect.fail("set_authorities with both null should have failed");
+                expect.fail("propose_authorities with both null should have failed");
             } catch (error: any) {
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("InvalidInput");
             }
         });
@@ -258,7 +503,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 expect.fail("Unauthorized TSS update should have failed");
             } catch (error: any) {
                 expect(error).to.exist;
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
         });
@@ -281,10 +526,60 @@ describe("Universal Gateway - Admin Functions Tests", () => {
 
         });
 
+        it("Allows admin to pause as emergency fallback", async () => {
+            await program.methods
+                .unpause()
+                .accountsPartial({
+                    operator: operator.publicKey,
+                    config: configPda,
+                })
+                .signers([operator])
+                .rpc();
+
+            await program.methods
+                .pause()
+                .accountsPartial({
+                    pauser: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            let config = await program.account.config.fetch(configPda);
+            expect(config.paused).to.be.true;
+
+            await program.methods
+                .unpause()
+                .accountsPartial({
+                    operator: operator.publicKey,
+                    config: configPda,
+                })
+                .signers([operator])
+                .rpc();
+
+            config = await program.account.config.fetch(configPda);
+            expect(config.paused).to.be.false;
+        });
+
         it("Unpauses the contract", async () => {
 
             await program.methods
                 .unpause()
+                .accountsPartial({
+                    operator: operator.publicKey,
+                    config: configPda,
+                })
+                .signers([operator])
+                .rpc();
+
+            const config = await program.account.config.fetch(configPda);
+            expect(config.paused).to.be.false;
+
+        });
+
+        it("Rejects unpause from pauser", async () => {
+            await program.methods
+                .pause()
                 .accountsPartial({
                     pauser: pauser.publicKey,
                     config: configPda,
@@ -292,9 +587,34 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 .signers([pauser])
                 .rpc();
 
+            try {
+                await program.methods
+                    .unpause()
+                    .accountsPartial({
+                        operator: pauser.publicKey,
+                        config: configPda,
+                    })
+                    .signers([pauser])
+                    .rpc();
+
+                expect.fail("Pauser unpause should have failed");
+            } catch (error: any) {
+                expect(error).to.exist;
+                const errorCode = getErrorCode(error);
+                expect(errorCode).to.equal("Unauthorized");
+            }
+
+            await program.methods
+                .unpause()
+                .accountsPartial({
+                    operator: operator.publicKey,
+                    config: configPda,
+                })
+                .signers([operator])
+                .rpc();
+
             const config = await program.account.config.fetch(configPda);
             expect(config.paused).to.be.false;
-
         });
 
         it("Rejects pause/unpause from unauthorized users", async () => {
@@ -311,7 +631,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 expect.fail("Unauthorized pause should have failed");
             } catch (error: any) {
                 expect(error).to.exist;
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
 
@@ -319,7 +639,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 await program.methods
                     .unpause()
                     .accountsPartial({
-                        pauser: unauthorizedUser.publicKey,
+                        operator: unauthorizedUser.publicKey,
                         config: configPda,
                     })
                     .signers([unauthorizedUser])
@@ -328,7 +648,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 expect.fail("Unauthorized unpause should have failed");
             } catch (error: any) {
                 expect(error).to.exist;
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("Unauthorized");
             }
         });
@@ -394,6 +714,48 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 .rpc();
         });
 
+        it("Updates Pyth max age seconds", async () => {
+            const newMaxAge = new anchor.BN(90);
+
+            await program.methods
+                .setPythMaxAgeSeconds(newMaxAge)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            const config = await program.account.config.fetch(configPda);
+            expect(config.pythMaxAgeSeconds.toString()).to.equal(newMaxAge.toString());
+
+            // Reject zero
+            try {
+                await program.methods
+                    .setPythMaxAgeSeconds(new anchor.BN(0))
+                    .accountsPartial({
+                        admin: admin.publicKey,
+                        config: configPda,
+                    })
+                    .signers([admin])
+                    .rpc();
+                expect.fail("Zero max age should have been rejected");
+            } catch (error: any) {
+                const errorCode = getErrorCode(error);
+                expect(errorCode).to.equal("InvalidAmount");
+            }
+
+            // Restore to a working value for remaining tests
+            await program.methods
+                .setPythMaxAgeSeconds(new anchor.BN(3600))
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+        });
+
         it("Updates rate limiting configuration", async () => {
 
             const newBlockCap = new anchor.BN(1_000_000_000_000); // $10,000
@@ -426,6 +788,187 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             expect(rateLimitConfig.epochDurationSec.toString()).to.equal(newEpochDuration.toString());
 
         });
+
+        it("Allows admin config setters while paused", async () => {
+            const originalConfig = await program.account.config.fetch(configPda);
+            const pausedMinCap = new anchor.BN(250_000_000);
+            const pausedMaxCap = new anchor.BN(2_500_000_000);
+            const pausedPriceFeed = Keypair.generate().publicKey;
+            const pausedConfidenceThreshold = new anchor.BN(3_000_000);
+            const pausedMaxAge = new anchor.BN(120);
+
+            await program.methods
+                .pause()
+                .accountsPartial({
+                    pauser: pauser.publicKey,
+                    config: configPda,
+                })
+                .signers([pauser])
+                .rpc();
+
+            await program.methods
+                .setCapsUsd(pausedMinCap, pausedMaxCap)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .setPythPriceFeed(pausedPriceFeed)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .setPythConfidenceThreshold(pausedConfidenceThreshold)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .setPythMaxAgeSeconds(pausedMaxAge)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .unpause()
+                .accountsPartial({
+                    operator: operator.publicKey,
+                    config: configPda,
+                })
+                .signers([operator])
+                .rpc();
+
+            const pausedConfig = await program.account.config.fetch(configPda);
+            expect(pausedConfig.minCapUniversalTxUsd.toString()).to.equal(pausedMinCap.toString());
+            expect(pausedConfig.maxCapUniversalTxUsd.toString()).to.equal(pausedMaxCap.toString());
+            expect(pausedConfig.pythPriceFeed.toString()).to.equal(pausedPriceFeed.toString());
+            expect(pausedConfig.pythConfidenceThreshold.toString()).to.equal(pausedConfidenceThreshold.toString());
+            expect(pausedConfig.pythMaxAgeSeconds.toString()).to.equal(pausedMaxAge.toString());
+
+            await program.methods
+                .setCapsUsd(
+                    new anchor.BN(originalConfig.minCapUniversalTxUsd.toString()),
+                    new anchor.BN(originalConfig.maxCapUniversalTxUsd.toString())
+                )
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .setPythPriceFeed(originalConfig.pythPriceFeed)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .setPythConfidenceThreshold(new anchor.BN(originalConfig.pythConfidenceThreshold.toString()))
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .setPythMaxAgeSeconds(new anchor.BN(originalConfig.pythMaxAgeSeconds.toString()))
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                })
+                .signers([admin])
+                .rpc();
+        });
+
+        it("Allows rate limit config setters while paused", async () => {
+            const originalRateLimitConfig = await program.account.rateLimitConfig.fetch(rateLimitConfigPda);
+            const pausedBlockCap = new anchor.BN(2_000_000_000_000);
+            const pausedEpochDuration = new anchor.BN(3600);
+
+            await program.methods
+                .pause()
+                .accountsPartial({
+                    pauser: pauser.publicKey,
+                    config: configPda,
+                })
+                .signers([pauser])
+                .rpc();
+
+            await program.methods
+                .setBlockUsdCap(pausedBlockCap)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    rateLimitConfig: rateLimitConfigPda,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .updateEpochDuration(pausedEpochDuration)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    rateLimitConfig: rateLimitConfigPda,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .unpause()
+                .accountsPartial({
+                    operator: operator.publicKey,
+                    config: configPda,
+                })
+                .signers([operator])
+                .rpc();
+
+            const pausedRateLimitConfig = await program.account.rateLimitConfig.fetch(rateLimitConfigPda);
+            expect(pausedRateLimitConfig.blockUsdCap.toString()).to.equal(pausedBlockCap.toString());
+            expect(pausedRateLimitConfig.epochDurationSec.toString()).to.equal(pausedEpochDuration.toString());
+
+            await program.methods
+                .setBlockUsdCap(new anchor.BN(originalRateLimitConfig.blockUsdCap.toString()))
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    rateLimitConfig: rateLimitConfigPda,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .updateEpochDuration(new anchor.BN(originalRateLimitConfig.epochDurationSec.toString()))
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    rateLimitConfig: rateLimitConfigPda,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+        });
     });
 
     describe("Token Rate Limits", () => {
@@ -439,7 +982,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             );
 
             await program.methods
-                .setTokenRateLimit(limitThreshold)
+                .setTokenRateLimit(limitThreshold, true, true)
                 .accountsPartial({
                     admin: admin.publicKey,
                     config: configPda,
@@ -455,13 +998,124 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             expect(tokenRateLimit.limitThreshold.toString()).to.equal(limitThreshold.toString());
 
         });
+
+        it("Allows native SOL rate limit updates without authority acknowledgments", async () => {
+            const limitThreshold = new anchor.BN(500 * 10 ** 9);
+            const [tokenRateLimitPda] = PublicKey.findProgramAddressSync(
+                [Buffer.from("rate_limit"), PublicKey.default.toBuffer()],
+                program.programId
+            );
+
+            await program.methods
+                .setTokenRateLimit(limitThreshold, false, false)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    tokenRateLimit: tokenRateLimitPda,
+                    tokenMint: PublicKey.default,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+
+            const tokenRateLimit = await program.account.tokenRateLimit.fetch(tokenRateLimitPda);
+            expect(tokenRateLimit.tokenMint.toString()).to.equal(PublicKey.default.toString());
+            expect(tokenRateLimit.limitThreshold.toString()).to.equal(limitThreshold.toString());
+        });
+
+        it("Rejects SPL mint authorities unless explicitly acknowledged", async () => {
+            const limitThreshold = new anchor.BN(2000 * Math.pow(10, 6));
+            const [tokenRateLimitPda] = PublicKey.findProgramAddressSync(
+                [Buffer.from("rate_limit"), mockUSDT.mint.publicKey.toBuffer()],
+                program.programId
+            );
+
+            for (const [trustedMintAuthority, trustedFreezeAuthority] of [
+                [false, false],
+                [true, false],
+                [false, true],
+            ] as const) {
+                try {
+                    await program.methods
+                        .setTokenRateLimit(limitThreshold, trustedMintAuthority, trustedFreezeAuthority)
+                        .accountsPartial({
+                            admin: admin.publicKey,
+                            config: configPda,
+                            tokenRateLimit: tokenRateLimitPda,
+                            tokenMint: mockUSDT.mint.publicKey,
+                            systemProgram: SystemProgram.programId,
+                        })
+                        .signers([admin])
+                        .rpc();
+
+                    expect.fail("Missing authority acknowledgment should have failed");
+                } catch (error: any) {
+                    const errorCode = getErrorCode(error);
+                    expect(errorCode).to.equal("InvalidMint");
+                }
+            }
+        });
+
+        it("Allows token rate limit updates while paused", async () => {
+            const [tokenRateLimitPda] = PublicKey.findProgramAddressSync(
+                [Buffer.from("rate_limit"), mockUSDT.mint.publicKey.toBuffer()],
+                program.programId
+            );
+            const originalTokenRateLimit = await program.account.tokenRateLimit.fetch(tokenRateLimitPda);
+            const pausedThreshold = new anchor.BN(3000 * Math.pow(10, 6));
+
+            await program.methods
+                .pause()
+                .accountsPartial({
+                    pauser: pauser.publicKey,
+                    config: configPda,
+                })
+                .signers([pauser])
+                .rpc();
+
+            await program.methods
+                .setTokenRateLimit(pausedThreshold, true, true)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    tokenRateLimit: tokenRateLimitPda,
+                    tokenMint: mockUSDT.mint.publicKey,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+
+            await program.methods
+                .unpause()
+                .accountsPartial({
+                    operator: operator.publicKey,
+                    config: configPda,
+                })
+                .signers([operator])
+                .rpc();
+
+            const pausedTokenRateLimit = await program.account.tokenRateLimit.fetch(tokenRateLimitPda);
+            expect(pausedTokenRateLimit.limitThreshold.toString()).to.equal(pausedThreshold.toString());
+
+            await program.methods
+                .setTokenRateLimit(new anchor.BN(originalTokenRateLimit.limitThreshold.toString()), true, true)
+                .accountsPartial({
+                    admin: admin.publicKey,
+                    config: configPda,
+                    tokenRateLimit: tokenRateLimitPda,
+                    tokenMint: mockUSDT.mint.publicKey,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([admin])
+                .rpc();
+        });
     });
 
     describe("TSS Management", () => {
         it("Rejects TSS initialization by non-admin", async () => {
             // Use the correct TSS PDA seed (just "tss", not with extra bytes)
             const [actualTssPda] = PublicKey.findProgramAddressSync(
-                [Buffer.from("tsspda_v2")],
+                [Buffer.from("final_tss_pda")],
                 program.programId
             );
 
@@ -491,7 +1145,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                     expect.fail("Unauthorized TSS update should have failed");
                 } catch (error: any) {
                     expect(error).to.exist;
-                    const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                    const errorCode = getErrorCode(error);
                     expect(errorCode).to.equal("Unauthorized");
                 }
             } else {
@@ -516,7 +1170,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 } catch (error: any) {
                     expect(error).to.exist;
                     // Constraint returns ConstraintRaw when validation fails
-                    const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                    const errorCode = getErrorCode(error);
                     expect(errorCode).to.equal("ConstraintRaw");
                 }
             }
@@ -557,11 +1211,11 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             await program.methods
                 .updateTss(newTssEthAddress, newChainId)
                 .accountsPartial({
-                    authority: admin.publicKey,
+                    authority: operator.publicKey,
                     tssPda: tssPda,
                     config: configPda,
                 })
-                .signers([admin])
+                .signers([operator])
                 .rpc();
 
             const tss = await program.account.tssPda.fetch(tssPda);
@@ -604,7 +1258,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 expect.fail("Invalid caps should have been rejected");
             } catch (error: any) {
                 expect(error).to.exist;
-                const errorCode = error.error?.errorCode?.code || error.errorCode?.code || error.code || error.error?.code;
+                const errorCode = getErrorCode(error);
                 expect(errorCode).to.equal("InvalidCapRange");
             }
         });
@@ -618,9 +1272,9 @@ describe("Universal Gateway - Admin Functions Tests", () => {
             .accountsPartial({
                 tssPda,
                 config: configPda,
-                authority: admin.publicKey,
+                authority: operator.publicKey,
             })
-            .signers([admin])
+            .signers([operator])
             .rpc();
 
     });

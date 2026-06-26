@@ -10,10 +10,10 @@ Gas fees are paid in native PC, swapped to the origin chain's gas token PRC20 vi
 
 | Section                       | Description                                           |
 | ----------------------------- | ----------------------------------------------------- |
-| **UGPC_1: Admin Actions**     | `initialize`, `pause`/`unpause`, `setVaultPC`, `setRescueFundsGasLimit` |
+| **UGPC_1: Admin Actions**     | `initialize`, `pause`/`unpause`, `setVaultPC` |
 | **UGPC_2: Outbound TX**       | `sendUniversalTxOutbound`, `rescueFundsOnSourceChain`                    |
 | **UGPC_3: Internal Helpers**  | TX_TYPE inference, fee quoting, swap+burn, PRC20 burn |
-| **UGPC_3: View Functions** *(interface)* | `UNIVERSAL_CORE()` view accessor           |
+| **UGPC_3: View Functions** *(interface)* | `universalCore()` view accessor           |
 
 ---
 
@@ -55,7 +55,7 @@ The gateway infers `TX_TYPE` from two decision variables — users never specify
 
 Fetches gas fee quote and chain metadata from `UniversalCore.getOutboundTxGasAndFees(token, gasLimitUsed)`:
 
-- **`gasLimitUsed`** — if `req.gasLimit == 0`, defaults to `UniversalCore.BASE_GAS_LIMIT()`.
+- **`gasLimitUsed`** — if `req.gasLimit == 0`, UniversalCore resolves it to the per-chain `baseGasLimitByChainNamespace` and returns the resolved value.
 - **`gasToken`** — the PRC20 gas token for the target chain (e.g., pETH for Ethereum).
 - **`gasFee`** — gas cost only: `gasPrice * gasLimit`. Excludes protocol fee.
 - **`protocolFee`** — flat protocol fee in native PC (from `UniversalCore.protocolFeeByToken` mapping).
@@ -127,7 +127,7 @@ The gateway never custodies withdrawn value — burning is the canonical on-chai
 **Execution flow:**
 
 1. **Validate** — `prc20 != address(0)`.
-2. **Resolve chain and quote gas** — calls `IUniversalCore(UNIVERSAL_CORE).getRescueFundsGasLimit(prc20)` which returns: `gasToken`, `gasFee`, `rescueGasLimit`, `gasPrice`, `chainNamespace`.
+2. **Resolve chain and quote gas** — calls `IUniversalCore(universalCore).getRescueFundsGasLimit(prc20)` which returns: `gasToken`, `gasFee`, `rescueGasLimit`, `gasPrice`, `chainNamespace`.
 3. **Swap and burn** — all `msg.value` goes to `_swapAndCollectFees(gasToken, msg.value, gasFee)` (no protocol fee split).
 4. **Emit `RescueFundsOnSourceChain`** — TSS picks this up and calls `Vault.rescueFunds()` on the source chain.
 
@@ -135,10 +135,10 @@ The gateway never custodies withdrawn value — burning is the canonical on-chai
 - No PRC20 burn (tokens are stuck, not held by the user).
 - No protocol fee.
 - No nonce or subTxId.
-- Fixed gas limit via `RESCUE_FUNDS_GAS_LIMIT` (admin-configurable).
+- Gas limit (`rescueGasLimit`) and pricing are sourced from `UniversalCore.getRescueFundsGasLimit(prc20)` — not stored locally on UGPC.
 - Emits `TX_TYPE.RESCUE_FUNDS` (value 4).
 
-**Storage variable:** `RESCUE_FUNDS_GAS_LIMIT` — set via `setRescueFundsGasLimit(uint256)` (admin only, whenNotPaused).
+**Configuration source:** Rescue gas parameters live in `UniversalCore` and are managed there. UGPC has no local storage variable or setter for rescue gas limits.
 
 ---
 
@@ -146,7 +146,7 @@ The gateway never custodies withdrawn value — burning is the canonical on-chai
 
 | Role                 | Permissions                                             |
 | -------------------- | ------------------------------------------------------- |
-| `DEFAULT_ADMIN_ROLE` | `initialize`, `setVaultPC`, `setRescueFundsGasLimit`    |
+| `DEFAULT_ADMIN_ROLE` | `initialize`, `setVaultPC`                              |
 | `PAUSER_ROLE`        | `pause`, `unpause`                                      |
 
 ---
@@ -155,8 +155,7 @@ The gateway never custodies withdrawn value — burning is the canonical on-chai
 
 | Interface        | Function                                                                      | Purpose                                                     |
 | ---------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `IUniversalCore` | `BASE_GAS_LIMIT()`                                                            | Default gas limit when user passes 0                        |
-| `IUniversalCore` | `getOutboundTxGasAndFees(token, gasLimit)`                                    | Quote gas fee, protocol fee, gas price, gas token, chain namespace |
+| `IUniversalCore` | `getOutboundTxGasAndFees(token, gasLimit)`                                    | Quote gas fee, protocol fee, gas price, gas token, chain namespace, gasLimitUsed |
 | `IUniversalCore` | `swapAndBurnGas(gasToken, fee, gasFee, deadline, caller)`                     | Swap PC → gas token, burn gasFee, refund unused PC to caller |
 | `IUniversalCore` | `getRescueFundsGasLimit(prc20)`                                               | Resolve chain and quote gas for `rescueFundsOnSourceChain`  |
 | `IPRC20`         | `transferFrom`, `burn`                                                        | Pull/burn PRC20 tokens                                      |

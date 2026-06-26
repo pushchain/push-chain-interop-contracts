@@ -24,6 +24,7 @@ import {
   USDT_DECIMALS,
   TOKEN_MULTIPLIER,
   COMPUTE_BUFFER,
+  SIGNATURE_FEE_LAMPORTS,
   asLamports,
   asTokenAmount,
   computeDiscriminator,
@@ -106,7 +107,7 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
       gatewayProgram.programId
     );
     [tssPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("tsspda_v2")],
+      [Buffer.from("final_tss_pda")],
       gatewayProgram.programId
     );
     [rateLimitConfigPda] = PublicKey.findProgramAddressSync(
@@ -129,7 +130,7 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
       [usdtTokenRateLimitPda, mockUSDT.mint.publicKey],
     ] as [PublicKey, PublicKey][]) {
       await gatewayProgram.methods
-        .setTokenRateLimit(veryLargeThreshold)
+        .setTokenRateLimit(veryLargeThreshold, true, true)
         .accountsPartial({
           config: configPda,
           tokenRateLimit: pda,
@@ -339,20 +340,15 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
       );
       const actualBalanceChangeWithdraw =
         callerBalanceAfterWithdraw - callerBalanceBeforeWithdraw;
-      // Balance flow (Option 1: relayer pays gateway costs, gets relayer_fee reimbursement):
-      // 1. Caller PAYS for executed_sub_tx account creation: -890k (replay protection account)
-      // 2. Caller PAYS transaction fees: ~-10-20k (Solana network compute fees)
-      // 3. Vault TRANSFERS relayer_fee to caller: relayer_fee = gas_fee (reimbursement for gateway costs)
-      // relayer_fee = executed_sub_tx_rent + compute_buffer
-      // Net expected: -executed_sub_tx_rent - tx_fees + (executed_sub_tx_rent + compute_buffer) ≈ +compute_buffer - tx_fees
-      // Note: CEA is a PDA - caller doesn't pay for its creation (auto-created by Solana on first transfer)
+      // Relayer pays sub_tx_rent upfront; receives gas_used back from vault.
+      // gas_used = SIGNATURE_FEE + sub_tx_rent (SOL path, no ATA).
+      // Net change for relayer ≈ SIGNATURE_FEE - tx_fees ≈ 0.
       const actualRentForExecutedTx = await getExecutedTxRent(
         provider.connection
       );
-      const relayerFeeWithdraw = Number(gasFeeWithdraw);
+      const gasUsedWithdraw = Number(SIGNATURE_FEE_LAMPORTS) + actualRentForExecutedTx;
       const expectedBalanceChangeWithdraw =
-        -actualRentForExecutedTx + relayerFeeWithdraw;
-      // Use tight tolerance (50k) to catch missing relayer_fee reimbursement
+        -actualRentForExecutedTx + gasUsedWithdraw;
       expect(actualBalanceChangeWithdraw).to.be.closeTo(
         expectedBalanceChangeWithdraw,
         50000
@@ -430,7 +426,7 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
 
       // Read CEA balance and calculate fees before building args.
       const ceaBalBeforeP2 = await provider.connection.getBalance(cea);
-      const { gasFee: gasFeeWithdraw } = await calculateSolExecuteFees(
+      const { gasFee: gasFeeWithdraw, gasUsed: gasUsedWithdrawEvent } = await calculateSolExecuteFees(
         provider.connection
       );
       const legacyTopupWithdraw = BigInt(0);
@@ -542,6 +538,14 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
       expect(finalizedEvent.data.gasFee.toString()).to.equal(
         Number(gasFeeWithdraw).toString()
       );
+      // New accounting fields: verify gas_used, gas_to_refund, ata_created
+      expect(finalizedEvent.data.gasUsed.toString()).to.equal(
+        gasUsedWithdrawEvent.toString()
+      );
+      expect(finalizedEvent.data.gasToRefund.toString()).to.equal(
+        (gasFeeWithdraw - gasUsedWithdrawEvent).toString()
+      );
+      expect(finalizedEvent.data.ataCreated).to.equal(false); // SOL path — no ATA
       expect(Buffer.from(finalizedEvent.data.subTxId).toString("hex")).to.equal(
         Buffer.from(txIdWithdraw).toString("hex")
       );
@@ -554,6 +558,149 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
       expect(Buffer.from(finalizedEvent.data.payload).toString("hex")).to.equal(
         withdrawIxData.toString("hex")
       );
+    });
+
+    it("should emit GasAndPayload when amount=0 but payload is non-empty", async () => {
+      const pushAccount = generateSender();
+      // No CEA funding needed — amount=0 means no vault→CEA and no CEA→vault transfer
+
+      const txId = generateTxId();
+      const universalTxId = generateUniversalTxId();
+      const withdrawDiscr = computeDiscriminator("global:send_universal_tx_to_uea");
+      const { gasFee } = await calculateSolExecuteFees(provider.connection);
+
+      const ceaPayload = Buffer.from("deadbeef", "hex");
+      const payloadBuf = Buffer.concat([
+        (() => { const b = Buffer.alloc(4); b.writeUInt32LE(ceaPayload.length); return b; })(),
+        ceaPayload,
+      ]);
+      const revertRecipient = anchor.web3.Keypair.generate().publicKey;
+
+      const withdrawArgs = Buffer.concat([
+        Buffer.alloc(32, 0),        // token = Pubkey::default()
+        Buffer.alloc(8, 0),         // amount = 0
+        payloadBuf,                 // non-empty payload
+        revertRecipient.toBuffer(), // revert_recipient
+      ]);
+      const withdrawIxData = Buffer.concat([withdrawDiscr, withdrawArgs]);
+
+      const sig = await signTssMessage({
+        instruction: TssInstruction.Execute,
+        amount: BigInt(0),
+        chainId: (await gatewayProgram.account.tssPda.fetch(tssPda)).chainId,
+        additional: buildExecuteAdditionalData(
+          new Uint8Array(universalTxId),
+          new Uint8Array(txId),
+          gatewayProgram.programId,
+          new Uint8Array(pushAccount),
+          [],
+          withdrawIxData,
+          gasFee,
+        ),
+      });
+
+      const tx = await finalizeUniversalTx({
+        instructionId: 2,
+        subTxId: txId,
+        universalTxId,
+        amount: new anchor.BN(0),
+        pushAccount,
+        writableFlags: accountsToWritableFlagsOnly([]),
+        ixData: withdrawIxData,
+        gasFee: new anchor.BN(Number(gasFee)),
+        sig,
+        caller: admin.publicKey,
+        destinationProgram: gatewayProgram.programId,
+        rateLimitConfig: rateLimitConfigPda,
+        tokenRateLimit: nativeSolTokenRateLimitPda,
+      })
+        .signers([admin])
+        .rpc();
+
+      let txDetails = null;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        txDetails = await provider.connection.getTransaction(tx, {
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: 0,
+        });
+        if (txDetails) break;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      expect(txDetails, "getTransaction returned null after retries").to.exist;
+
+      const eventCoder = new anchor.BorshEventCoder(gatewayProgram.idl);
+      const events = (txDetails.meta?.logMessages ?? [])
+        .filter((log) => log.includes("Program data:"))
+        .map((log) => {
+          try { return eventCoder.decode(log.split("Program data: ")[1]); } catch { return null; }
+        })
+        .filter((e) => e !== null);
+
+      const universalTxEvent = events.find((e) => e.name === "universalTx");
+      expect(universalTxEvent, "UniversalTx event not found").to.exist;
+      expect(
+        universalTxEvent.data.txType.gasAndPayload !== undefined,
+        "txType should be GasAndPayload"
+      ).to.be.true;
+      expect(universalTxEvent.data.amount.toString()).to.equal("0");
+      expect(universalTxEvent.data.fromCea, "from_cea should be true").to.be.true;
+      expect(Buffer.from(universalTxEvent.data.payload).toString("hex")).to.equal(
+        ceaPayload.toString("hex")
+      );
+    });
+
+    it("rejects CEA → UEA self-call when both amount=0 and payload empty", async () => {
+      const pushAccount = generateSender();
+      const txId = generateTxId();
+      const universalTxId = generateUniversalTxId();
+      const withdrawDiscr = computeDiscriminator("global:send_universal_tx_to_uea");
+      const { gasFee } = await calculateSolExecuteFees(provider.connection);
+
+      const withdrawArgs = Buffer.concat([
+        Buffer.alloc(32, 0),                                      // token = Pubkey::default()
+        Buffer.alloc(8, 0),                                       // amount = 0
+        Buffer.from([0, 0, 0, 0]),                                // empty payload
+        anchor.web3.Keypair.generate().publicKey.toBuffer(),      // valid revert_recipient
+      ]);
+      const withdrawIxData = Buffer.concat([withdrawDiscr, withdrawArgs]);
+
+      const sig = await signTssMessage({
+        instruction: TssInstruction.Execute,
+        amount: BigInt(0),
+        chainId: (await gatewayProgram.account.tssPda.fetch(tssPda)).chainId,
+        additional: buildExecuteAdditionalData(
+          new Uint8Array(universalTxId),
+          new Uint8Array(txId),
+          gatewayProgram.programId,
+          new Uint8Array(pushAccount),
+          [],
+          withdrawIxData,
+          gasFee,
+        ),
+      });
+
+      try {
+        await finalizeUniversalTx({
+          instructionId: 2,
+          subTxId: txId,
+          universalTxId,
+          amount: new anchor.BN(0),
+          pushAccount,
+          writableFlags: accountsToWritableFlagsOnly([]),
+          ixData: withdrawIxData,
+          gasFee: new anchor.BN(Number(gasFee)),
+          sig,
+          caller: admin.publicKey,
+          destinationProgram: gatewayProgram.programId,
+          rateLimitConfig: rateLimitConfigPda,
+          tokenRateLimit: nativeSolTokenRateLimitPda,
+        })
+          .signers([admin])
+          .rpc();
+        expect.fail("Should have thrown InvalidInput for zero amount and empty payload");
+      } catch (err: any) {
+        expect(err.toString()).to.include("InvalidInput");
+      }
     });
 
     it("rejects CEA → UEA self-call with zero revert_recipient", async () => {
@@ -704,22 +851,17 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
       );
       const callerBalanceChangeFund =
         callerBalanceAfterFund - callerBalanceBeforeFund;
-      // Option 1: Relayer pays gateway costs, gets relayer_fee reimbursement
-      // Caller pays for:
-      // 1. executed_sub_tx account rent (~890k)
-      // 2. CEA ATA rent (if it doesn't exist - caller is payer per line 465 in execute.rs) (~2M)
-      // 3. Transaction fees (varies by transaction size)
-      // Caller receives: relayer_fee = gas_fee as reimbursement
+      // Relayer pays sub_tx_rent + ata_rent (if created) upfront; receives gas_used back.
+      // gas_used = SIGNATURE_FEE + sub_tx_rent + ata_rent; net ≈ SIGNATURE_FEE - tx_fees.
       const actualRentForExecutedTx = await getExecutedTxRent(
         provider.connection
       );
       const actualRentForCeaAta = ceaAtaExistedBefore
         ? 0
         : await getTokenAccountRent(provider.connection);
-      const relayerFeeFund = Number(gasFeeLamports);
-      // Expected: -executed_sub_tx_rent - cea_ata_rent (if created) + relayer_fee - transaction_fees
+      const gasUsedFund = Number(SIGNATURE_FEE_LAMPORTS) + actualRentForExecutedTx + actualRentForCeaAta;
       const expectedBalanceChangeFund =
-        -actualRentForExecutedTx - actualRentForCeaAta + relayerFeeFund;
+        -actualRentForExecutedTx - actualRentForCeaAta + gasUsedFund;
       expect(callerBalanceChangeFund).to.be.closeTo(
         expectedBalanceChangeFund,
         100000
@@ -803,17 +945,12 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
         await provider.connection.getBalance(admin.publicKey);
       const callerBalanceChangeWithdrawSpl =
         callerBalanceAfterWithdrawSpl - callerBalanceBeforeWithdrawSpl;
-      // Option 1: Relayer pays gateway costs, gets relayer_fee reimbursement
-      // Caller pays for:
-      // 1. executed_sub_tx account rent (~890k)
-      // 2. Transaction fees (varies by transaction size)
-      // Caller receives: relayer_fee = gas_fee (reimbursement for gateway costs)
-      // relayer_fee = executed_sub_tx_rent + compute_buffer
-      // Reuse actualRentForExecutedTx from above (same test scope)
-      const relayerFeeWithdrawSpl = Number(gasFeeWithdrawSpl);
-      // Expected: -executed_sub_tx_rent + relayer_fee - transaction_fees
+      // Relayer pays sub_tx_rent upfront; receives gas_used back (ATA already exists).
+      // gas_used = SIGNATURE_FEE + sub_tx_rent; net ≈ SIGNATURE_FEE - tx_fees.
+      // Reuse actualRentForExecutedTx from above (same test scope).
+      const gasUsedWithdrawSpl = Number(SIGNATURE_FEE_LAMPORTS) + actualRentForExecutedTx;
       const expectedBalanceChangeWithdrawSpl =
-        -actualRentForExecutedTx + relayerFeeWithdrawSpl;
+        -actualRentForExecutedTx + gasUsedWithdrawSpl;
       expect(callerBalanceChangeWithdrawSpl).to.be.closeTo(
         expectedBalanceChangeWithdrawSpl,
         15000

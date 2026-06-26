@@ -3,6 +3,7 @@ use crate::state::*;
 use crate::utils::*;
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
+use anchor_spl::associated_token::spl_associated_token_account;
 use anchor_spl::token::{self, spl_token, Token, Transfer};
 use pyth_solana_receiver_sdk::price_update::PriceUpdateV2;
 // =========================
@@ -25,22 +26,22 @@ pub fn send_universal_tx(
         GatewayError::InsufficientBalance
     );
 
-    // Collect protocol fee first so all downstream routing sees post-fee native amount.
-    let adjusted_native_amount = collect_protocol_fee(&mut ctx, native_amount)?;
+    // Collect inbound fee first so all downstream routing sees post-fee native amount.
+    let adjusted_native_amount = collect_inbound_fee(&mut ctx, native_amount)?;
 
     let tx_type = fetch_tx_type(&req, adjusted_native_amount)?;
     route_universal_tx(&mut ctx, req, adjusted_native_amount, tx_type)
 }
 
-fn collect_protocol_fee(ctx: &mut Context<SendUniversalTx>, native_amount: u64) -> Result<u64> {
-    let fee_lamports = ctx.accounts.fee_vault.protocol_fee_lamports;
+fn collect_inbound_fee(ctx: &mut Context<SendUniversalTx>, native_amount: u64) -> Result<u64> {
+    let fee_lamports = ctx.accounts.fee_vault.inbound_fee_lamports;
     if fee_lamports == 0 {
         return Ok(native_amount);
     }
 
     require!(
         native_amount >= fee_lamports,
-        GatewayError::InsufficientProtocolFee
+        GatewayError::InsufficientInboundFee
     );
 
     // Transfer fee from user → fee_vault (keeps bridge vault strictly 1:1 backed)
@@ -55,7 +56,7 @@ fn collect_protocol_fee(ctx: &mut Context<SendUniversalTx>, native_amount: u64) 
 
     let adjusted_native_amount = native_amount - fee_lamports;
 
-    emit!(ProtocolFeeCollected {
+    emit!(InboundFeeCollected {
         payer: ctx.accounts.user.key(),
         amount_lamports: fee_lamports,
         native_amount_before: native_amount,
@@ -126,7 +127,6 @@ fn fetch_tx_type(req: &UniversalTxRequest, native_amount: u64) -> Result<TxType>
 /// @notice Internal helper function to deposit for Instant TX (GAS route).
 /// @dev    Handles rate-limit checks for Fee Abstraction Tx Route.
 ///         - Validates revert instruction recipient
-///         - Validates payload: GAS must have empty payload, GAS_AND_PAYLOAD must have non-empty payload
 ///         - Supports payload-only execution (gas_amount == 0) for EVM V0 parity
 ///         - Enforces USD caps ($1-$10) and block-based USD cap via Pyth oracle
 ///         - Transfers native SOL to vault (recipient as Pubkey::default() → UEA)
@@ -144,15 +144,6 @@ fn send_tx_with_gas_route(
         GatewayError::InvalidTxType
     );
 
-    // NOTE: Payload validation removed for testnet (matching EVM V0)
-    // V0 has these validations commented out (lines 1271-1277)
-    // if tx_type == TxType::GasAndPayload {
-    //     require!(!payload.is_empty(), GatewayError::InvalidInput);
-    // }
-    // if tx_type == TxType::Gas {
-    //     require!(payload.is_empty(), GatewayError::InvalidInput);
-    // }
-
     require!(
         *revert_recipient != Pubkey::default(),
         GatewayError::InvalidRecipient
@@ -161,10 +152,7 @@ fn send_tx_with_gas_route(
     // Payload-only execution (gas_amount == 0) - EVM V0 parity
     // User already has UEA with gas on Push Chain, just execute payload
     if gas_amount == 0 {
-        require!(
-            matches!(tx_type, TxType::GasAndPayload | TxType::FundsAndPayload),
-            GatewayError::InvalidAmount
-        );
+        require!(tx_type == TxType::GasAndPayload, GatewayError::InvalidAmount);
 
         emit!(UniversalTx {
             sender: ctx.accounts.user.key(),
@@ -183,9 +171,8 @@ fn send_tx_with_gas_route(
 
     // Performs rate-limit checks and handle deposit
     // USD caps: min $1, max $10 (enforced via Pyth oracle)
-    check_usd_caps(&ctx.accounts.config, gas_amount, &ctx.accounts.price_update)?;
-    let price_data = calculate_sol_price(&ctx.accounts.price_update)?;
-    let usd_amount = calculate_usd_amount(gas_amount, &price_data)?;
+    let usd_amount =
+        check_usd_caps(&ctx.accounts.config, gas_amount, &ctx.accounts.price_update)?;
     // Block-based USD cap: per-slot limit (disabled if block_usd_cap == 0)
     check_block_usd_cap(&mut ctx.accounts.rate_limit_config, usd_amount)?;
 
@@ -228,11 +215,6 @@ fn send_tx_with_funds_route(
         GatewayError::InvalidRecipient
     );
     require!(req.amount > 0, GatewayError::InvalidAmount);
-    if tx_type == TxType::Funds {
-        require!(req.payload.is_empty(), GatewayError::InvalidInput);
-    } else {
-        require!(!req.payload.is_empty(), GatewayError::InvalidInput);
-    }
 
     if req.token == Pubkey::default() {
         handle_native_funds_route(ctx, &req, native_amount, tx_type)?;
@@ -348,6 +330,12 @@ fn deposit_spl_to_vault(ctx: &Context<SendUniversalTx>, token: Pubkey, amount: u
     let parsed = parse_token_account(&gateway_token_account.to_account_info())?;
     require!(parsed.owner == ctx.accounts.vault.key(), GatewayError::InvalidOwner);
     require!(parsed.mint == token, GatewayError::InvalidMint);
+    let expected_gateway_ata =
+        spl_associated_token_account::get_associated_token_address(&ctx.accounts.vault.key(), &token);
+    require!(
+        gateway_token_account.key() == expected_gateway_ata,
+        GatewayError::InvalidAccount
+    );
 
     let cpi_ctx = CpiContext::new(
         ctx.accounts.token_program.to_account_info(),

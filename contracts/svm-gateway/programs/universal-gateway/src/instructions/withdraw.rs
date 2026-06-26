@@ -105,81 +105,79 @@ pub fn send_universal_tx_to_uea(
         .map_err(|_| error!(GatewayError::InvalidInput))?;
 
     require!(args.token == token, GatewayError::InvalidMint);
-    require!(args.amount > 0, GatewayError::InvalidAmount);
-    require!(args.revert_recipient != Pubkey::default(), GatewayError::InvalidRecipient);
-
-    if token == Pubkey::default() {
-        require!(
-            args.amount <= ctx.accounts.cea_authority.lamports(),
-            GatewayError::InsufficientBalance
-        );
-    } else {
-        let cea_ata = ctx
-            .accounts
-            .cea_ata
-            .as_ref()
-            .ok_or(error!(GatewayError::InvalidAccount))?;
-
-        let parsed_cea_ata = parse_token_account(&cea_ata.to_account_info())?;
-        require!(
-            args.amount <= parsed_cea_ata.amount,
-            GatewayError::InsufficientBalance
-        );
-    }
+    // At least one of amount or payload must be present
+    require!(
+        args.amount > 0 || !args.payload.is_empty(),
+        GatewayError::InvalidInput
+    );
+    require!(
+        args.revert_recipient != Pubkey::default(),
+        GatewayError::InvalidRecipient
+    );
 
     let withdraw_amount = args.amount;
 
-    let rl_config = ctx
-        .accounts
-        .rate_limit_config
-        .as_ref()
-        .ok_or(error!(GatewayError::InvalidAccount))?;
-    let token_rate_limit = ctx
-        .accounts
-        .token_rate_limit
-        .as_mut()
-        .ok_or(error!(GatewayError::InvalidAccount))?;
-
-    validate_token_and_consume_rate_limit(
-        token_rate_limit,
-        token,
-        withdraw_amount as u128,
-        rl_config,
-    )?;
-
-    if args.token == Pubkey::default() {
-        pda_system_transfer(
-            &ctx.accounts.cea_authority.to_account_info(),
-            &ctx.accounts.vault_sol.to_account_info(),
-            &ctx.accounts.system_program.to_account_info(),
-            withdraw_amount,
-            cea_seeds,
-        )?;
-    } else {
-        let vault_ata = ctx
+    if withdraw_amount > 0 {
+        let rl_config = ctx
             .accounts
-            .vault_ata
+            .rate_limit_config
             .as_ref()
             .ok_or(error!(GatewayError::InvalidAccount))?;
-        let cea_ata = ctx
+        let token_rate_limit = ctx
             .accounts
-            .cea_ata
-            .as_ref()
+            .token_rate_limit
+            .as_mut()
             .ok_or(error!(GatewayError::InvalidAccount))?;
 
-        pda_spl_transfer(
-            &cea_ata.to_account_info(),
-            &vault_ata.to_account_info(),
-            &ctx.accounts.cea_authority.to_account_info(),
-            withdraw_amount,
-            cea_seeds,
+        validate_token_and_consume_rate_limit(
+            token_rate_limit,
+            token,
+            withdraw_amount as u128,
+            rl_config,
         )?;
+
+        if token == Pubkey::default() {
+            require!(
+                withdraw_amount <= ctx.accounts.cea_authority.lamports(),
+                GatewayError::InsufficientBalance
+            );
+            pda_system_transfer(
+                &ctx.accounts.cea_authority.to_account_info(),
+                &ctx.accounts.vault_sol.to_account_info(),
+                &ctx.accounts.system_program.to_account_info(),
+                withdraw_amount,
+                cea_seeds,
+            )?;
+        } else {
+            let cea_ata = ctx
+                .accounts
+                .cea_ata
+                .as_ref()
+                .ok_or(error!(GatewayError::InvalidAccount))?;
+            let vault_ata = ctx
+                .accounts
+                .vault_ata
+                .as_ref()
+                .ok_or(error!(GatewayError::InvalidAccount))?;
+            let parsed_cea_ata = parse_token_account(&cea_ata.to_account_info())?;
+            require!(
+                withdraw_amount <= parsed_cea_ata.amount,
+                GatewayError::InsufficientBalance
+            );
+            pda_spl_transfer(
+                &cea_ata.to_account_info(),
+                &vault_ata.to_account_info(),
+                &ctx.accounts.cea_authority.to_account_info(),
+                withdraw_amount,
+                cea_seeds,
+            )?;
+        }
     }
 
-    let tx_type = if args.payload.is_empty() {
-        TxType::Funds
-    } else {
-        TxType::FundsAndPayload
+    let tx_type = match (withdraw_amount > 0, args.payload.is_empty()) {
+        (true, true) => TxType::Funds,
+        (true, false) => TxType::FundsAndPayload,
+        (false, _) => TxType::GasAndPayload, // payload-only, no funds transferred
     };
 
     emit!(UniversalTx {

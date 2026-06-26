@@ -8,7 +8,7 @@ import { PublicKey, Keypair } from "@solana/web3.js";
 
 // Keypairs (initialized once in setup.test.ts)
 export let admin: Keypair | null = null;
-export let tssAddress: Keypair | null = null;
+export let operator: Keypair | null = null;
 export let pauser: Keypair | null = null;
 export let counterAuthority: Keypair | null = null;
 export let user1: Keypair | null = null;
@@ -28,8 +28,8 @@ export function setAdmin(keypair: Keypair) {
     admin = keypair;
 }
 
-export function setTssAddress(keypair: Keypair) {
-    tssAddress = keypair;
+export function setOperator(keypair: Keypair) {
+    operator = keypair;
 }
 
 export function setPauser(keypair: Keypair) {
@@ -70,9 +70,9 @@ export function getAdmin(): Keypair {
     return admin;
 }
 
-export function getTssAddress(): Keypair {
-    if (!tssAddress) throw new Error("TSS address not initialized - did setup.test.ts run?");
-    return tssAddress;
+export function getOperator(): Keypair {
+    if (!operator) throw new Error("Operator not initialized - did setup.test.ts run?");
+    return operator;
 }
 
 export function getPauser(): Keypair {

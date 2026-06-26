@@ -3,10 +3,6 @@ use crate::state::{Config, FEED_ID};
 use anchor_lang::prelude::*;
 use pyth_solana_receiver_sdk::price_update::{get_feed_id_from_hex, PriceUpdateV2};
 
-/// Maximum allowed age for Pyth price updates used by inbound USD-cap checks.
-/// Tune before mainnet if tighter freshness is required.
-const MAX_PRICE_AGE_SECONDS: u64 = 3_600; // 1 hour
-
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct PriceData {
     pub price: i64,        // Raw price from Pyth
@@ -15,11 +11,14 @@ pub struct PriceData {
     pub confidence: u64,   // Price confidence interval
 }
 
-pub fn calculate_sol_price(price_update: &Account<PriceUpdateV2>) -> Result<PriceData> {
+pub fn calculate_sol_price(
+    price_update: &Account<PriceUpdateV2>,
+    max_age_seconds: u64,
+) -> Result<PriceData> {
     let feed_id = get_feed_id_from_hex(FEED_ID).map_err(|_| error!(GatewayError::InvalidPrice))?;
     let clock = Clock::get()?;
     let price = price_update
-        .get_price_no_older_than(&clock, MAX_PRICE_AGE_SECONDS, &feed_id)
+        .get_price_no_older_than(&clock, max_age_seconds, &feed_id)
         .map_err(|_| error!(GatewayError::InvalidPrice))?;
 
     require!(price.price > 0, GatewayError::InvalidPrice);
@@ -70,8 +69,10 @@ pub fn check_usd_caps(
     config: &Config,
     lamports: u64,
     price_update: &Account<PriceUpdateV2>,
-) -> Result<()> {
-    let price_data = calculate_sol_price(price_update)?;
+) -> Result<u128> {
+    // Fallback to 60 s when the stored value is 0 (existing accounts before the field was added).
+    let max_age = if config.pyth_max_age_seconds == 0 { 60 } else { config.pyth_max_age_seconds };
+    let price_data = calculate_sol_price(price_update, max_age)?;
     if config.pyth_confidence_threshold > 0 {
         require!(
             price_data.confidence <= config.pyth_confidence_threshold,
@@ -87,12 +88,11 @@ pub fn check_usd_caps(
         usd_amount <= config.max_cap_universal_tx_usd,
         GatewayError::AboveMaxCap
     );
-    Ok(())
+    Ok(usd_amount)
 }
 
-/// View function for SOL price (locker-compatible)
-/// Anyone can fetch SOL price in USD
-/// This is the core utility function - the Anchor account struct wrapper is in instructions/price.rs
+/// View function for SOL price (display only — not part of cap enforcement).
+/// Uses a 10-hour window to tolerate devnet feed staleness.
 pub fn get_sol_price(price_update: &Account<PriceUpdateV2>) -> Result<PriceData> {
-    calculate_sol_price(price_update)
+    calculate_sol_price(price_update, 36_000)
 }

@@ -30,7 +30,7 @@ contract GatewayGlobalRateLimitTest is BaseTest {
     MockERC20 tokenB;
 
     event TokenLimitThresholdUpdated(address indexed token, uint256 newThreshold);
-    event EpochDurationUpdated(uint256 oldDuration, uint256 newDuration);
+    event EpochDurationUpdated(uint256 oldDuration, uint256 newDuration, uint64 epochIndexAtChange);
 
     function setUp() public override {
         super.setUp();
@@ -151,9 +151,10 @@ contract GatewayGlobalRateLimitTest is BaseTest {
     function testUpdateEpochDuration() public {
         uint256 oldDuration = gateway.epochDurationSec();
         uint256 newDuration = 12 hours;
+        uint64 expectedEpochIndex = uint64(block.timestamp / oldDuration);
 
         vm.expectEmit(true, true, false, true);
-        emit EpochDurationUpdated(oldDuration, newDuration);
+        emit EpochDurationUpdated(oldDuration, newDuration, expectedEpochIndex);
 
         vm.prank(admin);
         gateway.updateEpochDuration(newDuration);
@@ -936,7 +937,7 @@ contract GatewayGlobalRateLimitTest is BaseTest {
         gateway.setTokenLimitThresholds(tokens, thresholds);
 
         // Unpause the contract
-        vm.prank(pauser);
+        vm.prank(admin);
         gateway.unpause();
     }
 
@@ -973,7 +974,7 @@ contract GatewayGlobalRateLimitTest is BaseTest {
         gateway.setTokenLimitThresholds(tokens, thresholds);
 
         // Unpause the contract
-        vm.prank(pauser);
+        vm.prank(admin);
         gateway.unpause();
     }
 
@@ -991,7 +992,7 @@ contract GatewayGlobalRateLimitTest is BaseTest {
         gateway.updateEpochDuration(newDuration);
 
         // Unpause the contract
-        vm.prank(pauser);
+        vm.prank(admin);
         gateway.unpause();
     }
 
@@ -1023,7 +1024,7 @@ contract GatewayGlobalRateLimitTest is BaseTest {
         vm.stopPrank();
 
         // Unpause the contract
-        vm.prank(pauser);
+        vm.prank(admin);
         gateway.unpause();
 
         // Now sending funds should work
@@ -1492,10 +1493,11 @@ contract GatewayGlobalRateLimitTest is BaseTest {
         // Get current epoch duration
         uint256 oldDuration = gateway.epochDurationSec();
         uint256 newDuration = 12 hours;
+        uint64 expectedEpochIndex = uint64(block.timestamp / oldDuration);
 
         // Use vm.expectEmit to verify events
         vm.expectEmit(true, true, false, true);
-        emit EpochDurationUpdated(oldDuration, newDuration);
+        emit EpochDurationUpdated(oldDuration, newDuration, expectedEpochIndex);
 
         // Call the function that should emit the event
         vm.prank(admin);
@@ -1615,6 +1617,45 @@ contract GatewayGlobalRateLimitTest is BaseTest {
         (uint256 used, uint256 remaining) = gateway.currentTokenUsage(address(tokenA));
         assertEq(used, 0, "Used amount for zero threshold should be 0");
         assertEq(remaining, 0, "Remaining amount for zero threshold should be 0");
+    }
+
+    /// @dev Regression test: changing epochDuration shifts the epoch index, causing all per-token usage counters
+    ///      to silently reset on the next consumption — full throughput is restored immediately.
+    ///      The reset only happens when the old and new epoch indices differ; we warp to 7 hours
+    ///      so the 6h epoch index (1) != the 12h epoch index (0).
+    function testUpdateEpochDuration_ImplicitReset_RestoredFullThroughput() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(tokenA);
+        uint256[] memory thresholds = new uint256[](1);
+        thresholds[0] = TOKEN_A_THRESHOLD;
+
+        vm.startPrank(admin);
+        gateway.setTokenLimitThresholds(tokens, thresholds);
+        vm.stopPrank();
+
+        // Warp to 7 hours: epoch(6h)=1, epoch(12h)=0 — guaranteed mismatch after duration change
+        vm.warp(7 hours);
+
+        tokenA.mint(user1, TOKEN_A_THRESHOLD);
+        vm.prank(user1);
+        tokenA.approve(address(gateway), type(uint256).max);
+
+        // Consume all available throughput in the current epoch
+        uint256 sendAmount = TOKEN_A_THRESHOLD;
+        vm.prank(user1);
+        gateway.sendUniversalTx{ value: 0 }(_buildFundsTxRequest(address(tokenA), sendAmount, user1));
+
+        (uint256 usedBefore,) = gateway.currentTokenUsage(address(tokenA));
+        assertEq(usedBefore, TOKEN_A_THRESHOLD, "Should have consumed full threshold");
+
+        // Changing epoch duration shifts the epoch index — all stored epochs become stale
+        vm.prank(admin);
+        gateway.updateEpochDuration(12 hours);
+
+        // Usage is now reported as 0 — implicit reset occurred because epoch(7h/12h)=0 != stored 1
+        (uint256 usedAfter, uint256 remainingAfter) = gateway.currentTokenUsage(address(tokenA));
+        assertEq(usedAfter, 0, "Usage should be reset after epoch duration change");
+        assertEq(remainingAfter, TOKEN_A_THRESHOLD, "Full throughput should be available after implicit reset");
     }
 
     function testCurrentTokenUsageWithZeroEpochDurationReverts() public {

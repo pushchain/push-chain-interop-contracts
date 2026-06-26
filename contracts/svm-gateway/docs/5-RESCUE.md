@@ -36,9 +36,11 @@ The funds transfer comes from the bridge `Vault`. The UV reimbursement comes fro
 
 ```
 PREFIX = b"PUSH_CHAIN_SVM"
-message = PREFIX || instruction_id (1 byte) || chain_id || amount (8 bytes BE) || additional_data
+message = PREFIX || instruction_id (1 byte) || chain_id || deadline (8 bytes i64 BE) || amount (8 bytes u64 BE) || additional_data
 hash = keccak256(message)
 ```
+
+`deadline` is a Unix timestamp (seconds). The program rejects execution if `Clock::unix_timestamp > deadline`.
 
 ### SOL Rescue (instruction_id=4) — additional_data
 ```
@@ -49,8 +51,6 @@ sub_tx_id[32] | universal_tx_id[32] | recipient[32] | gas_fee (8 BE)
 ```
 sub_tx_id[32] | universal_tx_id[32] | mint[32] | recipient[32] | gas_fee (8 BE)
 ```
-
-`PREFIX = b"PUSH_CHAIN_SVM"`
 
 **Reference:** `buildRescueAdditionalData()` in `tests/helpers/tss.ts`
 
@@ -76,8 +76,8 @@ sub_tx_id[32] | universal_tx_id[32] | mint[32] | recipient[32] | gas_fee (8 BE)
 For SOL, pass `token_vault`, `recipient_token_account`, `token_mint`, `token_program` as `null`.
 
 **Cross-account constraints (SPL):**
+- `token_vault` must be the canonical ATA for `(vault, token_mint)`
 - `token_vault.mint == token_mint.key()`
-- `token_vault.owner == vault.key()`
 - `recipient_token_account.mint == token_mint.key()`
 - `recipient_token_account.owner == recipient.key()`
 
@@ -107,7 +107,7 @@ FundsRescued {
 }
 ```
 
-### `ProtocolFeeReimbursed`
+### `InboundFeeReimbursed`
 Emitted after UV gas reimbursement from `FeeVault`.
 
 ---

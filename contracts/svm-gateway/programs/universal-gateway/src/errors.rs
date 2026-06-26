@@ -85,9 +85,24 @@ pub enum GatewayError {
     #[msg("Invalid instruction")]
     InvalidInstruction,
 
-    #[msg("Insufficient protocol fee")]
-    InsufficientProtocolFee,
+    #[msg("Insufficient inbound fee")]
+    InsufficientInboundFee,
 
     #[msg("Fee vault has insufficient balance to reimburse relayer")]
     InsufficientFeePool,
+
+    #[msg("gas_fee is below the minimum required gas_used for this finalize")]
+    InsufficientGasBudget,
+
+    #[msg("Invalid ix_data hash")]
+    InvalidIxDataHash,
+
+    #[msg("ix_data cannot be empty")]
+    EmptyIxData,
+
+    #[msg("Stored ix_data account is not closable by caller")]
+    StoredIxDataNotClosable,
+
+    #[msg("TSS signature has expired (current time is past deadline)")]
+    SignatureExpired,
 }

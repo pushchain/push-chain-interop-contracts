@@ -61,7 +61,7 @@ contract OracleTest is BaseTest {
 
         // Set Uniswap V3 addresses
         vm.prank(admin);
-        gateway.setRouters(0x1F98431c8aD98523631AE4a59f267346ea31F984, 0xE592427A0AEce92De3Edee1F18E0157C05861564);
+        gateway.updateUniswapV3Config(0x1F98431c8aD98523631AE4a59f267346ea31F984, 0xE592427A0AEce92De3Edee1F18E0157C05861564);
         console.log("Uniswap V3 addresses set");
         console.log("========================");
     }
@@ -146,7 +146,7 @@ contract OracleTest is BaseTest {
     }
 
     // ============================================================
-    // 3) _checkUSDCaps: enforce $1-$10 inclusive using live price
+    // 3) checkUSDCaps: enforce $1-$10 inclusive using live price
     // ============================================================
     function test_checkUSDCaps_BoundsAndOffByOne() public {
         console.log("\n=== TEST: USD Caps & ETH Bounds ===");
@@ -192,16 +192,16 @@ contract OracleTest is BaseTest {
         console.log("Max quotes to: $%d.%02d", maxUsdVerify / 1e18, (maxUsdVerify % 1e18) / 1e16);
 
         // Test the safe boundaries
-        gateway._checkUSDCaps(adjustedMinEth);
+        gateway.checkUSDCaps(adjustedMinEth);
         console.log("Safe min boundary check passed");
-        gateway._checkUSDCaps(maxEth);
+        gateway.checkUSDCaps(maxEth);
         console.log("Max boundary check passed");
 
         // Below-min should revert (if minEth > 0; if it were 0, caps would be nonsensical)
         if (minEth > 0) {
             console.log("\nTesting below-minimum (should revert)...");
             vm.expectRevert(Errors.InvalidAmount.selector);
-            gateway._checkUSDCaps(minEth - 1);
+            gateway.checkUSDCaps(minEth - 1);
             console.log("Below-min correctly reverted");
         }
 
@@ -210,7 +210,7 @@ contract OracleTest is BaseTest {
         uint256 overMaxEth = (maxEth * 11) / 10; // 110% of max should definitely be over $10
         console.log("Testing ETH amount 110%% of max: %d wei", overMaxEth);
         vm.expectRevert(Errors.InvalidAmount.selector);
-        gateway._checkUSDCaps(overMaxEth);
+        gateway.checkUSDCaps(overMaxEth);
         console.log("Above-max correctly reverted");
 
         console.log("\nAll USD caps tests passed!");
@@ -371,10 +371,10 @@ contract OracleTest is BaseTest {
         uint256 amount = 1 ether;
 
         // Fund WETH contract with ETH
-        vm.deal(address(gateway.WETH()), amount);
+        vm.deal(address(gateway.weth()), amount);
 
         // Simulate WETH unwrapping by calling receive directly
-        vm.prank(address(gateway.WETH()));
+        vm.prank(address(gateway.weth()));
         (bool success,) = address(gateway).call{ value: amount }("");
         assertTrue(success, "WETH unwrapping should succeed");
     }
@@ -406,7 +406,7 @@ contract OracleTest is BaseTest {
             10e18, // maxCapUsd
             address(0), // factory = address(0)
             address(0), // router = address(0)
-            address(gateway.WETH())
+            address(gateway.weth())
         );
         TransparentUpgradeableProxy proxy =
             new TransparentUpgradeableProxy(address(impl), admin, initData);

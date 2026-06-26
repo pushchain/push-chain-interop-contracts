@@ -20,67 +20,84 @@ import { TX_TYPE } from "./libraries/Types.sol";
 import { UniversalOutboundTxRequest } from "./libraries/TypesUGPC.sol";
 
 
-import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import { AccessControlUpgradeable } from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import { AccessControlDefaultAdminRulesUpgradeable } from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
 import { ReentrancyGuardUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 contract UniversalGatewayPC is
-    Initializable,
-    AccessControlUpgradeable,
+    AccessControlDefaultAdminRulesUpgradeable,
     ReentrancyGuardUpgradeable,
     PausableUpgradeable,
     IUniversalGatewayPC
 {
+    bytes32 public constant ROLE_MANAGER_ROLE = keccak256("ROLE_MANAGER_ROLE");
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
-    address public UNIVERSAL_CORE;
+    /// @notice MUTABLE — admin-updatable via updateUniversalCore.
+    address public universalCore;
+    /// @notice MUTABLE — admin-updatable via setVaultPC.
+    IVaultPC public vaultPC;
+    uint256 public nonce;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
-    IVaultPC public VAULT_PC;
-    uint256 public nonce;
     // ==============================
     //    UGPC_1: ADMIN ACTIONS
     // ==============================
 
     /// @param admin            Address of the admin.
     /// @param pauser           Address of the pauser.
-    /// @param universalCore    Address of the UniversalCore.
-    /// @param vaultPC          Address of the VaultPC.
-    function initialize(address admin, address pauser, address universalCore, address vaultPC) external initializer {
-        if (admin == address(0) || pauser == address(0) || universalCore == address(0) || vaultPC == address(0)) {
+    /// @param _universalCore   Address of the UniversalCore.
+    /// @param _vaultPC         Address of the VaultPC.
+    function initialize(address admin, address pauser, address _universalCore, address _vaultPC) external initializer {
+        if (admin == address(0) || pauser == address(0) || _universalCore == address(0) || _vaultPC == address(0)) {
             revert Errors.ZeroAddress();
         }
 
-        __AccessControl_init();
         __ReentrancyGuard_init();
         __Pausable_init();
+        __AccessControlDefaultAdminRules_init(1 days, admin);
 
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _setRoleAdmin(OPERATOR_ROLE, ROLE_MANAGER_ROLE);
+        _setRoleAdmin(PAUSER_ROLE, ROLE_MANAGER_ROLE);
+
+        _grantRole(ROLE_MANAGER_ROLE, admin);
+        _grantRole(OPERATOR_ROLE, admin);
         _grantRole(PAUSER_ROLE, pauser);
 
-        UNIVERSAL_CORE = universalCore;
-        VAULT_PC = IVaultPC(vaultPC);
+        universalCore = _universalCore;
+        vaultPC = IVaultPC(_vaultPC);
     }
 
     function pause() external onlyRole(PAUSER_ROLE) whenNotPaused {
         _pause();
     }
 
-    function unpause() external onlyRole(PAUSER_ROLE) whenPaused {
+    function unpause() external onlyRole(OPERATOR_ROLE) whenPaused {
         _unpause();
     }
 
     /// @notice                Sets the VaultPC address.
-    /// @param vaultPC         Address of the new VaultPC.
-    function setVaultPC(address vaultPC) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
-        if (vaultPC == address(0)) revert Errors.ZeroAddress();
-        address oldVaultPC = address(VAULT_PC);
-        VAULT_PC = IVaultPC(vaultPC);
-        emit VaultPCUpdated(oldVaultPC, vaultPC);
+    /// @param _vaultPC        Address of the new VaultPC.
+    function updateVaultPC(address _vaultPC) external onlyRole(OPERATOR_ROLE) whenNotPaused {
+        if (_vaultPC == address(0)) revert Errors.ZeroAddress();
+        address oldVaultPC = address(vaultPC);
+        vaultPC = IVaultPC(_vaultPC);
+        emit VaultPCUpdated(oldVaultPC, _vaultPC);
+    }
+
+    /// @notice                Sets the UniversalCore address.
+    /// @dev                   Allows admin to re-point the UniversalCore dependency without
+    ///                        requiring a proxy upgrade. Mirrors setVaultPC.
+    /// @param _universalCore  Address of the new UniversalCore.
+    function updateUniversalCore(address _universalCore) external onlyRole(OPERATOR_ROLE) whenNotPaused {
+        if (_universalCore == address(0)) revert Errors.ZeroAddress();
+        address oldUniversalCore = universalCore;
+        universalCore = _universalCore;
+        emit UniversalCoreUpdated(oldUniversalCore, _universalCore);
     }
 
     // ==============================
@@ -107,16 +124,32 @@ contract UniversalGatewayPC is
             string memory chainNamespace
         ) = _fetchOutboundTxGasAndFees(req.token, req.gasLimit);
 
+        if (req.gasPrice > 0) {
+            if (req.gasPrice < gasPrice) revert Errors.GasPriceBelowBase();
+            gasPrice = req.gasPrice;
+            gasFee = gasPrice * gasLimitUsed;
+        }
+
         if (req.amount > 0) {
             _burnPRC20(msg.sender, req.token, req.amount);
         }
 
         if (msg.value < protocolFee) revert Errors.InvalidInput();
         if (protocolFee > 0) {
-            (bool ok,) = address(VAULT_PC).call{ value: protocolFee }("");
+            (bool ok,) = address(vaultPC).call{ value: protocolFee }("");
             if (!ok) revert Errors.InvalidInput();
         }
-        _swapAndCollectFees(gasToken, msg.value - protocolFee, gasFee);
+        uint256 pcForSwap = msg.value - protocolFee;
+        if (req.maxPCForGas != 0) {
+            if (req.maxPCForGas > pcForSwap) revert Errors.InvalidAmount();
+            uint256 excess = pcForSwap - req.maxPCForGas;
+            pcForSwap = req.maxPCForGas;
+            if (excess > 0) {
+                (bool refundOk,) = msg.sender.call{ value: excess }("");
+                if (!refundOk) revert Errors.WithdrawFailed();
+            }
+        }
+        _swapAndCollectFees(gasToken, pcForSwap, gasFee);
 
         uint256 currentNonce = nonce;
         nonce = currentNonce + 1;
@@ -158,7 +191,7 @@ contract UniversalGatewayPC is
             uint256 rescueGasLimit,
             uint256 gasPrice,
             string memory chainNamespace
-        ) = IUniversalCore(UNIVERSAL_CORE).getRescueFundsGasLimit(prc20);
+        ) = IUniversalCore(universalCore).getRescueFundsGasLimit(prc20);
 
         _swapAndCollectFees(gasToken, msg.value, gasFee);
 
@@ -207,7 +240,8 @@ contract UniversalGatewayPC is
     }
 
     /// @dev                    Fetch gas fee quote and chain metadata from UniversalCore.
-    ///                         If gasLimit = 0, uses BASE_GAS_LIMIT from UniversalCore.
+    ///                         If gasLimit = 0, UniversalCore resolves it to the per-chain
+    ///                         baseGasLimitByChainNamespace and returns it as gasLimitUsed.
     /// @param token            PRC20 token address (used to resolve chain).
     /// @param gasLimit         Caller-requested gas limit (0 = default).
     /// @return gasToken        Gas token PRC20 address for the target chain.
@@ -228,10 +262,8 @@ contract UniversalGatewayPC is
             string memory chainNamespace
         )
     {
-        gasLimitUsed = gasLimit == 0 ? IUniversalCore(UNIVERSAL_CORE).BASE_GAS_LIMIT() : gasLimit;
-
-        (gasToken, gasFee, protocolFee, gasPrice, chainNamespace) =
-            IUniversalCore(UNIVERSAL_CORE).getOutboundTxGasAndFees(token, gasLimitUsed);
+        (gasToken, gasFee, protocolFee, gasPrice, chainNamespace, gasLimitUsed) =
+            IUniversalCore(universalCore).getOutboundTxGasAndFees(token, gasLimit);
 
         if (gasToken == address(0) || gasFee + protocolFee == 0) {
             revert Errors.InvalidData();
@@ -246,7 +278,7 @@ contract UniversalGatewayPC is
     function _swapAndCollectFees(address gasToken, uint256 pcAmount, uint256 gasFee) internal {
         if (pcAmount == 0) revert Errors.ZeroAmount();
 
-        IUniversalCore(UNIVERSAL_CORE).swapAndBurnGas{ value: pcAmount }(gasToken, 0, gasFee, 0, msg.sender);
+        IUniversalCore(universalCore).swapAndBurnGas{ value: pcAmount }(gasToken, 0, gasFee, 0, msg.sender);
     }
 
     /// @dev                    Pulls PRC20 from `from` into this contract, then burns them.
@@ -254,7 +286,8 @@ contract UniversalGatewayPC is
     /// @param token            PRC20 token address.
     /// @param amount           Amount to burn.
     function _burnPRC20(address from, address token, uint256 amount) internal {
-        IPRC20(token).transferFrom(from, address(this), amount);
+        bool transferred = IPRC20(token).transferFrom(from, address(this), amount);
+        if (!transferred) revert Errors.TokenTransferFailed(token, amount);
         bool ok = IPRC20(token).burn(amount);
         if (!ok) revert Errors.TokenBurnFailed(token, amount);
     }

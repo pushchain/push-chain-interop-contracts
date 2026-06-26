@@ -46,6 +46,10 @@ abstract contract BaseTest is Test {
     address public attacker;
     address public recipient;
 
+    address public roleManager;
+    address public ugAdmin;
+    address public operator;
+
     // =========================
     //        CONTRACTS
     // =========================
@@ -127,6 +131,10 @@ abstract contract BaseTest is Test {
         vm.label(user4, "user4");
         vm.label(attacker, "attacker");
         vm.label(recipient, "recipient");
+
+        roleManager = admin;
+        ugAdmin = admin;
+        operator = admin;
     }
 
     function _fundActors() internal {
@@ -200,10 +208,10 @@ abstract contract BaseTest is Test {
     function _initializeGateway() internal {
         // Gateway is already initialized via proxy constructor
         // Verify initialization
-        assertEq(gateway.TSS_ADDRESS(), tss);
-        assertEq(gateway.MIN_CAP_UNIVERSAL_TX_USD(), MIN_CAP_USD);
-        assertEq(gateway.MAX_CAP_UNIVERSAL_TX_USD(), MAX_CAP_USD);
-        assertEq(gateway.WETH(), address(weth));
+        assertEq(gateway.tssAddress(), tss);
+        assertEq(gateway.minCapUniversalTxUsd(), MIN_CAP_USD);
+        assertEq(gateway.maxCapUniversalTxUsd(), MAX_CAP_USD);
+        assertEq(gateway.weth(), address(weth));
     }
 
     // =========================
@@ -468,9 +476,9 @@ abstract contract BaseTest is Test {
         gateway.setV3FeeOrder(a, b, c);
     }
 
-    function setRouters(address factory, address router) internal {
+    function setUniswapV3Config(address factory, address router) internal {
         vm.prank(admin);
-        gateway.setRouters(factory, router);
+        gateway.updateUniswapV3Config(factory, router);
     }
 
     function setCaps(uint256 minUsd1e18, uint256 maxUsd1e18) internal {

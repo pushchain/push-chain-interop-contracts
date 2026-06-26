@@ -46,7 +46,7 @@ event UniversalTxOutbound(
     uint256 gasFee,                // Gas fee
     uint256 gasLimit,              // Gas limit (for EVM; not used on Solana)
     bytes payload,                 // Encoded payload (see section 2)
-    uint256 protocolFee,           // Protocol fee
+    uint256 inboundFee,            // Inbound fee
     address revertRecipient,       // Revert recipient address
     TX_TYPE txType                 // Transaction type
 );
@@ -416,8 +416,8 @@ Final: [0xAC, 0x80] (2 bytes)
 ### 3.6 Getting TSS Chain ID
 
 **Fetch from on-chain TSS PDA**:
-- PDA seeds: `["tsspda_v2"]`
-- Account contains: `{ tss_eth_address, chain_id, authority, bump }`
+- PDA seeds: `["final_tss_pda"]`
+- Account contains: `{ tss_eth_address, chain_id, bump }`
 - Read `chain_id` (Rust `String`)
 - **CRITICAL**: Use `chain_id` exactly as stored (UTF-8 bytes, no modification)
   - This should match the event's `chainId` field (source chain identifier)
@@ -456,7 +456,7 @@ This single entrypoint handles both withdraw (instruction_id=1) and execute (ins
 - `config`: PDA `["config"]`
 - `vault_sol`: PDA `["vault"]` (uses config.vault_bump)
 - `cea_authority`: PDA `["push_identity", push_account]`
-- `tss_pda`: PDA `["tsspda_v2"]`
+- `tss_pda`: PDA `["final_tss_pda"]`
 - `executed_sub_tx`: PDA `["executed_sub_tx", sub_tx_id]` (will be created)
 - `system_program`: System program
 
@@ -477,10 +477,15 @@ This single entrypoint handles both withdraw (instruction_id=1) and execute (ins
 - `associated_token_program`: Associated Token program
 - `recipient_ata`: **Withdraw only** - Recipient ATA (must exist; derived from recipient + mint)
 
+**New optional accounts** (added for ref-finalize route; pass `null` on all direct finalize calls):
+- `stored_ix_data`: Option — `null` for direct route; `StoredIxData` PDA for ref route
+- `store_refund_recipient`: Option — `null` for direct route; the account that called `store_execute_ix_data`
+
 **Anchor client note**:
 - For execute mode: pass `recipient: null`, `destinationProgram: targetProgramPubkey`
 - For withdraw mode: pass `recipient: recipientPubkey`, `destinationProgram: SystemProgram.programId`
 - `destination_program` is NEVER null/omitted (always required, use SystemProgram as sentinel for withdraw)
+- Always pass `storedIxData: null, storeRefundRecipient: null` for direct finalize calls
 
 **Remaining Accounts** (execute only):
 - Pass decoded `accounts` from payload as `remaining_accounts`
@@ -538,7 +543,47 @@ This single entrypoint handles both withdraw (instruction_id=1) and execute (ins
 
 **Flow**: vault→CEA→recipient (direct transfer)
 
-### 4.4 Example: CEA Self-Withdraw (Execute to Gateway)
+### 4.4 Ref-Finalize Route (Large Execute Payloads)
+
+When the serialized `finalize_universal_tx` transaction exceeds 1232 bytes (Solana legacy tx limit), use the two-step ref route instead. The store instruction can carry `ix_data` up to ~921 bytes; if `ix_data` itself exceeds that, versioned transactions with ALT are required.
+
+**Step 1 — `store_execute_ix_data`**
+
+```
+Args: sub_tx_id [u8;32], ix_data_hash [u8;32] = keccak256(ix_data), ix_data Vec<u8>
+Accounts: caller (mut signer), stored_ix_data (init PDA), system_program
+```
+
+Permissionless. PDA seeds: `["stored_ix_data", sub_tx_id, keccak256(ix_data)]`. `caller` becomes the `store_refund_recipient`.
+
+**Step 2 — `finalize_universal_tx_with_ix_data_ref`**
+
+Same args and accounts as `finalize_universal_tx` except:
+- Pass `ix_data_hash [u8;32]` instead of raw `ix_data`
+- Populate `stored_ix_data` and `store_refund_recipient` (not null)
+
+TSS message format is identical — TSS signs over the raw `ix_data` bytes, not the hash.
+
+**Step 3 — `close_stored_ix_data` (failure / abort path only)**
+
+On the happy path, `finalize_universal_tx_with_ix_data_ref` auto-closes the `StoredIxData` PDA and returns rent to `store_refund_recipient` in the same transaction — no separate close needed.
+
+`close_stored_ix_data` is only needed when finalize did not succeed:
+- Finalize was submitted but failed (reverted) — PDA is still open.
+- UV decides finalize will never be submitted (abort) — recover rent immediately.
+
+In both cases only `store_refund_recipient` can close, since `ExecutedSubTx` does not exist yet.
+
+```
+Args: none
+Accounts: caller (mut signer), stored_ix_data, store_refund_recipient (receives rent), executed_sub_tx (optional)
+```
+
+See [6-TX-SIZE-REF-ROUTE.md](./docs/6-TX-SIZE-REF-ROUTE.md) for full details.
+
+---
+
+### 4.5 Example: CEA Self-Withdraw (Execute to Gateway)
 
 **Use case**: Execute path where `destination_program == gateway_program_id` routes to CEA→UEA withdrawal instead of normal CPI.
 
@@ -546,7 +591,13 @@ This single entrypoint handles both withdraw (instruction_id=1) and execute (ins
 - `instruction_id = 2`
 - `destination_program`: gateway program ID
 - `ix_data`: `send_universal_tx_to_uea` discriminator + Borsh args (`token`, `amount`, `payload`, `revert_recipient`)
+- `amount`/`payload` combinations:
+  - `amount > 0, payload empty` → `Funds`
+  - `amount > 0, payload non-empty` → `FundsAndPayload`
+  - `amount = 0, payload non-empty` → `GasAndPayload`
+  - `amount = 0, payload empty` → rejected (`InvalidInput`)
 - `revert_recipient` in args must be non-zero (`Pubkey::default()` is rejected)
+- When `amount = 0`, no CEA→vault transfer and no rate-limit consumption happen on this inner route
 - Emits `UniversalTx` with `from_cea: true` and `UniversalTxFinalized`
 - Semantic split:
   - `UniversalTx.amount` / `UniversalTx.payload` come from inner decoded args
@@ -588,7 +639,7 @@ All PDAs use `findProgramAddressSync` with gateway program ID.
 **PDAs**:
 - `config`: `["config"]`
 - `vault`: `["vault"]` (bump stored in config)
-- `tss_pda`: `["tsspda_v2"]`
+- `tss_pda`: `["final_tss_pda"]`
 - `cea_authority`: `["push_identity", push_account]` (push_account = 20-byte EVM address)
 - `executed_sub_tx`: `["executed_sub_tx", sub_tx_id]` (sub_tx_id = 32 bytes)
 - `rate_limit_config`: `["rate_limit_config"]`
@@ -623,9 +674,20 @@ gas_fee = executed_sub_tx_rent + cea_ata_rent_if_created + compute_buffer
 - `cea_ata_rent_if_created`: get exact value via `getMinimumBalanceForRentExemption(165)` when CEA ATA does not already exist
 - `compute_buffer`: operational buffer for tx fees / compute
 
-**On-chain transfer split**:
+**For Ref-Finalize (SOL Execute via stored ix_data)**:
+```text
+gas_fee = executed_sub_tx_rent + SIGNATURE_FEE (5000) + compute_buffer
+```
+The extra `5000` covers the store UV's transaction fee.
+
+**On-chain transfer split (direct route)**:
 - `amount` → CEA (if `amount > 0`)
 - `gas_fee` → caller (UV reimbursement)
+
+**On-chain transfer split (ref route)**:
+- `amount` → CEA (if `amount > 0`)
+- `base_finalize_gas` → caller (finalize UV)
+- `5000` → `store_refund_recipient` (store UV)
 
 ---
 
@@ -656,13 +718,15 @@ gas_fee = executed_sub_tx_rent + cea_ata_rent_if_created + compute_buffer
    - `1` = Withdraw (unified SOL/SPL)
    - `2` = Execute (unified SOL/SPL)
 2. Fetch TSS PDA from Solana:
-   - Derive TSS PDA: `["tsspda_v2"]`
+   - Derive TSS PDA: `["final_tss_pda"]`
    - Read account: get `chain_id` (string)
 3. Build message hash based on instruction_id (common fields first):
    - **Withdraw (1)**:
-     `PREFIX | 0x01 | chain_id | amount | sub_tx_id | universal_tx_id | push_account | token | gas_fee | target`
+     `PREFIX | 0x01 | chain_id | deadline (i64 BE 8 bytes) | amount | sub_tx_id | universal_tx_id | push_account | token | gas_fee | target`
    - **Execute (2)**:
-     `PREFIX | 0x02 | chain_id | amount | sub_tx_id | universal_tx_id | push_account | token | gas_fee | target_program | accounts_buf | ix_data_buf`
+     `PREFIX | 0x02 | chain_id | deadline (i64 BE 8 bytes) | amount | sub_tx_id | universal_tx_id | push_account | token | gas_fee | target_program | accounts_buf | ix_data_buf`
+   - **Revert (3)** and **Rescue (4)** include `deadline` in the same position.
+   - `deadline` is the Unix timestamp (seconds) after which the program rejects the instruction with `SignatureExpired`. The program does not enforce a maximum deadline — TSS signer policy is responsible for capping the validity window (recommended: 24–48 hours from signing time).
 4. For execute: build `accounts_buf` and `ix_data_buf` with length prefixes (section 3.3)
 
 ### 7.4 TSS Signing
@@ -694,12 +758,21 @@ gas_fee = executed_sub_tx_rent + cea_ata_rent_if_created + compute_buffer
 - `MessageHashMismatch`: TSS message construction incorrect (check field order)
 - `ConstraintSeeds`: PDA derivation incorrect (check seeds)
 - `InvalidAccount`: Accounts don't match (check order/flags)
-- `InsufficientBalance`: Vault doesn't have enough funds
+- `InsufficientBalance`: Vault/CEA doesn't have enough funds
 - `Paused`: Gateway is paused (check config)
 
 **Retry logic**:
-- Transaction expired: Get new blockhash, retry
+- Solana blockhash expired: Rebuild transaction with a new blockhash and resubmit — the TSS signature covers the gateway instruction, not the Solana transaction envelope, so the same signature remains valid until the `deadline` expires.
+- `SignatureExpired` on `finalize_universal_tx` / `finalize_universal_tx_with_ix_data_ref`: The deadline has passed. Do NOT retry. Issue source-chain revert.
+- `SignatureExpired` on `revert_universal_tx` or `rescue_funds`: TSS re-signs the same payload with a new deadline. No on-chain state cleanup is required — the `ExecutedSubTx` PDA is only written on success, so a rejected instruction leaves nothing to undo. Submit the new signature immediately.
 - Account errors: Verify PDA derivation and account order
+
+**CRITICAL — revert-after-deadline rule**:
+A source-chain revert (refunding the user on Push) must only be issued when **both** conditions hold:
+1. The `deadline` in the TSS-signed payload has elapsed (on-chain clock past `deadline`).
+2. No `ExecutedSubTx` PDA exists for the `sub_tx_id` (confirming the finalize never succeeded).
+
+Do not treat a transient Solana failure (CPI error, congestion, blockhash expiry) as terminal before the deadline. The signed payload remains executable on Solana until the deadline expires. Issuing a source-chain revert while the payload is still live risks double-spend: the user is refunded on Push and the transaction later executes on Solana.
 
 ### 7.7 Event Verification
 
@@ -794,7 +867,7 @@ gas_fee = executed_sub_tx_rent + cea_ata_rent_if_created + compute_buffer
    - Verify `instructionId == 2` (execute mode)
 2. **Decode payload**: extract `instructionId`, `targetProgram`, `accounts[]`, `ixData`
 3. **Derive PDAs**: CEA authority, executed_sub_tx, config, vault, tss_pda
-4. **Fetch TSS state**: Get `chain_id` from TSS PDA (`["tsspda_v2"]`)
+4. **Fetch TSS state**: Get `chain_id` from TSS PDA (`["final_tss_pda"]`)
 5. **Build writable flags**: Convert `accounts[]` to bitpacked `writable_flags` (1 bit per account, MSB first)
 6. **Build TSS message**:
    - Use `buildExecuteAdditionalData()` helper (see `tests/helpers/tss.ts`)
@@ -823,7 +896,7 @@ gas_fee = executed_sub_tx_rent + cea_ata_rent_if_created + compute_buffer
 2. **Decode payload** (if present): Extract `instructionId`
    - Verify `instructionId == 1` (withdraw mode)
 3. **Derive PDAs**: Same as execute (see section 5)
-4. **Fetch TSS state**: Get `chain_id` from TSS PDA (`["tsspda_v2"]`)
+4. **Fetch TSS state**: Get `chain_id` from TSS PDA (`["final_tss_pda"]`)
 5. **Build TSS message**:
    - Use `buildWithdrawAdditionalData()` helper (see `tests/helpers/tss.ts`)
    - instruction_id = 1
@@ -873,7 +946,7 @@ gas_fee = executed_sub_tx_rent + cea_ata_rent_if_created + compute_buffer
 6. **Events emitted**:
    - `FundsRescued { sub_tx_id, universal_tx_id, token, amount, revert_instruction }`
    - For rescue, `revert_instruction.revert_recipient = recipient` and `revert_instruction.revert_msg = []`
-   - `ProtocolFeeReimbursed { sub_tx_id, relayer, amount_lamports }`
+   - `InboundFeeReimbursed { sub_tx_id, relayer, amount_lamports }`
 
 ---
 
@@ -997,7 +1070,7 @@ Before production:
 **State Structures** (see `state.rs`):
 - `GatewayAccountMeta` - Account metadata (pubkey + is_writable)
 - `Config` - Gateway configuration (min/max caps, paused state, etc.)
-- `TssPda` - TSS state (chain_id, tss_eth_address, authority, bump)
+- `TssPda` - TSS state (chain_id, tss_eth_address, bump)
 - `ExecutedSubTx` - Replay protection tracker (8-byte discriminator only)
 
 ---

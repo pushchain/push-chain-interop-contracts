@@ -24,7 +24,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
   });
 
   let admin: Keypair;
-  let tssAddress: Keypair;
+  let operator: Keypair;
   let pauser: Keypair;
   let user1: Keypair;
   let user2: Keypair;
@@ -36,7 +36,8 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
   let solPrice: number;
   let mockUSDT: any;
   let mockUSDC: any;
-  const DEFAULT_PROTOCOL_FEE_LAMPORTS = 50_000;
+  const DEFAULT_INBOUND_FEE_LAMPORTS = 50_000;
+  const MAX_INBOUND_FEE_LAMPORTS = 2_000_000;
 
   // Helper to create payload (EVM-style: to address, value, calldata, gas params).
   const createPayload = (
@@ -113,9 +114,9 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
     return pda;
   };
 
-  const setProtocolFee = async (feeLamports: number) => {
+  const setInboundFee = async (feeLamports: number) => {
     await program.methods
-      .setProtocolFee(new anchor.BN(feeLamports))
+      .setInboundFee(new anchor.BN(feeLamports))
       .accountsPartial({
         config: configPda,
         feeVault: feeVaultPda,
@@ -126,12 +127,12 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       .rpc();
   };
 
-  const withProtocolFee = (baseLamports: number) =>
-    new anchor.BN(baseLamports + DEFAULT_PROTOCOL_FEE_LAMPORTS);
+  const withInboundFee = (baseLamports: number) =>
+    new anchor.BN(baseLamports + DEFAULT_INBOUND_FEE_LAMPORTS);
 
   before(async () => {
     admin = sharedState.getAdmin();
-    tssAddress = sharedState.getTssAddress();
+    operator = sharedState.getOperator();
     pauser = sharedState.getPauser();
     user1 = Keypair.generate();
     user2 = Keypair.generate();
@@ -175,7 +176,11 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       mockUSDC.mint.publicKey,
     ]) {
       await program.methods
-        .setTokenRateLimit(veryLargeThreshold)
+        .setTokenRateLimit(
+          veryLargeThreshold,
+          tokenMint.equals(PublicKey.default) ? false : true,
+          tokenMint.equals(PublicKey.default) ? false : true
+        )
         .accountsPartial({
           admin: admin.publicKey,
           config: configPda,
@@ -187,7 +192,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
         .rpc();
     }
 
-    await setProtocolFee(DEFAULT_PROTOCOL_FEE_LAMPORTS);
+    await setInboundFee(DEFAULT_INBOUND_FEE_LAMPORTS);
   });
 
   describe("GAS Route (TxType.GAS)", () => {
@@ -211,7 +216,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       };
 
       await program.methods
-        .sendUniversalTx(req, withProtocolFee(gasAmount))
+        .sendUniversalTx(req, withInboundFee(gasAmount))
         .accountsPartial({
           config: configPda,
           vault: vaultPda,
@@ -232,12 +237,11 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       const finalFeeVaultBalance = await provider.connection.getBalance(feeVaultPda);
       // Bridge vault receives only the gas amount; fee goes to fee_vault (1:1 invariant)
       expect(finalVaultBalance - initialVaultBalance).to.equal(gasAmount);
-      expect(finalFeeVaultBalance - initialFeeVaultBalance).to.equal(DEFAULT_PROTOCOL_FEE_LAMPORTS);
+      expect(finalFeeVaultBalance - initialFeeVaultBalance).to.equal(DEFAULT_INBOUND_FEE_LAMPORTS);
     });
 
     it("Should route GAS request with payload to GAS_AND_PAYLOAD (not reject)", async () => {
       // NOTE: This test verifies the correct behavior - amount==0 + payload>0 routes to GAS_AND_PAYLOAD
-      // The payload validation is commented out in send_tx_with_gas_route (matching EVM V0)
       const gasAmount = calculateSolAmount(2.5, solPrice);
       const nativeSolTokenRateLimitPda = getTokenRateLimitPda(
         PublicKey.default
@@ -257,7 +261,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
       // Should succeed and route to GAS_AND_PAYLOAD (fetchTxType logic)
       await program.methods
-        .sendUniversalTx(req, withProtocolFee(gasAmount))
+        .sendUniversalTx(req, withInboundFee(gasAmount))
         .accountsPartial({
           config: configPda,
           vault: vaultPda,
@@ -300,7 +304,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       };
 
       await program.methods
-        .sendUniversalTx(req, withProtocolFee(gasAmount))
+        .sendUniversalTx(req, withInboundFee(gasAmount))
         .accountsPartial({
           config: configPda,
           vault: vaultPda,
@@ -337,7 +341,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
       // Should succeed with 0 native amount
       await program.methods
-        .sendUniversalTx(req, withProtocolFee(0))
+        .sendUniversalTx(req, withInboundFee(0))
         .accountsPartial({
           config: configPda,
           vault: vaultPda,
@@ -376,7 +380,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       };
 
       await program.methods
-        .sendUniversalTx(req, withProtocolFee(fundsAmount))
+        .sendUniversalTx(req, withInboundFee(fundsAmount))
         .accountsPartial({
           config: configPda,
           vault: vaultPda,
@@ -416,7 +420,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       };
 
       await program.methods
-        .sendUniversalTx(req, withProtocolFee(fundsAmount))
+        .sendUniversalTx(req, withInboundFee(fundsAmount))
         .accountsPartial({
           config: configPda,
           vault: vaultPda,
@@ -455,7 +459,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
       try {
         await program.methods
-          .sendUniversalTx(req, withProtocolFee(wrongNativeAmount))
+          .sendUniversalTx(req, withInboundFee(wrongNativeAmount))
           .accountsPartial({
             config: configPda,
             vault: vaultPda,
@@ -487,10 +491,15 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       const userTokenAccount = await mockUSDT.createTokenAccount(
         user1.publicKey
       );
-      const gatewayTokenAccount = await mockUSDT.createTokenAccount(
-        vaultPda,
-        true
-      );
+      const gatewayTokenAccount = (
+        await spl.getOrCreateAssociatedTokenAccount(
+          provider.connection as any,
+          admin,
+          mockUSDT.mint.publicKey,
+          vaultPda,
+          true
+        )
+      ).address;
 
       // Mint tokens using mock token's mintTo method (uses correct mint authority)
       await mockUSDT.mintTo(userTokenAccount, 1000);
@@ -512,7 +521,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       };
 
       await program.methods
-        .sendUniversalTx(req, withProtocolFee(0)) // Fee-only native amount for SPL FUNDS
+        .sendUniversalTx(req, withInboundFee(0)) // Fee-only native amount for SPL FUNDS
         .accountsPartial({
           config: configPda,
           vault: vaultPda,
@@ -534,7 +543,57 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       const balanceIncrease =
         (finalGatewayBalance - initialGatewayBalance) * 10 ** mockUSDT.config.decimals;
       expect(balanceIncrease).to.equal(tokenAmount.toNumber());
-      expect(finalFeeVaultBalance - initialFeeVaultBalance).to.equal(DEFAULT_PROTOCOL_FEE_LAMPORTS);
+      expect(finalFeeVaultBalance - initialFeeVaultBalance).to.equal(DEFAULT_INBOUND_FEE_LAMPORTS);
+    });
+
+    it("Should reject non-canonical vault-owned token account", async () => {
+      const userTokenAccount = await mockUSDT.createTokenAccount(
+        user1.publicKey
+      );
+      const nonCanonicalVaultAccount = await mockUSDT.createTokenAccount(
+        vaultPda,
+        true
+      );
+      await mockUSDT.mintTo(userTokenAccount, 250);
+
+      const tokenAmount = new anchor.BN(250 * 10 ** mockUSDT.config.decimals);
+      const usdtTokenRateLimitPda = getTokenRateLimitPda(
+        mockUSDT.mint.publicKey
+      );
+
+      const req = {
+        recipient: Array.from(Buffer.alloc(20, 0)),
+        token: mockUSDT.mint.publicKey,
+        amount: tokenAmount,
+        payload: Buffer.from([]),
+        revertRecipient: user1.publicKey,
+        signatureData: Buffer.from("non_canonical_vault_sig"),
+      };
+
+      try {
+        await program.methods
+          .sendUniversalTx(req, withInboundFee(0))
+          .accountsPartial({
+            config: configPda,
+            vault: vaultPda,
+            feeVault: feeVaultPda,
+            userTokenAccount: userTokenAccount,
+            gatewayTokenAccount: nonCanonicalVaultAccount,
+            user: user1.publicKey,
+            priceUpdate: mockPriceFeed,
+            rateLimitConfig: rateLimitConfigPda,
+            tokenRateLimit: usdtTokenRateLimitPda,
+            tokenProgram: spl.TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([user1])
+          .rpc();
+        expect.fail("Should reject non-canonical vault-owned token account");
+      } catch (error: any) {
+        const errorCode =
+          error.error?.errorCode?.code || error.error?.errorCode || error.code;
+        expect(errorCode).to.equal("InvalidAccount");
+      }
     });
 
     it("Should reject SPL deposit from token account not owned by signer (InvalidOwner)", async () => {
@@ -544,7 +603,15 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       await provider.connection.requestAirdrop(victim.publicKey, 2 * anchor.web3.LAMPORTS_PER_SOL);
 
       const victimTokenAccount = await mockUSDT.createTokenAccount(victim.publicKey);
-      const gatewayTokenAccount = await mockUSDT.createTokenAccount(vaultPda, true);
+      const gatewayTokenAccount = (
+        await spl.getOrCreateAssociatedTokenAccount(
+          provider.connection as any,
+          admin,
+          mockUSDT.mint.publicKey,
+          vaultPda,
+          true
+        )
+      ).address;
       await mockUSDT.mintTo(victimTokenAccount, 1000);
 
       const tokenAmount = new anchor.BN(1000 * 10 ** mockUSDT.config.decimals);
@@ -562,7 +629,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       try {
         // user1 signs but victimTokenAccount is owned by victim — must be rejected
         await program.methods
-          .sendUniversalTx(req, withProtocolFee(0))
+          .sendUniversalTx(req, withInboundFee(0))
           .accountsPartial({
             config: configPda,
             vault: vaultPda,
@@ -612,7 +679,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
       try {
         await program.methods
-          .sendUniversalTx(req, withProtocolFee(nativeAmount))
+          .sendUniversalTx(req, withInboundFee(nativeAmount))
           .accountsPartial({
             config: configPda,
             vault: vaultPda,
@@ -677,7 +744,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       };
 
       await program.methods
-        .sendUniversalTx(req, withProtocolFee(totalAmount))
+        .sendUniversalTx(req, withInboundFee(totalAmount))
         .accountsPartial({
           config: configPda,
           vault: vaultPda,
@@ -717,7 +784,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
       try {
         await program.methods
-          .sendUniversalTx(req, withProtocolFee(insufficientNative))
+          .sendUniversalTx(req, withInboundFee(insufficientNative))
           .accountsPartial({
             config: configPda,
             vault: vaultPda,
@@ -751,10 +818,15 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       const userTokenAccount = await mockUSDC.createTokenAccount(
         user1.publicKey
       );
-      const gatewayTokenAccount = await mockUSDC.createTokenAccount(
-        vaultPda,
-        true
-      );
+      const gatewayTokenAccount = (
+        await spl.getOrCreateAssociatedTokenAccount(
+          provider.connection as any,
+          admin,
+          mockUSDC.mint.publicKey,
+          vaultPda,
+          true
+        )
+      ).address;
 
       // Mint tokens using mock token's mintTo method
       await mockUSDC.mintTo(userTokenAccount, 500);
@@ -778,7 +850,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
       // With protocol fee enabled, this route sends only fee as native amount.
       await program.methods
-        .sendUniversalTx(req, withProtocolFee(0))
+        .sendUniversalTx(req, withInboundFee(0))
         .accountsPartial({
           config: configPda,
           vault: vaultPda,
@@ -803,7 +875,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
         (finalGatewayBalance - initialGatewayBalance) * 10 ** mockUSDC.config.decimals;
       expect(balanceIncrease).to.equal(tokenAmount.toNumber());
       expect(finalVaultBalance - initialVaultBalance).to.equal(0);
-      expect(finalFeeVaultBalance - initialFeeVaultBalance).to.equal(DEFAULT_PROTOCOL_FEE_LAMPORTS);
+      expect(finalFeeVaultBalance - initialFeeVaultBalance).to.equal(DEFAULT_INBOUND_FEE_LAMPORTS);
     });
 
     it("Should batch native gas + SPL funds (Case 2.3)", async () => {
@@ -811,10 +883,15 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       const userTokenAccount = await mockUSDC.createTokenAccount(
         user1.publicKey
       );
-      const gatewayTokenAccount = await mockUSDC.createTokenAccount(
-        vaultPda,
-        true
-      );
+      const gatewayTokenAccount = (
+        await spl.getOrCreateAssociatedTokenAccount(
+          provider.connection as any,
+          admin,
+          mockUSDC.mint.publicKey,
+          vaultPda,
+          true
+        )
+      ).address;
 
       // Mint tokens using mock token's mintTo method
       await mockUSDC.mintTo(userTokenAccount, 500);
@@ -852,7 +929,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       const initialFeeVaultBalance = await provider.connection.getBalance(feeVaultPda);
 
       await program.methods
-        .sendUniversalTx(req, withProtocolFee(gasAmount))
+        .sendUniversalTx(req, withInboundFee(gasAmount))
         .accountsPartial({
           config: configPda,
           vault: vaultPda,
@@ -873,7 +950,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       const finalFeeVaultBalance = await provider.connection.getBalance(feeVaultPda);
       // Bridge vault receives only gas (no fee); fee goes to fee_vault
       expect(finalVaultBalance - initialVaultBalance).to.equal(gasAmount);
-      expect(finalFeeVaultBalance - initialFeeVaultBalance).to.equal(DEFAULT_PROTOCOL_FEE_LAMPORTS);
+      expect(finalFeeVaultBalance - initialFeeVaultBalance).to.equal(DEFAULT_INBOUND_FEE_LAMPORTS);
 
       const finalGatewayBalance = await mockUSDC.getBalance(
         gatewayTokenAccount
@@ -910,7 +987,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
       try {
         await program.methods
-          .sendUniversalTx(req, withProtocolFee(0))
+          .sendUniversalTx(req, withInboundFee(0))
           .accountsPartial({
             config: configPda,
             vault: vaultPda,
@@ -986,8 +1063,8 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
       await program.methods
         .unpause()
-        .accountsPartial({ pauser: pauser.publicKey, config: configPda })
-        .signers([pauser])
+        .accountsPartial({ operator: operator.publicKey, config: configPda })
+        .signers([operator])
         .rpc();
     });
 
@@ -1023,7 +1100,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
           };
           try {
             await program.methods
-              .sendUniversalTx(req, withProtocolFee(gasAmount))
+              .sendUniversalTx(req, withInboundFee(gasAmount))
               .accountsPartial({
                 config: configPda,
                 vault: vaultPda,
@@ -1070,7 +1147,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
       try {
         await program.methods
-          .sendUniversalTx(req, withProtocolFee(0))
+          .sendUniversalTx(req, withInboundFee(0))
           .accountsPartial({
             config: configPda,
             vault: vaultPda,
@@ -1126,24 +1203,24 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       };
 
       await program.methods
-        .sendUniversalTx(req, withProtocolFee(gasAmount))
+        .sendUniversalTx(req, withInboundFee(gasAmount))
         .accountsPartial(accounts)
         .signers([user1])
         .rpc();
       await program.methods
-        .sendUniversalTx(req, withProtocolFee(gasAmount))
+        .sendUniversalTx(req, withInboundFee(gasAmount))
         .accountsPartial(accounts)
         .signers([user1])
         .rpc();
 
       const feeVaultAfter = await provider.connection.getBalance(feeVaultPda);
-      expect(feeVaultAfter - feeVaultBefore).to.equal(2 * DEFAULT_PROTOCOL_FEE_LAMPORTS);
+      expect(feeVaultAfter - feeVaultBefore).to.equal(2 * DEFAULT_INBOUND_FEE_LAMPORTS);
     });
 
-    it("Should reject unauthorized setProtocolFee", async () => {
+    it("Should reject unauthorized setInboundFee", async () => {
       try {
         await program.methods
-          .setProtocolFee(new anchor.BN(123_456))
+          .setInboundFee(new anchor.BN(123_456))
           .accountsPartial({
             config: configPda,
             feeVault: feeVaultPda,
@@ -1152,7 +1229,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
           })
           .signers([user1])
           .rpc();
-        expect.fail("Unauthorized setProtocolFee should have failed");
+        expect.fail("Unauthorized setInboundFee should have failed");
       } catch (error: any) {
         expect(error).to.exist;
         const errorCode =
@@ -1161,7 +1238,33 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       }
     });
 
-    it("Should reject when native amount is below protocol fee", async () => {
+    it("Should accept zero and exact max protocol fee", async () => {
+      await setInboundFee(0);
+      let feeVault = await program.account.feeVault.fetch(feeVaultPda);
+      expect(feeVault.inboundFeeLamports.toNumber()).to.equal(0);
+
+      await setInboundFee(MAX_INBOUND_FEE_LAMPORTS);
+      feeVault = await program.account.feeVault.fetch(feeVaultPda);
+      expect(feeVault.inboundFeeLamports.toNumber()).to.equal(
+        MAX_INBOUND_FEE_LAMPORTS
+      );
+
+      await setInboundFee(DEFAULT_INBOUND_FEE_LAMPORTS);
+    });
+
+    it("Should reject inbound fee above hard max", async () => {
+      try {
+        await setInboundFee(MAX_INBOUND_FEE_LAMPORTS + 1);
+        expect.fail("setInboundFee above max should have failed");
+      } catch (error: any) {
+        expect(error).to.exist;
+        const errorCode =
+          error.error?.errorCode?.code || error.error?.errorCode || error.code;
+        expect(errorCode).to.equal("InvalidInput");
+      }
+    });
+
+    it("Should reject when native amount is below inbound fee", async () => {
       const nativeSolTokenRateLimitPda = getTokenRateLimitPda(PublicKey.default);
       const req = {
         recipient: Array.from(Buffer.alloc(20, 0)),
@@ -1169,12 +1272,12 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
         amount: new anchor.BN(0),
         payload: Buffer.from([]),
         revertRecipient: user1.publicKey,
-        signatureData: Buffer.from("insufficient_protocol_fee"),
+        signatureData: Buffer.from("insufficient_inbound_fee"),
       };
 
       try {
         await program.methods
-          .sendUniversalTx(req, new anchor.BN(DEFAULT_PROTOCOL_FEE_LAMPORTS - 1))
+          .sendUniversalTx(req, new anchor.BN(DEFAULT_INBOUND_FEE_LAMPORTS - 1))
           .accountsPartial({
             config: configPda,
             vault: vaultPda,
@@ -1195,7 +1298,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
         expect(error).to.exist;
         const errorCode =
           error.error?.errorCode?.code || error.error?.errorCode || error.code;
-        expect(errorCode).to.equal("InsufficientProtocolFee");
+        expect(errorCode).to.equal("InsufficientInboundFee");
       }
     });
 
@@ -1228,7 +1331,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
       try {
         await program.methods
-          .sendUniversalTx(req, withProtocolFee(gasAmount))
+          .sendUniversalTx(req, withInboundFee(gasAmount))
           .accountsPartial({
             config: configPda,
             vault: vaultPda,
@@ -1263,15 +1366,20 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
         mockUSDT.mint.publicKey
       );
 
-      await setProtocolFee(0);
+      await setInboundFee(0);
       try {
         const userTokenAccount = await mockUSDT.createTokenAccount(
           user1.publicKey
         );
-        const gatewayTokenAccount = await mockUSDT.createTokenAccount(
-          vaultPda,
-          true
-        );
+        const gatewayTokenAccount = (
+          await spl.getOrCreateAssociatedTokenAccount(
+            provider.connection as any,
+            admin,
+            mockUSDT.mint.publicKey,
+            vaultPda,
+            true
+          )
+        ).address;
         await mockUSDT.mintTo(userTokenAccount, 500);
         const tokenAmount = new anchor.BN(200 * 10 ** mockUSDT.config.decimals);
         const initialGatewayBalance = await mockUSDT.getBalance(
@@ -1313,7 +1421,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
           10 ** mockUSDT.config.decimals;
         expect(balanceIncrease).to.equal(tokenAmount.toNumber());
       } finally {
-        await setProtocolFee(DEFAULT_PROTOCOL_FEE_LAMPORTS);
+        await setInboundFee(DEFAULT_INBOUND_FEE_LAMPORTS);
       }
     });
   });
@@ -1325,8 +1433,8 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
       if (config.paused) {
         await program.methods
           .unpause()
-          .accountsPartial({ pauser: pauser.publicKey, config: configPda })
-          .signers([pauser])
+          .accountsPartial({ operator: operator.publicKey, config: configPda })
+          .signers([operator])
           .rpc();
       }
     } catch (error) {
@@ -1335,7 +1443,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
 
     // Disable rate limits to prevent interference with other tests
     try {
-      await setProtocolFee(0);
+      await setInboundFee(0);
 
       // Disable epoch duration
       await program.methods
@@ -1355,7 +1463,7 @@ describe("Universal Gateway - send_universal_tx Tests", () => {
         PublicKey.default
       );
       await program.methods
-        .setTokenRateLimit(veryLargeThreshold)
+        .setTokenRateLimit(veryLargeThreshold, false, false)
         .accountsPartial({
           admin: admin.publicKey,
           config: configPda,

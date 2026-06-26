@@ -1,5 +1,5 @@
 use crate::errors::GatewayError;
-use crate::state::{FeeVault, ProtocolFeeReimbursed, VAULT_SEED};
+use crate::state::{FeeVault, InboundFeeReimbursed, VAULT_SEED};
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{program::invoke_signed, system_instruction};
 use anchor_spl::token::spl_token;
@@ -78,7 +78,7 @@ pub fn reimburse_relayer_from_fee_vault<'info>(
     **fee_vault_info.try_borrow_mut_lamports()? -= gas_fee;
     **caller.try_borrow_mut_lamports()? += gas_fee;
 
-    emit!(ProtocolFeeReimbursed {
+    emit!(InboundFeeReimbursed {
         sub_tx_id,
         relayer: *caller.key,
         amount_lamports: gas_fee,

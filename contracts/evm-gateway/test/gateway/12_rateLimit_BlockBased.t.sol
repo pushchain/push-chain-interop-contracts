@@ -17,7 +17,7 @@ import { MockWETH } from "../mocks/MockWETH.sol";
  * @notice  Test suite for the block-based rate limiting feature of UniversalGateway
  */
 contract GatewayBlockRateLimitTest is BaseTest {
-    uint256 constant BLOCK_USD_CAP_1E18 = 10e18; // $10 block cap
+    uint256 constant blockUsdCap_1E18 = 10e18; // $10 block cap
     uint256 constant HALF_BLOCK_CAP_1E18 = 5e18; // $5
     uint256 constant SMALL_AMOUNT_1E18 = 2e18; // $2
     uint256 constant LARGE_AMOUNT_1E18 = 12e18; // $12 (exceeds block cap)
@@ -61,7 +61,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
         gateway.setTokenLimitThresholds(tokens, thresholds);
 
         // Configure gateway with mock WETH and dummy routers
-        gateway.setRouters(address(0x1), address(0x2));
+        gateway.updateUniswapV3Config(address(0x1), address(0x2));
         vm.stopPrank();
     }
 
@@ -71,31 +71,31 @@ contract GatewayBlockRateLimitTest is BaseTest {
 
     function testSetBlockUsdCap_HappyPath() public {
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
-        assertEq(gateway.BLOCK_USD_CAP(), BLOCK_USD_CAP_1E18, "Block USD cap not set correctly");
+        assertEq(gateway.blockUsdCap(), blockUsdCap_1E18, "Block USD cap not set correctly");
     }
 
     function testSetBlockUsdCap_OnlyAdmin() public {
         vm.prank(user1);
         vm.expectRevert();
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
     }
 
     // Note: As of now, disabling BLOCK CAP doesn't REVERT. It returns.
     function testDisableBlockCap() public {
         // First enable the cap
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         // Then disable it
         vm.prank(admin);
         gateway.setBlockUsdCap(0);
 
-        assertEq(gateway.BLOCK_USD_CAP(), 0, "Block USD cap not disabled");
+        assertEq(gateway.blockUsdCap(), 0, "Block USD cap not disabled");
 
         // Test that with cap disabled, multiple transactions can go through
         // 5x the cap if it was enabled (ETH_FOR_5_USD * 5)
@@ -114,7 +114,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
 
     function testPerTxCapFailsFirst() public {
         // Set block cap higher than per-tx max cap
-        uint256 perTxMaxCap = gateway.MAX_CAP_UNIVERSAL_TX_USD();
+        uint256 perTxMaxCap = gateway.maxCapUniversalTxUsd();
 
         vm.prank(admin);
         gateway.setBlockUsdCap(perTxMaxCap * 2);
@@ -131,7 +131,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
     function testSingleCallExceedsBlockCap() public {
         // Set block cap to $10
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         // Set per-tx caps to allow larger amounts
         vm.prank(admin);
@@ -146,7 +146,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
     function testExactlyEqualToBlockCap() public {
         // Set block cap to $10
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         // Send tx worth exactly $10
         vm.prank(user1);
@@ -160,7 +160,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
     function testAccumulateUnderCap() public {
         // Set block cap to $10
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         // Record the current block number to ensure all transactions are in the same block
         uint256 startingBlockNumber = block.number;
@@ -192,7 +192,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
     function testOverflowOnNthCall() public {
         // Set block cap to $10
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         // Record the current block number
         uint256 startingBlockNumber = block.number;
@@ -222,7 +222,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
     function testCrossSenderGlobalBudget() public {
         // Set block cap to $10
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         // Record the current block number
         uint256 startingBlockNumber = block.number;
@@ -247,7 +247,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
     function testResetOnNextBlock() public {
         // Set block cap to $10
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         // Consume full cap in block N
         vm.prank(user1);
@@ -266,7 +266,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
     function testPartialUsageThenNextBlock() public {
         // Set block cap to $10
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         // Use $5 in block N
         vm.prank(user1);
@@ -318,7 +318,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
     function testNativeGasLegInSendTxWithFunds() public {
         // Set block cap to $10
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         // Approve token for bridging
         vm.prank(user1);
@@ -349,12 +349,12 @@ contract GatewayBlockRateLimitTest is BaseTest {
     function testRevertAfterCapCheckDoesntLeakUsage() public {
         // Set block cap to $10
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         // Set TSS to reverting contract
-        address originalTSS = gateway.TSS_ADDRESS();
+        address originalTSS = gateway.tssAddress();
         vm.prank(admin);
-        gateway.setTSS(revertingTSS);
+        gateway.updateTSS(revertingTSS);
 
         // Try to send tx - should revert due to TSS rejecting ETH
         vm.prank(user1);
@@ -363,7 +363,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
 
         // Restore normal TSS
         vm.prank(admin);
-        gateway.setTSS(originalTSS);
+        gateway.updateTSS(originalTSS);
 
         // Send same tx again - should succeed because usage wasn't recorded due to revert
         vm.prank(user1);
@@ -386,7 +386,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
     function testJustUnderJustOver() public {
         // Set block cap to $10
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         // Calculate amounts that quote to just under and just over the cap
         uint256 justUnder = ETH_FOR_10_USD - 1;
@@ -411,7 +411,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
     function testFundsOnlyRouteNotThrottled() public {
         // Set block cap to $10
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         // Consume full block cap with gas route
         vm.prank(user1);
@@ -436,7 +436,7 @@ contract GatewayBlockRateLimitTest is BaseTest {
     function testPausedStateAndCap() public {
         // Set block cap to $10
         vm.prank(admin);
-        gateway.setBlockUsdCap(BLOCK_USD_CAP_1E18);
+        gateway.setBlockUsdCap(blockUsdCap_1E18);
 
         // Use $5 of the cap
         vm.prank(user1);
@@ -451,8 +451,8 @@ contract GatewayBlockRateLimitTest is BaseTest {
         vm.expectRevert("EnforcedPause()");
         gateway.sendUniversalTx{ value: ETH_FOR_5_USD }(_buildGasTxRequest());
 
-        // Unpause
-        vm.prank(pauser);
+        // Unpause (requires OPERATOR_ROLE, held by admin at bootstrap)
+        vm.prank(admin);
         gateway.unpause();
 
         // Should be able to use remaining $5 of cap

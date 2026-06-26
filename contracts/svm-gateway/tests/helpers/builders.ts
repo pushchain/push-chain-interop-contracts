@@ -3,6 +3,7 @@ import { Program } from "@coral-xyz/anchor";
 import { UniversalGateway } from "../../target/types/universal_gateway";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { getCeaAuthorityPda, getExecutedTxPda } from "./test-utils";
+import { DEFAULT_DEADLINE } from "./tss";
 
 // =============================================================================
 // FinalizeUniversalTx builder
@@ -17,6 +18,7 @@ export interface FinalizeUniversalTxArgs {
   writableFlags?: Buffer;
   ixData?: Buffer;
   gasFee: anchor.BN;
+  deadline?: anchor.BN;
   sig: {
     signature: ArrayLike<number>;
     recoveryId: number;
@@ -62,6 +64,7 @@ export const makeFinalizeUniversalTxBuilder =
     writableFlags = Buffer.alloc(0),
     ixData = Buffer.from([]),
     gasFee,
+    deadline,
     sig,
     caller,
     destinationProgram,
@@ -86,6 +89,7 @@ export const makeFinalizeUniversalTxBuilder =
         writableFlags,
         ixData,
         gasFee,
+        deadline ?? new anchor.BN(DEFAULT_DEADLINE.toString()),
         Array.from(sig.signature),
         sig.recoveryId,
         Array.from(sig.messageHash)
@@ -111,5 +115,7 @@ export const makeFinalizeUniversalTxBuilder =
         recipientAta,
         rateLimitConfig,
         tokenRateLimit,
+        storedIxData: null,
+        storeRefundRecipient: null,
         systemProgram: SystemProgram.programId,
       });

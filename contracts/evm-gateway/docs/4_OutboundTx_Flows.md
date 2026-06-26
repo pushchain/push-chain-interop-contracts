@@ -885,7 +885,7 @@ after TSS has already taken custody.
 **Call chain**:
 ```
 TSS → Vault.revertUniversalTxToken(subTxId, uSubTxId, USDC, amount, revertInstruction)
-    → Vault: validate token support + balance, safeTransfer(gateway, amount)
+    → Vault: validate amount + balance, safeTransfer(gateway, amount)
     → gateway.revertUniversalTxToken(...) → safeTransfer(revertRecipient, amount)
     → emit RevertUniversalTx
 ```
@@ -900,7 +900,7 @@ sequenceDiagram
     participant R as revertRecipient
 
     TSS->>V: revertUniversalTxToken(subTxId, uSubTxId, USDC, amount, {revertRecipient})
-    V->>V: validate: token supported, balance sufficient
+    V->>V: validate: amount > 0, balance sufficient
     V->>USDC: safeTransfer(gateway, amount)
     V->>GW: revertUniversalTxToken(subTxId, uSubTxId, USDC, amount, revertInstruction)
     GW->>USDC: safeTransfer(revertRecipient, amount)
@@ -1004,7 +1004,6 @@ upgraded), calls `CEA.executeUniversalTx{value: 0}(migrationPayload)`.
 3. `isMigration(payload)` → true.
 4. `_handleMigration()`: fetches `factory.CEA_MIGRATION_CONTRACT()`, `delegatecall`s `migrateCEA()`.
 5. The migration contract executes in the CEA's storage context, upgrading internal state.
-6. Emits `UniversalTxExecuted(txId, universalTxId, originCaller, address(CEA), payload)`.
 
 **Result**: BOB's CEA is upgraded to the new implementation. No tokens moved. No PRC20 burned.
 
@@ -1036,7 +1035,6 @@ sequenceDiagram
     CF-->>CEA: migrationContractAddress
     CEA->>MC: delegatecall migrateCEA() [runs in CEA's storage context]
     MC-->>CEA: success (CEA state upgraded)
-    CEA-->>V: emit UniversalTxExecuted
     V-->>TSS: emit UniversalTxFinalized
 ```
 
@@ -1069,10 +1067,9 @@ sequenceDiagram
     participant VAULT as Vault (External Chain)
 
     BOB->>UGPC: rescueFundsOnSourceChain(universalTxId, prc20) {value: pcForGas}
-    UGPC->>UGPC: Validate prc20, RESCUE_FUNDS_GAS_LIMIT
-    UGPC->>UC: gasPriceByChainNamespace(chainNamespace)
-    UGPC->>UC: gasTokenPRC20ByChainNamespace(chainNamespace)
-    UGPC->>UGPC: gasFee = gasPrice * RESCUE_FUNDS_GAS_LIMIT
+    UGPC->>UGPC: Validate prc20 != address(0)
+    UGPC->>UC: getRescueFundsGasLimit(prc20)
+    UC-->>UGPC: (gasToken, gasFee, rescueGasLimit, gasPrice, chainNamespace)
     UGPC->>UC: swapAndBurnGas(gasToken, msg.value, gasFee)
     UC-->>BOB: Refund excess PC
     UGPC->>UGPC: emit RescueFundsOnSourceChain(...)
@@ -1089,18 +1086,16 @@ sequenceDiagram
 **Caller:** Any user (no role required).
 
 **Steps:**
-1. Validate `prc20 != address(0)` and `RESCUE_FUNDS_GAS_LIMIT != 0`.
-2. Resolve `chainNamespace` from the PRC20 token.
-3. Look up `gasPrice` and `gasToken` from `UniversalCore`.
-4. Compute `gasFee = gasPrice * RESCUE_FUNDS_GAS_LIMIT`.
-5. Swap `msg.value` → gas token via `_swapAndCollectFees`. Excess PC refunded to caller.
-6. Emit `RescueFundsOnSourceChain` with `TX_TYPE.RESCUE_FUNDS`.
+1. Validate `prc20 != address(0)`.
+2. Call `IUniversalCore(universalCore).getRescueFundsGasLimit(prc20)`, which returns `(gasToken, gasFee, rescueGasLimit, gasPrice, chainNamespace)` — UniversalCore is the single source of truth for rescue gas parameters.
+3. Swap `msg.value` → gas token via `_swapAndCollectFees(gasToken, msg.value, gasFee)`. Excess PC refunded to caller.
+4. Emit `RescueFundsOnSourceChain` with `TX_TYPE.RESCUE_FUNDS`.
 
 **Key differences from `sendUniversalTxOutbound`:**
 - No PRC20 burn.
 - No protocol fee.
 - No nonce or subTxId generation.
-- Fixed gas limit via admin-set `RESCUE_FUNDS_GAS_LIMIT`.
+- Gas limit (`rescueGasLimit`) and pricing are sourced from `UniversalCore.getRescueFundsGasLimit` — UGPC has no local rescue gas storage variable or setter.
 
 ### 8.4 External Chain Side (`Vault.rescueFunds`)
 
@@ -1118,7 +1113,6 @@ sequenceDiagram
 | Condition (UGPC)                    | Error            |
 | ----------------------------------- | ---------------- |
 | `prc20 == address(0)`              | `ZeroAddress`    |
-| `RESCUE_FUNDS_GAS_LIMIT == 0`      | `InvalidData`    |
 | `gasPrice == 0` for chain           | `InvalidData`    |
 | `gasToken == address(0)` for chain  | `InvalidData`    |
 | `msg.value == 0`                    | `ZeroAmount`     |

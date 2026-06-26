@@ -68,9 +68,9 @@ cast call 0x7169D38820dfd117C3FA1f22a697dBA58d90BA06 \
   0xe8D77b8BC708aeA8E3735f686DcD33004a7Cd294 \
   --rpc-url $"RPC_URL"
 
-# 7. Confirm current gateway TSS_ADDRESS (must survive both upgrades unchanged)
+# 7. Confirm current gateway tssAddress (must survive both upgrades unchanged)
 cast call <UniversalGatewayV0_Proxy> \
-  "TSS_ADDRESS()(address)" \
+  "tssAddress()(address)" \
   --rpc-url $"RPC_URL"
 
 # 8. Build passes cleanly
@@ -97,7 +97,7 @@ forge build
 Note: verify that Vault Deployment goes correctly. Update the addresses in docs/address/<chain_name.md> file.
 
 **2nd Phase: **
-Verify that TSS_ADDRESS of freshly deployed VAULT is 0x05d7386fb3d7cb00e0cfac5af3b2eff6bf37c5f1.
+Verify that tssAddress of freshly deployed VAULT is 0x05d7386fb3d7cb00e0cfac5af3b2eff6bf37c5f1.
 ---
 
 ## Phase 2 — UniversalGatewayV0 Code Preparation for Upgrade [COMPLETE ✅]
@@ -153,15 +153,15 @@ forge script script/gatewayV0/upgradeGatewayV0_upgrade1.s.sol:UpgradeGatewayV0_1
 3. Records current (old) implementation address
 4. Deploys new `UniversalGatewayV0` implementation (includes `moveFunds_temp`)
 5. Calls `ProxyAdmin.upgradeAndCall(proxy, newImpl, "")` — no re-initialization
-6. Verifies: `TSS_ADDRESS` unchanged, `VAULT` is `address(0)` (not yet set), new impl active
+6. Verifies: `tssAddress` unchanged, `VAULT` is `address(0)` (not yet set), new impl active
 
 **Record the implementation address** from the script output — needed for Etherscan verification.
 
 **Post-upgrade verification:**
 ```bash
-# TSS_ADDRESS must be unchanged
+# tssAddress must be unchanged
 cast call <UniversalGatewayV0_Proxy> \
-  "TSS_ADDRESS()(address)" --rpc-url $"RPC_URL"
+  "tssAddress()(address)" --rpc-url $"RPC_URL"
 
 # VAULT must be address(0) — not yet registered
 cast call <UniversalGatewayV0_Proxy> \
@@ -195,7 +195,7 @@ forge script script/gatewayV0/setVault.s.sol:setVault\
    - Sets `VAULT` storage variable
    - Grants `VAULT_ROLE` to the Vault contract
 3. Calls `gateway.setCEAFactory(0xE86655567d3682c0f141d0F924b9946999DC3381)`
-   - Sets `CEA_FACTORY` storage variable
+   - Sets `ceaFactory` storage variable
 4. Verifies both addresses are set and `VAULT_ROLE` is granted
 
 **Post-registration verification:**
@@ -205,7 +205,7 @@ cast call <UniversalGatewayV0_Proxy> \
 # Expected: 0xe8D77b8BC708aeA8E3735f686DcD33004a7Cd294
 
 cast call <UniversalGatewayV0_Proxy> \
-  "CEA_FACTORY()(address)" --rpc-url $"RPC_URL"
+  "ceaFactory()(address)" --rpc-url $"RPC_URL"
 # Expected: 0xE86655567d3682c0f141d0F924b9946999DC3381
 ```
 
@@ -296,11 +296,11 @@ forge script script/gatewayV0/upgradeGatewayV0_upgrade2.s.sol:UpgradeGatewayV0_2
 
 **What the script does:**
 1. Validates: proxy exists, caller is ProxyAdmin owner
-2. Pre-condition checks: `VAULT` is set, `CEA_FACTORY` is set, gateway USDT balance == 0
+2. Pre-condition checks: `VAULT` is set, `ceaFactory` is set, gateway USDT balance == 0
 3. Records old (Upgrade 1) implementation address
 4. Deploys new clean `UniversalGatewayV0` implementation (no `moveFunds_temp`)
 5. Calls `ProxyAdmin.upgradeAndCall(proxy, newImpl, "")` — no re-initialization
-6. Verifies: implementation changed, `TSS_ADDRESS` intact, `VAULT` and `CEA_FACTORY` intact
+6. Verifies: implementation changed, `tssAddress` intact, `VAULT` and `ceaFactory` intact
 
 **Record the new implementation address** from the script output — needed for Etherscan verification.
 
@@ -313,14 +313,14 @@ cast call <UniversalGatewayV0_Proxy> \
 
 # Confirm all critical state preserved
 cast call <UniversalGatewayV0_Proxy> \
-  "TSS_ADDRESS()(address)" --rpc-url $"RPC_URL"
+  "tssAddress()(address)" --rpc-url $"RPC_URL"
 
 cast call <UniversalGatewayV0_Proxy> \
   "VAULT()(address)" --rpc-url $"RPC_URL"
 # Expected: 0xe8D77b8BC708aeA8E3735f686DcD33004a7Cd294
 
 cast call <UniversalGatewayV0_Proxy> \
-  "CEA_FACTORY()(address)" --rpc-url $"RPC_URL"
+  "ceaFactory()(address)" --rpc-url $"RPC_URL"
 # Expected: 0xE86655567d3682c0f141d0F924b9946999DC3381
 ```
 
@@ -363,7 +363,7 @@ forge verify-contract --chain <chain_name> \
 Phase 1    Vault deployed
 Phase 2    Code changes implemented, scripts created,
 Phase 3  Run upgradeGatewayV0_upgrade1.s.sol  -->  record IMPL1_ADDR
-Phase 4  Run setVault.s.sol and setCEAFactory -->  sets VAULT + CEA_FACTORY
+Phase 4  Run setVault.s.sol and setCEAFactory -->  sets VAULT + ceaFactory
 Phase 5  Run moveFunds.s.sol                  -->  USDT migrated to Vault
          Verify: gateway USDT == 0, vault USDT == migrated amount
 Phase 6  Manual: remove moveFunds_temp() from source, forge build, forge test
@@ -377,10 +377,10 @@ Phase 7  Run upgradeGatewayV0_upgrade2.s.sol  -->  record IMPL2_ADDR
 
 | Invariant                                  | Verification Command                                                                     |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| TSS_ADDRESS unchanged across both upgrades | `cast call <proxy> "TSS_ADDRESS()(address)"`                                             |
-| MIN_CAP_UNIVERSAL_TX_USD preserved         | `cast call <proxy> "MIN_CAP_UNIVERSAL_TX_USD()(uint256)"`                                |
-| MAX_CAP_UNIVERSAL_TX_USD preserved         | `cast call <proxy> "MAX_CAP_UNIVERSAL_TX_USD()(uint256)"`                                |
-| BLOCK_USD_CAP preserved                    | `cast call <proxy> "BLOCK_USD_CAP()(uint256)"`                                           |
+| tssAddress unchanged across both upgrades | `cast call <proxy> "tssAddress()(address)"`                                             |
+| minCapUniversalTxUsd preserved         | `cast call <proxy> "minCapUniversalTxUsd()(uint256)"`                                |
+| maxCapUniversalTxUsd preserved         | `cast call <proxy> "maxCapUniversalTxUsd()(uint256)"`                                |
+| blockUsdCap preserved                    | `cast call <proxy> "blockUsdCap()(uint256)"`                                           |
 | epochDurationSec preserved                 | `cast call <proxy> "epochDurationSec()(uint256)"`                                        |
 | VAULT_ROLE granted to Vault                | `cast call <proxy> "hasRole(bytes32,address)(bool)" $(cast keccak "VAULT_ROLE") <VAULT>` |
 | Gateway USDT balance == 0 after Phase 5    | `cast call <USDT> "balanceOf(address)(uint256)" <GATEWAY>`                               |

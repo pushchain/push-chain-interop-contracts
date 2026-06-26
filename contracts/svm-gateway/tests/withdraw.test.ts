@@ -3,9 +3,14 @@ import { Program } from "@coral-xyz/anchor";
 import { UniversalGateway } from "../target/types/universal_gateway";
 import { PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
-import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import {
+    TOKEN_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+    createAssociatedTokenAccountInstruction,
+    getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
 import * as sharedState from "./shared-state";
-import { signTssMessage, TssInstruction, generateUniversalTxId, buildWithdrawAdditionalData } from "./helpers/tss";
+import { signTssMessage, TssInstruction, generateUniversalTxId, buildRevertAdditionalData, buildWithdrawAdditionalData, DEFAULT_DEADLINE } from "./helpers/tss";
 import { ensureTestSetup } from "./helpers/test-setup";
 import {
     USDT_DECIMALS, TOKEN_MULTIPLIER,
@@ -17,7 +22,8 @@ import {
 import { makeFinalizeUniversalTxBuilder, FinalizeUniversalTxArgs } from "./helpers/builders";
 
 // Gas fee constants (in lamports)
-const DEFAULT_GAS_FEE = BigInt(5000); // 0.000005 SOL for relayer
+// Must be >= SIGNATURE_FEE + ExecutedSubTx rent (+ optional ATA rent on SPL paths).
+const DEFAULT_GAS_FEE = BigInt(4_000_000);
 
 const toBytes = (pubkey: PublicKey) => pubkey.toBuffer();
 
@@ -38,6 +44,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
     });
 
     let admin: Keypair;
+    let operator: Keypair;
     let pauser: Keypair;
     let recipient: Keypair;
     let user1: Keypair;
@@ -67,6 +74,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
     const signTssMessageWithChainId = async (params: {
         instruction: TssInstruction;
         amount?: bigint;
+        deadline?: bigint;
         additional: (Uint8Array | number[])[];
     }) => {
         const tssAccount = await program.account.tssPda.fetch(tssPda);
@@ -105,6 +113,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
 
     before(async () => {
         admin = sharedState.getAdmin();
+        operator = sharedState.getOperator();
         pauser = sharedState.getPauser();
         mockUSDT = sharedState.getMockUSDT();
         user1 = sharedState.getUser1(); // Use shared user1 from test-setup
@@ -123,12 +132,12 @@ describe("Universal Gateway - Withdraw Tests", () => {
         [configPda] = PublicKey.findProgramAddressSync([Buffer.from("config")], program.programId);
         [vaultPda] = PublicKey.findProgramAddressSync([Buffer.from("vault")], program.programId);
         [feeVaultPda] = PublicKey.findProgramAddressSync([Buffer.from("fee_vault")], program.programId);
-        [tssPda] = PublicKey.findProgramAddressSync([Buffer.from("tsspda_v2")], program.programId);
+        [tssPda] = PublicKey.findProgramAddressSync([Buffer.from("final_tss_pda")], program.programId);
         [rateLimitConfigPda] = PublicKey.findProgramAddressSync([Buffer.from("rate_limit_config")], program.programId);
 
-        // Ensure protocol fee is disabled for deterministic seeding in this suite.
+        // Ensure inbound fee is disabled for deterministic seeding in this suite.
         await program.methods
-            .setProtocolFee(new anchor.BN(0))
+            .setInboundFee(new anchor.BN(0))
             .accountsPartial({
                 config: configPda,
                 feeVault: feeVaultPda,
@@ -158,7 +167,28 @@ describe("Universal Gateway - Withdraw Tests", () => {
             }
         }
 
-        vaultUsdtAccount = await mockUSDT.createTokenAccount(vaultPda, true);
+        vaultUsdtAccount = getAssociatedTokenAddressSync(
+            mockUSDT.mint.publicKey,
+            vaultPda,
+            true,
+            TOKEN_PROGRAM_ID,
+            ASSOCIATED_TOKEN_PROGRAM_ID
+        );
+        const vaultAtaInfo = await provider.connection.getAccountInfo(vaultUsdtAccount);
+        if (!vaultAtaInfo) {
+            const createVaultAtaIx = createAssociatedTokenAccountInstruction(
+                admin.publicKey,
+                vaultUsdtAccount,
+                vaultPda,
+                mockUSDT.mint.publicKey,
+                TOKEN_PROGRAM_ID,
+                ASSOCIATED_TOKEN_PROGRAM_ID
+            );
+            await provider.sendAndConfirm(
+                new anchor.web3.Transaction().add(createVaultAtaIx),
+                [admin]
+            );
+        }
         recipientUsdtAccount = await mockUSDT.createTokenAccount(recipient.publicKey);
 
         // Seed vault with native SOL using sendUniversalTx (FUNDS route)
@@ -167,7 +197,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
         // Force a known non-zero threshold even if another suite previously set 0.
         const veryLargeThreshold = new anchor.BN("1000000000000000000000"); // Effectively unlimited
         await program.methods
-            .setTokenRateLimit(veryLargeThreshold)
+            .setTokenRateLimit(veryLargeThreshold, false, false)
             .accountsPartial({
                 config: configPda,
                 tokenRateLimit: nativeSolTokenRateLimitPda,
@@ -244,7 +274,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
 
         // Force a known non-zero threshold even if another suite previously set 0.
         await program.methods
-            .setTokenRateLimit(veryLargeThreshold)
+            .setTokenRateLimit(veryLargeThreshold, true, true)
             .accountsPartial({
                 config: configPda,
                 tokenRateLimit: splTokenRateLimitPda,
@@ -344,12 +374,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const finalRecipient = await provider.connection.getBalance(recipient.publicKey);
             const callerBalanceAfter = await provider.connection.getBalance(relayer.publicKey);
 
-            expect(finalVault).to.equal(initialVault - withdrawLamports - Number(DEFAULT_GAS_FEE)); // Vault pays withdraw amount + gas fee
+            const actualRentForExecutedTx = await provider.connection.getMinimumBalanceForRentExemption(8);
+            const gasUsed = 5_000 + actualRentForExecutedTx;
+            expect(finalVault).to.equal(initialVault - withdrawLamports - gasUsed); // Vault pays withdraw amount + gas_used
             expect(finalRecipient).to.equal(initialRecipient + withdrawLamports);
-            // Caller should receive gas_fee (minus rent for executed_sub_tx account creation)
+            // Caller pays executed_sub_tx rent and gets gas_used reimbursement.
             const callerBalanceChange = callerBalanceAfter - callerBalanceBefore;
-            const actualRentForExecutedTx = 890880; // Approximate rent for 8-byte ExecutedSubTx account
-            const expectedCallerGain = Number(DEFAULT_GAS_FEE) - actualRentForExecutedTx; // gas_fee minus rent for executed_sub_tx
+            const expectedCallerGain = gasUsed - actualRentForExecutedTx;
             expect(callerBalanceChange).to.be.closeTo(expectedCallerGain, 100000); // Allow larger variance
         });
 
@@ -445,8 +476,8 @@ describe("Universal Gateway - Withdraw Tests", () => {
 
             await program.methods
                 .unpause()
-                .accountsPartial({ pauser: pauser.publicKey, config: configPda })
-                .signers([pauser])
+                .accountsPartial({ operator: operator.publicKey, config: configPda })
+                .signers([operator])
                 .rpc();
         });
 
@@ -553,7 +584,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
 
             expect(finalVault).to.equal(initialVault - withdrawTokens);
             expect(finalRecipient).to.equal(initialRecipient + withdrawTokens);
-            // Caller should receive gas_fee minus executed_sub_tx rent, optional CEA ATA rent, and tx fee
+            // Caller pays rents upfront and receives gas_used back (gas_to_refund stays in vault).
             const callerBalanceChange = callerBalanceAfter - callerBalanceBefore;
             await provider.connection.confirmTransaction(sig, "confirmed");
             let tx = null as Awaited<ReturnType<typeof provider.connection.getTransaction>>;
@@ -662,7 +693,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: BigInt(revertAmount),
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(recipient.publicKey), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    recipient.publicKey,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE
+                ),
             });
 
             const initialRecipient = await provider.connection.getBalance(recipient.publicKey);
@@ -675,6 +712,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                     new anchor.BN(revertAmount),
                     revertInstruction,
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     signature.signature,
                     signature.recoveryId,
                     signature.messageHash,
@@ -723,10 +761,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
                 instruction: TssInstruction.Revert,
                 amount: BigInt(revertAmount),
                 additional: [
-                    new Uint8Array(subTxId),
-                    new Uint8Array(universalTxId),
-                    toBytes(recipient.publicKey),
-                    buildGasFeeBuf(tooLargeGasFee),
+                    ...buildRevertAdditionalData(
+                        new Uint8Array(subTxId),
+                        new Uint8Array(universalTxId),
+                        recipient.publicKey,
+                        revertInstruction.revertMsg,
+                        tooLargeGasFee
+                    ),
                 ],
             });
 
@@ -738,6 +779,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(revertAmount),
                         revertInstruction,
                         new anchor.BN(Number(tooLargeGasFee)),
+                        new anchor.BN(4102444800),
                         signature.signature,
                         signature.recoveryId,
                         signature.messageHash,
@@ -782,7 +824,14 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: revertRaw,
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(mockUSDT.mint.publicKey), toBytes(revertInstruction.revertRecipient), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    revertInstruction.revertRecipient,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE,
+                    mockUSDT.mint.publicKey
+                ),
             });
             const initialRecipientBalance = await mockUSDT.getBalance(recipientRevertAccount);
             const callerBalanceBefore = await provider.connection.getBalance(relayer.publicKey);
@@ -794,6 +843,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                     new anchor.BN(Number(revertRaw)),
                     revertInstruction,
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     signature.signature,
                     signature.recoveryId,
                     signature.messageHash,
@@ -1013,12 +1063,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
                 .signers([relayer])
                 .rpc();
 
-            // Verify caller received gas fee
+            // Verify caller received gas_used reimbursement
             const callerBalanceAfter = await provider.connection.getBalance(relayer.publicKey);
             const callerBalanceChange = callerBalanceAfter - callerBalanceBefore;
-            // Caller pays for executed_sub_tx account rent, receives gas_fee (transaction fees vary, so we use tolerance)
+            // Caller pays executed_sub_tx rent, receives gas_used = signature_fee + sub_tx_rent.
             const actualRentForExecutedTx = await provider.connection.getMinimumBalanceForRentExemption(8);
-            const expectedCallerGain = -actualRentForExecutedTx + Number(DEFAULT_GAS_FEE);
+            const gasUsed = 5_000 + actualRentForExecutedTx;
+            const expectedCallerGain = -actualRentForExecutedTx + gasUsed;
             expect(callerBalanceChange).to.be.closeTo(expectedCallerGain, 15000); // Allow for transaction fees
 
             // Verify executed_sub_tx account exists after success
@@ -1189,7 +1240,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
                 const signature = await signTssMessageWithChainId({
                     instruction: TssInstruction.Revert,
                     amount: BigInt(revertAmount),
-                    additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(recipient.publicKey), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                    additional: buildRevertAdditionalData(
+                        new Uint8Array(subTxId),
+                        new Uint8Array(universalTxId),
+                        recipient.publicKey,
+                        revertInstruction.revertMsg,
+                        DEFAULT_GAS_FEE
+                    ),
                 });
 
                 await expectRejection(
@@ -1200,6 +1257,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                             new anchor.BN(revertAmount),
                             revertInstruction,
                             new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                            new anchor.BN(4102444800),
                             signature.signature,
                             signature.recoveryId,
                             signature.messageHash,
@@ -1225,8 +1283,8 @@ describe("Universal Gateway - Withdraw Tests", () => {
             } finally {
                 await program.methods
                     .unpause()
-                    .accountsPartial({ pauser: pauser.publicKey, config: configPda })
-                    .signers([pauser])
+                    .accountsPartial({ operator: operator.publicKey, config: configPda })
+                    .signers([operator])
                     .rpc();
             }
         });
@@ -1244,7 +1302,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: BigInt(0),
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(recipient.publicKey), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    recipient.publicKey,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE
+                ),
             });
 
             await expectRejection(
@@ -1255,6 +1319,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(0),
                         revertInstruction,
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         signature.signature,
                         signature.recoveryId,
                         signature.messageHash,
@@ -1293,7 +1358,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: BigInt(revertAmount),
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(PublicKey.default), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    PublicKey.default,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE
+                ),
             });
 
             // Our program validates revertRecipient != Pubkey::default()
@@ -1306,6 +1377,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(revertAmount),
                         revertInstruction,
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         signature.signature,
                         signature.recoveryId,
                         signature.messageHash,
@@ -1362,7 +1434,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: BigInt(revertAmount),
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(recipient.publicKey), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    recipient.publicKey,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE
+                ),
             });
 
             // First revert should succeed
@@ -1373,6 +1451,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                     new anchor.BN(revertAmount),
                     revertInstruction,
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     signature.signature,
                     signature.recoveryId,
                     signature.messageHash,
@@ -1404,7 +1483,13 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature2 = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: BigInt(revertAmount),
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(recipient.publicKey), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    recipient.publicKey,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE
+                ),
             });
 
             try {
@@ -1415,6 +1500,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(revertAmount),
                         revertInstruction,
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         signature2.signature,
                         signature2.recoveryId,
                         signature2.messageHash,
@@ -1469,7 +1555,14 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: BigInt(0),
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(mockUSDT.mint.publicKey), toBytes(revertInstruction.revertRecipient), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    revertInstruction.revertRecipient,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE,
+                    mockUSDT.mint.publicKey
+                ),
             });
 
             await expectRejection(
@@ -1480,6 +1573,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(0),
                         revertInstruction,
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         signature.signature,
                         signature.recoveryId,
                         signature.messageHash,
@@ -1521,7 +1615,14 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: revertRaw,
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(mockUSDT.mint.publicKey), toBytes(PublicKey.default), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    PublicKey.default,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE,
+                    mockUSDT.mint.publicKey
+                ),
             });
 
             await expectRejection(
@@ -1532,6 +1633,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(Number(revertRaw)),
                         revertInstruction,
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         signature.signature,
                         signature.recoveryId,
                         signature.messageHash,
@@ -1574,7 +1676,14 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: revertRaw,
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(mockUSDT.mint.publicKey), toBytes(revertInstruction.revertRecipient), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    revertInstruction.revertRecipient,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE,
+                    mockUSDT.mint.publicKey
+                ),
             });
 
             // First revert should succeed
@@ -1585,6 +1694,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                     new anchor.BN(Number(revertRaw)),
                     revertInstruction,
                     new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(4102444800),
                     signature.signature,
                     signature.recoveryId,
                     signature.messageHash,
@@ -1616,7 +1726,14 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const signature2 = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: revertRaw,
-                additional: [new Uint8Array(subTxId), new Uint8Array(universalTxId), toBytes(mockUSDT.mint.publicKey), toBytes(revertInstruction.revertRecipient), buildGasFeeBuf(DEFAULT_GAS_FEE)],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    revertInstruction.revertRecipient,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE,
+                    mockUSDT.mint.publicKey
+                ),
             });
 
             try {
@@ -1627,6 +1744,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         new anchor.BN(Number(revertRaw)),
                         revertInstruction,
                         new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(4102444800),
                         signature2.signature,
                         signature2.recoveryId,
                         signature2.messageHash,
@@ -1663,6 +1781,154 @@ describe("Universal Gateway - Withdraw Tests", () => {
                     allLogs.includes("AccountDiscriminatorAlreadySet");
                 expect(isReplayError).to.be.true;
             }
+        });
+    });
+
+    // =======================================================================
+    //  DEADLINE ENFORCEMENT
+    // =======================================================================
+    describe("deadline enforcement", () => {
+        const PAST_DEADLINE = BigInt(1); // Unix epoch 1970 — always expired
+
+        it("rejects finalize_universal_tx with an expired deadline (SignatureExpired)", async () => {
+            const subTxId = generateTxId();
+            const universalTxId = generateUniversalTxId();
+            const pushAccount = generatePushAccount();
+            const withdrawLamports = anchor.web3.LAMPORTS_PER_SOL;
+
+            // Sign with the past deadline — hash includes deadline=1
+            const tssAdditional = buildWithdrawAdditionalData(
+                new Uint8Array(universalTxId),
+                new Uint8Array(subTxId),
+                new Uint8Array(pushAccount),
+                PublicKey.default,
+                recipient.publicKey,
+                DEFAULT_GAS_FEE
+            );
+            const signature = await signTssMessageWithChainId({
+                instruction: TssInstruction.Withdraw,
+                amount: BigInt(withdrawLamports),
+                additional: tssAdditional,
+                deadline: PAST_DEADLINE,
+            });
+
+            await expectRejection(
+                finalizeUniversalTx({
+                    instructionId: 1,
+                    subTxId,
+                    universalTxId,
+                    amount: new anchor.BN(withdrawLamports),
+                    pushAccount,
+                    gasFee: new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    deadline: new anchor.BN(PAST_DEADLINE.toString()),
+                    sig: signature,
+                    caller: relayer.publicKey,
+                    recipient: recipient.publicKey,
+                })
+                    .signers([relayer])
+                    .rpc(),
+                "SignatureExpired"
+            );
+        });
+
+        it("rejects revert_universal_tx with an expired deadline (SignatureExpired)", async () => {
+            const subTxId = generateTxId();
+            const universalTxId = generateUniversalTxId();
+            const revertAmount = anchor.web3.LAMPORTS_PER_SOL;
+            const revertInstruction = {
+                revertRecipient: recipient.publicKey,
+                revertMsg: Buffer.from("expired revert"),
+            };
+
+            const signature = await signTssMessageWithChainId({
+                instruction: TssInstruction.Revert,
+                amount: BigInt(revertAmount),
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    recipient.publicKey,
+                    revertInstruction.revertMsg,
+                    DEFAULT_GAS_FEE
+                ),
+                deadline: PAST_DEADLINE,
+            });
+
+            await expectRejection(
+                program.methods
+                    .revertUniversalTx(
+                        subTxId,
+                        universalTxId,
+                        new anchor.BN(revertAmount),
+                        revertInstruction,
+                        new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(PAST_DEADLINE.toString()),
+                        signature.signature,
+                        signature.recoveryId,
+                        signature.messageHash,
+                    )
+                    .accountsPartial({
+                        config: configPda,
+                        vault: vaultPda,
+                        feeVault: feeVaultPda,
+                        tssPda,
+                        recipient: recipient.publicKey,
+                        executedSubTx: getExecutedTxPda(subTxId),
+                        caller: relayer.publicKey,
+                        systemProgram: SystemProgram.programId,
+                        tokenVault: null,
+                        recipientTokenAccount: null,
+                        tokenMint: null,
+                        tokenProgram: null,
+                    })
+                    .signers([relayer])
+                    .rpc(),
+                "SignatureExpired"
+            );
+        });
+
+        it("rejects finalize_universal_tx when submitted deadline differs from signed deadline (MessageHashMismatch)", async () => {
+            const subTxId = generateTxId();
+            const universalTxId = generateUniversalTxId();
+            const pushAccount = generatePushAccount();
+            const withdrawLamports = anchor.web3.LAMPORTS_PER_SOL;
+
+            // Sign with DEFAULT_DEADLINE (far future)
+            const tssAdditional = buildWithdrawAdditionalData(
+                new Uint8Array(universalTxId),
+                new Uint8Array(subTxId),
+                new Uint8Array(pushAccount),
+                PublicKey.default,
+                recipient.publicKey,
+                DEFAULT_GAS_FEE
+            );
+            const signature = await signTssMessageWithChainId({
+                instruction: TssInstruction.Withdraw,
+                amount: BigInt(withdrawLamports),
+                additional: tssAdditional,
+                // uses DEFAULT_DEADLINE implicitly
+            });
+
+            // Submit with a different future deadline — expiry check passes but
+            // the on-chain hash reconstruction uses the submitted deadline, so
+            // it won't match the signature (which was built with DEFAULT_DEADLINE).
+            const WRONG_FUTURE_DEADLINE = DEFAULT_DEADLINE + BigInt(1);
+            await expectRejection(
+                finalizeUniversalTx({
+                    instructionId: 1,
+                    subTxId,
+                    universalTxId,
+                    amount: new anchor.BN(withdrawLamports),
+                    pushAccount,
+                    gasFee: new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    deadline: new anchor.BN(WRONG_FUTURE_DEADLINE.toString()),
+                    sig: signature,
+                    caller: relayer.publicKey,
+                    recipient: recipient.publicKey,
+                })
+                    .signers([relayer])
+                    .rpc(),
+                "MessageHashMismatch"
+            );
         });
     });
 });

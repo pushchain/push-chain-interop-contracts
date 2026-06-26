@@ -18,6 +18,8 @@ library Errors {
     error InvalidRecipient();
     error PayloadExecuted();
     error Unauthorized();
+    error GatewayNotPaused();
+    error EmptyTokenList();
 
     // ==============================
     //     GATEWAY ERRORS
@@ -28,8 +30,10 @@ library Errors {
     error WithdrawFailed();
     error RateLimitExceeded();
     error BlockCapLimitExceeded();
+    error GasPriceBelowBase();
     error SlippageExceededOrExpired();
     error InsufficientBalance();
     error InsufficientProtocolFee();
     error TokenBurnFailed(address token, uint256 amount);
+    error TokenTransferFailed(address token, uint256 amount);
 }

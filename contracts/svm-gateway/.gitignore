@@ -21,3 +21,4 @@ test-ledger
 **/*secret*
 **/*private*
 secrets/
+.private.context

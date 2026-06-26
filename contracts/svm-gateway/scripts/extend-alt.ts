@@ -70,7 +70,11 @@ async function main() {
     process.exit(1);
   }
 
-  if (altAccount.value.state.deactivationSlot !== undefined) {
+  const ACTIVE_SENTINEL = BigInt("18446744073709551615"); // u64::MAX = active
+  if (
+    altAccount.value.state.deactivationSlot !== undefined &&
+    BigInt(altAccount.value.state.deactivationSlot.toString()) !== ACTIVE_SENTINEL
+  ) {
     console.error(`❌ ALT is deactivated at slot ${altAccount.value.state.deactivationSlot}`);
     console.error("   Cannot extend a deactivated ALT. Create a new one instead.");
     process.exit(1);

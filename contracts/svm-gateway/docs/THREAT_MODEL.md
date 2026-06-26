@@ -31,8 +31,9 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 | Actor | Trust Level | Capability |
 |---|---|---|
-| `Config.admin` | High | Update config, oracle feed, rate limits, authorities, protocol fee |
-| `Config.pauser` | Medium | Pause/unpause gateway |
+| `Config.admin` | High | Update config, oracle feed, rate limits, authorities, bounded inbound fee |
+| `Config.operator` | High | Unpause gateway, rotate TSS signer |
+| `Config.pauser` | Medium | Pause gateway |
 | TSS | High | Authorize all outbound releases with signatures |
 | UV | Untrusted for content | Submit txs and pay gas only |
 | Public user | Untrusted | Call inbound deposit only |
@@ -40,7 +41,7 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 **Boundary summary:**
 - UV cannot change signed outbound content without failing signature validation.
-- `Vault` stores bridge funds; `FeeVault` stores protocol fees and revert/rescue reimbursements.
+- `Vault` stores bridge funds; `FeeVault` stores inbound fees and revert/rescue reimbursements.
 - Replay protection is on-chain via `ExecutedSubTx` PDA (`sub_tx_id` uniqueness).
 
 ---
@@ -51,8 +52,11 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 | Authority | Protected Surface |
 |---|---|
-| `Config.admin` | all `set_*` admin setters, `set_authorities`, `set_protocol_fee`, `init_tss`, `update_tss` |
-| `Config.pauser` or `Config.admin` | `pause`, `unpause` |
+| `Config.admin` | all `set_*` admin setters, `propose_authorities`, `set_inbound_fee`, `withdraw_inbound_fees`, `init_tss`, `set_operator` |
+| `Config.operator` | `unpause`, `update_tss` |
+| `Config.pending_admin` | `accept_admin` |
+| `Config.pending_pauser` | `accept_pauser` |
+| `Config.pauser` or `Config.admin` | `pause` |
 | TSS signature (`TssPda.tss_eth_address`) | `finalize_universal_tx`, `revert_universal_tx`, `rescue_funds` |
 | Public | `send_universal_tx` |
 
@@ -77,38 +81,54 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Control: separate pauser can stop user flows.  
    Residual: most setters are immediate (no timelock).
 
-3. **Outbound replay (`sub_tx_id`)**  
+3. **Authority handover typo / wrong recipient key**  
+   Risk: one-step transfer can permanently assign control to an unusable pubkey.  
+   Control: authority changes are proposal + acceptance; current authority remains active until the proposed key accepts.
+
+4. **Outbound replay (`sub_tx_id`)**  
    Risk: duplicate release for same outbound request.  
    Control: `ExecutedSubTx` PDA is created with `init`; reuse fails.
 
-4. **Message tampering by UV**  
+5. **Message tampering by UV**  
    Risk: UV mutates recipient/amount/accounts/gas fields.  
    Control: program reconstructs message hash and verifies recovered TSS address.
 
-5. **Execute account privilege escalation**  
+6. **Execute account privilege escalation**  
    Risk: injected signer or mismatched account list in `remaining_accounts`.  
    Control: signer entries rejected; account metas validated against signed payload.
 
-6. **Oracle account substitution / staleness**  
+7. **Oracle account substitution / staleness**  
    Risk: bad price used for inbound gas-route caps.  
-   Control: `price_update.key() == config.pyth_price_feed` + feed-id check + positive price + staleness check (`get_price_no_older_than`) + confidence threshold (`config.pyth_confidence_threshold`).  
-   Residual: max-age is a code constant and should be tuned per deployment policy.
+   Control: `price_update.key() == config.pyth_price_feed` + feed-id check + positive price + staleness check (`get_price_no_older_than` using `config.pyth_max_age_seconds`) + confidence threshold (`config.pyth_confidence_threshold`).  
+   Residual: admin can set the staleness window too loose; recommended value is 60–90 seconds.
 
-7. **Inbound SPL account spoofing**  
+8. **Inbound SPL account spoofing**  
    Risk: user supplies fake source/destination token accounts.  
-   Control: owner and mint checks on both `user_token_account` and `gateway_token_account`.
+   Control: `user_token_account` owner/mint checks plus canonical ATA enforcement on `gateway_token_account` for `(vault, token)`.
 
-8. **Fee vault depletion**  
+9. **Fee vault depletion**  
    Risk: revert/rescue fail due to reimbursement shortfall.  
    Control: reimbursement checks available lamports above rent and fails safely (`InsufficientFeePool`).
 
-9. **Pause griefing**  
-   Risk: pauser halts flows.  
-   Control: admin can unpause directly; keep admin/pauser as separate keys.
+12. **Inbound fee misconfiguration**  
+   Risk: admin sets an excessive inbound fee and griefs users.  
+   Control: `set_inbound_fee` is hard-capped at `2_000_000` lamports (`0.002 SOL`).
 
-10. **Wrong `token_rate_limit` account passed**  
-    Risk: bypass token caps using another token's state account.  
-    Control: account must be program-owned `TokenRateLimit` and internal `token_mint` must match expected mint.
+13. **FeeVault surplus locked**  
+   Risk: inbound fees from successful txs accumulate with no exit path.  
+   Control: `withdraw_inbound_fees` (admin-only) allows sweeping surplus above rent-exemption to a treasury address.
+
+10. **Pause griefing**  
+   Risk: pauser halts flows.  
+   Control: pauser can halt flows, but only operator can unpause; admin can still update configuration/rate-limit parameters while paused; keep admin/operator/pauser as separate keys.
+
+11. **Wrong `token_rate_limit` account passed**  
+   Risk: bypass token caps using another token's state account.  
+   Control: account must be program-owned `TokenRateLimit` and internal `token_mint` must match expected mint.
+
+13. **Whitelisting a centralized SPL mint without explicit acknowledgment**  
+   Risk: issuer retains `mint_authority` and/or `freeze_authority`, affecting collateral assumptions or freezing vault flows.  
+   Control: `set_token_rate_limit` requires explicit acknowledgment flags for retained mint and freeze authorities before a non-zero threshold can be set.
 
 ---
 
@@ -131,6 +151,6 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 ## 6. Deferred / Non-Goals
 
-- Pyth max-age is a fixed code constant, not an admin-set runtime parameter.
+- Pyth max-age (`pyth_max_age_seconds`) is admin-configurable. Default is 60 seconds at initialization.
 - No user-driven timeout recovery path if off-chain relay never executes.
 - No automatic `FeeVault` replenishment; operational top-up is required.

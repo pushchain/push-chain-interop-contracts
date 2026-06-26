@@ -22,7 +22,7 @@ import {
 } from "@solana/spl-token";
 import { assert } from "chai";
 import { AltHelper } from "./alt-helper";
-import { signTssMessage, buildWithdrawAdditionalData, TssInstruction, generateUniversalTxId } from "../tests/helpers/tss";
+import { signTssMessage, buildWithdrawAdditionalData, TssInstruction, generateUniversalTxId, DEFAULT_DEADLINE } from "../tests/helpers/tss";
 
 /**
  * ALT Integration Test Script
@@ -45,7 +45,7 @@ import { signTssMessage, buildWithdrawAdditionalData, TssInstruction, generateUn
 const PROGRAM_ID = new PublicKey("DJoFYDpgbTfxbXBv1QYhYGc9FK4J5FUKpYXAfSkHryXp");
 
 const CONFIG_SEED = Buffer.from("config");
-const TSS_SEED = Buffer.from("tsspda_v2");
+const TSS_SEED = Buffer.from("final_tss_pda");
 const VAULT_SEED = Buffer.from("vault");
 const CEA_SEED = Buffer.from("push_identity");
 const EXECUTED_SUB_TX_SEED = Buffer.from("executed_sub_tx");
@@ -313,6 +313,7 @@ async function main() {
         Buffer.alloc(0),
         gasFeeBn,
 
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
         Array.from(signature),
         recoveryId,
         Array.from(messageHash),
@@ -326,6 +327,8 @@ async function main() {
         executedSubTx: freshExecutedTx,
         systemProgram: SystemProgram.programId,
         destinationProgram: SystemProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
         recipient,
         vaultAta: null,
         ceaAta: null,
@@ -464,6 +467,7 @@ async function main() {
             Buffer.alloc(0),
             gasFeeBn,
 
+            new anchor.BN(DEFAULT_DEADLINE.toString()),
             Array.from(splSig.signature),
             splSig.recoveryId,
             Array.from(splSig.messageHash),
@@ -477,6 +481,8 @@ async function main() {
             executedSubTx: freshExecutedTx,
             systemProgram: SystemProgram.programId,
             destinationProgram: SystemProgram.programId,
+      storedIxData: null,
+      storeRefundRecipient: null,
             recipient,
             vaultAta,
             ceaAta,

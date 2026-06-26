@@ -35,12 +35,11 @@ pub fn init_tss(ctx: Context<InitTss>, tss_eth_address: [u8; 20], chain_id: Stri
     let tss = &mut ctx.accounts.tss_pda;
     tss.tss_eth_address = tss_eth_address;
     tss.chain_id = chain_id;
-    tss.authority = ctx.accounts.authority.key();
     tss.bump = ctx.bumps.tss_pda;
     Ok(())
 }
 
-/// Update TSS ETH address / chain id (admin-only)
+/// Update TSS ETH address / chain id (operator-only)
 #[derive(Accounts)]
 pub struct UpdateTss<'info> {
     #[account(
@@ -53,7 +52,7 @@ pub struct UpdateTss<'info> {
     #[account(
         seeds = [CONFIG_SEED],
         bump = config.bump,
-        constraint = config.admin == authority.key() @ GatewayError::Unauthorized
+        constraint = config.operator == authority.key() @ GatewayError::Unauthorized
     )]
     pub config: Account<'info, Config>,
 
@@ -78,21 +77,36 @@ pub fn update_tss(
 /// Common validator: verify hash and ECDSA secp256k1 signature recovers stored ETH address.
 /// Used by withdraw, revert, and execute functions - single standard for all TSS-signed messages.
 /// Replay protection is ensured per-tx by the ExecutedSubTx PDA (seeded by sub_tx_id).
+///
+/// Message format: PREFIX || instruction_id || chain_id || deadline (i64 BE) || [amount (u64 BE)] || additional_data
+///
+/// `deadline` is a unix timestamp (seconds). The program rejects finalization if the
+/// current on-chain clock is past the deadline, preventing late execution after a
+/// source-chain revert/refund.
 pub fn validate_message(
     tss: &mut Account<TssPda>,
     instruction_id: u8,
     amount: Option<u64>,
+    deadline: i64,
     additional_data: &[&[u8]],
     message_hash: &[u8; 32],
     signature: &[u8; 64],
     recovery_id: u8,
 ) -> Result<()> {
+    // Deadline is checked before hash reconstruction and secp256k1 recovery. Both values are
+    // public — deadline is a tx argument and the clock is a sysvar — so early rejection leaks
+    // nothing while avoiding the recovery compute cost on already-expired payloads.
+    // No on-chain maximum deadline is enforced; TSS signer policy caps the validity window.
+    let now = Clock::get()?.unix_timestamp;
+    require!(now <= deadline, GatewayError::SignatureExpired);
+
     // Rebuild message
     let mut buf = Vec::new();
     const PREFIX: &[u8] = b"PUSH_CHAIN_SVM";
     buf.extend_from_slice(PREFIX);
     buf.push(instruction_id);
     buf.extend_from_slice(tss.chain_id.as_bytes());
+    buf.extend_from_slice(&deadline.to_be_bytes());
     if let Some(val) = amount {
         buf.extend_from_slice(&val.to_be_bytes());
     }
