@@ -9,7 +9,7 @@ pub mod utils;
 
 use instructions::*;
 
-declare_id!("GXNqSQX2VGbRXgZSMQg9J1LRviFysTq3zsZAb4teD3Uk");
+declare_id!("DJoFYDpgbTfxbXBv1QYhYGc9FK4J5FUKpYXAfSkHryXp");
 
 #[program]
 pub mod universal_gateway {
@@ -490,4 +490,3 @@ pub use state::{
     StoredIxData,
     VAULT_SEED,
 };
-
