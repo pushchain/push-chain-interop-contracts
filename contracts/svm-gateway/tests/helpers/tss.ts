@@ -10,6 +10,8 @@ export enum TssInstruction {
   Execute = 2, // Unified execute (vault→CEA→CPI)
   Revert = 3,  // Unified revert (SOL or SPL)
   Rescue = 4,  // Emergency rescue (SOL or SPL)
+  Pc20Finalize = 5, // PC20 export finalize (mint wrapped)
+  Pc20BurnRevert = 6, // PC20 burn revert (remint)
 }
 
 // Default to Devnet cluster pubkey if not specified
@@ -287,4 +289,70 @@ export function buildRevertAdditionalData(
   }
 
   return [subTxId, universalTxId, recipient.toBuffer(), gasFeeBuf, revertMsgHash];
+}
+
+export function serializeStringForSignature(value: string): Buffer {
+  const bytes = Buffer.from(value, "utf8");
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(bytes.length, 0);
+  return Buffer.concat([len, bytes]);
+}
+
+export function serializeBytesForSignature(value: Uint8Array | Buffer): Buffer {
+  const bytes = Buffer.from(value);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(bytes.length, 0);
+  return Buffer.concat([len, bytes]);
+}
+
+export function buildPc20FinalizeAdditionalData(params: {
+  universalTxId: BytesLike;
+  subTxId: BytesLike;
+  sourceAsset: BytesLike;
+  pushAccount: BytesLike;
+  recipient: PublicKey;
+  name: string;
+  symbol: string;
+  decimals: number;
+  gasFee: bigint;
+  userData?: Uint8Array | Buffer;
+}): BytesLike[] {
+  const gasFeeBuf = Buffer.alloc(8);
+  gasFeeBuf.writeBigUInt64BE(params.gasFee, 0);
+  const nameBuf = serializeStringForSignature(params.name);
+  const symbolBuf = serializeStringForSignature(params.symbol);
+  const base: BytesLike[] = [
+    params.subTxId,
+    params.universalTxId,
+    params.pushAccount,
+    params.sourceAsset,
+    params.recipient.toBuffer(),
+    nameBuf,
+    symbolBuf,
+    Buffer.from([params.decimals]),
+    gasFeeBuf,
+  ];
+
+  if (!params.userData) {
+    return base;
+  }
+  return [...base, serializeBytesForSignature(params.userData)];
+}
+
+export function buildPc20BurnRevertAdditionalData(
+  subTxId: BytesLike,
+  originalBurnSubTxId: BytesLike,
+  sourceAsset: BytesLike,
+  revertRecipient: PublicKey,
+  gasFee: bigint
+): BytesLike[] {
+  const gasFeeBuf = Buffer.alloc(8);
+  gasFeeBuf.writeBigUInt64BE(gasFee, 0);
+  return [
+    subTxId,
+    originalBurnSubTxId,
+    sourceAsset,
+    revertRecipient.toBuffer(),
+    gasFeeBuf,
+  ];
 }

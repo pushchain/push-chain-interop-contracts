@@ -96,6 +96,17 @@ export const getFeeVaultPda = (programId: PublicKey): PublicKey => {
   return pda;
 };
 
+export const getPc20MintPda = (
+  sourceAsset: number[] | Uint8Array,
+  programId: PublicKey
+): PublicKey => {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("pc20_mint"), Buffer.from(sourceAsset)],
+    programId
+  );
+  return pda;
+};
+
 export const getTokenRateLimitPda = (
   tokenMint: PublicKey,
   programId: PublicKey

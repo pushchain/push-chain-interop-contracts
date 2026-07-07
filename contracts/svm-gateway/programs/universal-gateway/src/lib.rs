@@ -9,7 +9,7 @@ pub mod utils;
 
 use instructions::*;
 
-declare_id!("DJoFYDpgbTfxbXBv1QYhYGc9FK4J5FUKpYXAfSkHryXp");
+declare_id!("GXNqSQX2VGbRXgZSMQg9J1LRviFysTq3zsZAb4teD3Uk");
 
 #[program]
 pub mod universal_gateway {
@@ -187,8 +187,8 @@ pub mod universal_gateway {
     /// @param instruction_id 1=withdraw (vault→CEA→recipient), 2=execute (vault→CEA→CPI)
     /// @param deadline Unix timestamp (seconds) after which TSS signature is invalid.
     ///        Prevents late first-execution on Solana after source-chain revert/refund.
-    pub fn finalize_universal_tx(
-        mut ctx: Context<FinalizeUniversalTx>,
+    pub fn finalize_universal_tx<'a, 'b, 'c, 'info>(
+        mut ctx: Context<'a, 'b, 'c, 'info, FinalizeUniversalTx<'info>>,
         instruction_id: u8,
         sub_tx_id: [u8; 32],
         universal_tx_id: [u8; 32],
@@ -233,8 +233,8 @@ pub mod universal_gateway {
 
     /// @notice Additive ref-finalize route. Executes the same finalize flow using ix_data loaded from PDA.
     /// @param deadline Unix timestamp (seconds) after which TSS signature is invalid.
-    pub fn finalize_universal_tx_with_ix_data_ref(
-        mut ctx: Context<FinalizeUniversalTx>,
+    pub fn finalize_universal_tx_with_ix_data_ref<'a, 'b, 'c, 'info>(
+        mut ctx: Context<'a, 'b, 'c, 'info, FinalizeUniversalTx<'info>>,
         instruction_id: u8,
         sub_tx_id: [u8; 32],
         universal_tx_id: [u8; 32],
@@ -318,6 +318,67 @@ pub mod universal_gateway {
     ///         SOL path: token_mint = None. SPL path: token_mint = Some.
     ///         Replay-protected via ExecutedSubTx PDA
     /// @param deadline Unix timestamp (seconds) after which TSS signature is invalid.
+    // =========================
+    //            PC20
+    // =========================
+    pub fn finalize_pc20_export(
+        ctx: Context<FinalizePc20Export>,
+        sub_tx_id: [u8; 32],
+        universal_tx_id: [u8; 32],
+        source_asset: [u8; 20],
+        amount: u64,
+        push_account: [u8; 20],
+        recipient: Pubkey,
+        name: String,
+        symbol: String,
+        decimals: u8,
+        user_data: Vec<u8>,
+        gas_fee: u64,
+        deadline: i64,
+        signature: [u8; 64],
+        recovery_id: u8,
+        message_hash: [u8; 32],
+    ) -> Result<()> {
+        instructions::pc20::finalize_pc20_export(
+            ctx, sub_tx_id, universal_tx_id, source_asset, amount, push_account,
+            recipient, name, symbol, decimals, user_data, gas_fee, deadline,
+            signature, recovery_id, message_hash,
+        )
+    }
+
+    pub fn send_pc20_universal_tx(
+        ctx: Context<SendPc20UniversalTx>,
+        sub_tx_id: [u8; 32],
+        source_asset: [u8; 20],
+        amount: u64,
+        recipient: [u8; 20],
+        payload: Vec<u8>,
+        revert_recipient: Pubkey,
+    ) -> Result<()> {
+        instructions::pc20::send_pc20_universal_tx(
+            ctx, sub_tx_id, source_asset, amount, recipient, payload, revert_recipient,
+        )
+    }
+
+    pub fn revert_pc20_burn(
+        ctx: Context<RevertPc20Burn>,
+        sub_tx_id: [u8; 32],
+        original_burn_sub_tx_id: [u8; 32],
+        source_asset: [u8; 20],
+        amount: u64,
+        revert_recipient: Pubkey,
+        gas_fee: u64,
+        deadline: i64,
+        signature: [u8; 64],
+        recovery_id: u8,
+        message_hash: [u8; 32],
+    ) -> Result<()> {
+        instructions::pc20::revert_pc20_burn(
+            ctx, sub_tx_id, original_burn_sub_tx_id, source_asset, amount,
+            revert_recipient, gas_fee, deadline, signature, recovery_id, message_hash,
+        )
+    }
+
     pub fn rescue_funds(
         ctx: Context<RescueFunds>,
         sub_tx_id: [u8; 32],
@@ -399,9 +460,11 @@ pub use instructions::execute::{CloseStoredIxData, FinalizeUniversalTx, StoreExe
 pub use instructions::initialize::Initialize;
 pub use instructions::rescue::RescueFunds;
 pub use instructions::revert::RevertUniversalTx;
+pub use instructions::pc20::{FinalizePc20Export, RevertPc20Burn, SendPc20UniversalTx};
 pub use utils::PriceData;
 
 pub use state::{
+    Pc20BurnReverted, Pc20ExportFinalized, Pc20UniversalTx, PC20_MINT_SEED,
     // Events
     CapsUpdated,
     Config,

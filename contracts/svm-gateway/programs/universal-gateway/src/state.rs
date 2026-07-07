@@ -10,6 +10,7 @@ pub const RATE_LIMIT_SEED: &[u8] = b"rate_limit";
 pub const EXECUTED_SUB_TX_SEED: &[u8] = b"executed_sub_tx";
 pub const STORED_IX_DATA_SEED: &[u8] = b"stored_ix_data";
 pub const CEA_SEED: &[u8] = b"push_identity";
+pub const PC20_MINT_SEED: &[u8] = b"pc20_mint";
 pub const MAX_INBOUND_FEE_LAMPORTS: u64 = 2_000_000;
 /// Base Solana transaction fee per signature (protocol constant, unchanged since genesis).
 ///
@@ -308,4 +309,49 @@ pub struct FundsRescued {
     pub token: Pubkey,
     pub amount: u64,
     pub revert_instruction: RevertInstructions,
+}
+
+#[event]
+pub struct Pc20ExportFinalized {
+    pub sub_tx_id: [u8; 32],
+    pub universal_tx_id: [u8; 32],
+    pub push_account: [u8; 20],
+    pub source_asset: [u8; 20],
+    pub wrapped_mint: Pubkey,
+    pub recipient: Pubkey,
+    pub amount: u64,
+    pub gas_fee: u64,
+    pub gas_used: u64,
+    pub gas_to_refund: u64,
+    pub mint_created: bool,
+    pub recipient_ata_created: bool,
+    pub cea_ata_created: bool,
+    pub payload_executed: bool,
+}
+
+#[event]
+pub struct Pc20UniversalTx {
+    pub sub_tx_id: [u8; 32],
+    pub sender: Pubkey,
+    pub push_account: [u8; 20],
+    pub source_asset: [u8; 20],
+    pub wrapped_mint: Pubkey,
+    pub amount: u64,
+    pub recipient: [u8; 20],
+    pub payload: Vec<u8>,
+    pub revert_recipient: Pubkey,
+    pub from_cea: bool,
+}
+
+#[event]
+pub struct Pc20BurnReverted {
+    pub sub_tx_id: [u8; 32],
+    pub original_burn_sub_tx_id: [u8; 32],
+    pub source_asset: [u8; 20],
+    pub wrapped_mint: Pubkey,
+    pub amount: u64,
+    pub revert_recipient: Pubkey,
+    pub gas_fee: u64,
+    pub gas_used: u64,
+    pub recipient_ata_created: bool,
 }

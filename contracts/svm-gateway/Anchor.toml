@@ -5,15 +5,14 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-test_counter = "9LfpvcY2CYcNWEc2ip2ZwwKivEALbF3knwimXrbLubT2"
-universal_gateway = "DJoFYDpgbTfxbXBv1QYhYGc9FK4J5FUKpYXAfSkHryXp"
-# universal_gateway = "CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS"
+test_counter = "5sNhi9iyTnUzaox7rzF2r6QV6QcmbvMyLTiGdGDYsurk"
+universal_gateway = "GXNqSQX2VGbRXgZSMQg9J1LRviFysTq3zsZAb4teD3Uk"
+
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
 cluster = "localnet"
-# cluster = "https://api.devnet.solana.com"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
@@ -24,13 +23,12 @@ startup_wait = 10000
 shutdown_wait = 5000
 upgradeable = true
 
-[test.validator]
-bind_address = "0.0.0.0"
-rpc_port = 8899
-ledger = ".anchor/test-ledger"
-reset = true
-
 [[test.genesis]]
 address = "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ"
 program = "tests/fixtures/pyth_pull.so"
 upgradeable = true
+
+[test.validator]
+bind_address = "0.0.0.0"
+ledger = ".anchor/test-ledger"
+rpc_port = 8899

@@ -1,6 +1,7 @@
 use crate::errors::GatewayError;
 use crate::instructions::tss::validate_message;
 use crate::instructions::withdraw::{internal_withdraw, send_universal_tx_to_uea};
+use crate::instructions::pc20::{is_send_pc20_universal_tx_ix, send_pc20_universal_tx_from_finalize_cea};
 use crate::state::{
     Config, ExecutedSubTx, GatewayAccountMeta, RateLimitConfig, StoredIxData, TokenRateLimit,
     TssPda, UniversalTxFinalized, CEA_SEED, EXECUTED_SUB_TX_SEED, RATE_LIMIT_CONFIG_SEED,
@@ -176,6 +177,7 @@ pub struct CloseStoredIxData<'info> {
 struct FinalizeRequestContext {
     is_withdraw: bool,
     is_native: bool,
+    is_pc20_cea_burn: bool,
     token: Pubkey,
     target: Pubkey,
 }
@@ -245,8 +247,8 @@ pub fn close_stored_ix_data(ctx: Context<CloseStoredIxData>) -> Result<()> {
     Ok(())
 }
 
-pub fn finalize_universal_tx_common<'info>(
-    ctx: &mut Context<FinalizeUniversalTx<'info>>,
+pub fn finalize_universal_tx_common<'a, 'b, 'c, 'info>(
+    ctx: &mut Context<'a, 'b, 'c, 'info, FinalizeUniversalTx<'info>>,
     instruction_id: u8,
     sub_tx_id: [u8; 32],
     universal_tx_id: [u8; 32],
@@ -310,6 +312,7 @@ pub fn finalize_universal_tx_common<'info>(
         &request,
         execute_accounts,
         amount,
+        sub_tx_id,
         push_account,
         &ix_data,
         &cea_seeds,
@@ -470,9 +473,17 @@ fn validate_finalize_request(
         );
     }
 
+    let is_pc20_cea_burn =
+        !is_withdraw && target == *ctx.program_id && is_send_pc20_universal_tx_ix(ix_data);
+    if is_pc20_cea_burn {
+        require!(is_native, GatewayError::InvalidAccount);
+        require!(amount == 0, GatewayError::InvalidAmount);
+    }
+
     Ok(FinalizeRequestContext {
         is_withdraw,
         is_native,
+        is_pc20_cea_burn,
         token,
         target,
     })
@@ -565,11 +576,12 @@ fn stage_assets_to_cea(
     }
 }
 
-fn dispatch_finalize_action(
-    ctx: &mut Context<FinalizeUniversalTx>,
+fn dispatch_finalize_action<'a, 'b, 'c, 'info>(
+    ctx: &mut Context<'a, 'b, 'c, 'info, FinalizeUniversalTx<'info>>,
     request: &FinalizeRequestContext,
     execute_accounts: Option<Vec<GatewayAccountMeta>>,
     amount: u64,
+    sub_tx_id: [u8; 32],
     push_account: [u8; 20],
     ix_data: &[u8],
     cea_seeds: &[&[u8]],
@@ -580,6 +592,18 @@ fn dispatch_finalize_action(
     }
 
     if request.target == *ctx.program_id {
+        if request.is_pc20_cea_burn {
+            send_pc20_universal_tx_from_finalize_cea(
+                ctx.program_id,
+                &ctx.accounts.cea_authority.to_account_info(),
+                ctx.remaining_accounts,
+                sub_tx_id,
+                push_account,
+                ix_data,
+                cea_seeds,
+            )?;
+            return Ok(());
+        }
         send_universal_tx_to_uea(ctx, push_account, ix_data, cea_seeds)?;
         return Ok(());
     }
