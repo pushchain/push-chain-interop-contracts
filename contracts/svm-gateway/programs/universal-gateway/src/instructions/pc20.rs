@@ -213,6 +213,10 @@ pub fn finalize_pc20_export(
         recipient != Pubkey::default(),
         GatewayError::InvalidRecipient
     );
+    require!(
+        ctx.accounts.recipient.key() == recipient,
+        GatewayError::InvalidRecipient
+    );
     require!(source_asset != [0u8; 20], GatewayError::ZeroAddress);
 
     let mint_created = ctx.accounts.pc20_mint.to_account_info().data_is_empty();

@@ -740,6 +740,103 @@ describe("Universal Gateway - PC20", () => {
     expect(finalized!.data.ceaAtaCreated).to.equal(false);
   });
 
+  it("rejects direct exports when signed recipient and recipient account differ", async () => {
+    const subTxId = generate32Bytes();
+    const universalTxId = generateUniversalTxId();
+    const amount = 1_000_000;
+    const mismatchedRecipient = revertRecipient.publicKey;
+    const mismatchedRecipientAta = getAssociatedTokenAddressSync(
+      wrappedMint,
+      mismatchedRecipient,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+    const mismatchedAtaExists =
+      (await provider.connection.getAccountInfo(mismatchedRecipientAta)) !== null;
+    const gasUsed =
+      SIGNATURE_FEE_LAMPORTS +
+      BigInt(await provider.connection.getMinimumBalanceForRentExemption(8)) +
+      (mismatchedAtaExists
+        ? BigInt(0)
+        : BigInt(await getTokenAccountRent(provider.connection)));
+    const gasFee = gasUsed + COMPUTE_BUFFER;
+
+    const sig = await signWithCurrentTss({
+      instruction: TssInstruction.Pc20Finalize,
+      amount: BigInt(amount),
+      additional: buildPc20FinalizeAdditionalData({
+        universalTxId,
+        subTxId,
+        sourceAsset,
+        pushAccount,
+        recipient: directRecipient.publicKey,
+        name,
+        symbol,
+        decimals,
+        gasFee,
+      }),
+    });
+
+    const supplyBefore = Number(
+      (await getMint(provider.connection, wrappedMint)).supply
+    );
+
+    await expectError(
+      gatewayProgram.methods
+        .finalizePc20Export(
+          Array.from(subTxId),
+          Array.from(universalTxId),
+          Array.from(sourceAsset),
+          new anchor.BN(amount),
+          Array.from(pushAccount),
+          directRecipient.publicKey,
+          name,
+          symbol,
+          decimals,
+          Buffer.from([]),
+          new anchor.BN(gasFee.toString()),
+          new anchor.BN(DEFAULT_DEADLINE.toString()),
+          Array.from(sig.signature),
+          sig.recoveryId,
+          Array.from(sig.messageHash)
+        )
+        .accountsPartial({
+          caller: relayer.publicKey,
+          config: configPda,
+          vaultSol: vaultPda,
+          pc20Mint: wrappedMint,
+          recipient: mismatchedRecipient,
+          recipientAta: mismatchedRecipientAta,
+          ceaAuthority,
+          ceaAta: await getCeaAta(
+            pushAccount,
+            wrappedMint,
+            gatewayProgram.programId
+          ),
+          tssPda,
+          executedSubTx: getExecutedTxPda(subTxId, gatewayProgram.programId),
+          destinationProgram: SystemProgram.programId,
+          systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([relayer])
+        .rpc(),
+      "InvalidRecipient"
+    );
+
+    const supplyAfter = Number(
+      (await getMint(provider.connection, wrappedMint)).supply
+    );
+    const executedMarker = await provider.connection.getAccountInfo(
+      getExecutedTxPda(subTxId, gatewayProgram.programId)
+    );
+    expect(supplyAfter).to.equal(supplyBefore);
+    expect(executedMarker).to.equal(null);
+  });
+
   it("mints to the CEA and executes a payload using the existing SVM execute-payload format", async () => {
     const subTxId = generate32Bytes();
     const universalTxId = generateUniversalTxId();
