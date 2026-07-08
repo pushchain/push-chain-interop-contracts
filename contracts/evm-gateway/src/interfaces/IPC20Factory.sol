@@ -39,6 +39,12 @@ interface IPC20Factory {
         uint256 amount
     ) external;
 
+    function revertMint(
+        address sourceAsset,
+        address to,
+        uint256 amount
+    ) external;
+
     function getWrapper(
         address sourceAsset
     ) external view returns (address wrapper);

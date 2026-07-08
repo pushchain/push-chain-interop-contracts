@@ -2501,7 +2501,6 @@ contract UniversalGatewayPCTest is Test {
             amount,
             gasLimit, 0, // 0 → resolved to BASE_GAS_LIMIT by UniversalCore
             0,
-            0,
             bytes(""),
             revertRecipient
         );
