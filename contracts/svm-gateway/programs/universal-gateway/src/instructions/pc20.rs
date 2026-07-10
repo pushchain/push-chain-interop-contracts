@@ -125,7 +125,15 @@ pub struct SendPc20UniversalTx<'info> {
     )]
     pub user_ata: Account<'info, TokenAccount>,
 
+    #[account(
+        mut,
+        seeds = [FEE_VAULT_SEED],
+        bump = fee_vault.bump,
+    )]
+    pub fee_vault: Account<'info, FeeVault>,
+
     pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -382,6 +390,10 @@ pub fn send_pc20_universal_tx(
         GatewayError::InvalidRecipient
     );
 
+    // Collect flat inbound fee (mirrors send_universal_tx + EVM sendPC20UniversalTx).
+    // CEA-routed burns pay via the finalize_universal_tx gas model and skip this.
+    let fee_collected = collect_pc20_inbound_fee(&ctx)?;
+
     spl_burn(
         &ctx.accounts.pc20_mint.to_account_info(),
         &ctx.accounts.user_ata.to_account_info(),
@@ -399,10 +411,27 @@ pub fn send_pc20_universal_tx(
         recipient,
         payload,
         revert_recipient,
+        fee_collected,
         from_cea: false,
     });
 
     Ok(())
+}
+
+fn collect_pc20_inbound_fee(ctx: &Context<SendPc20UniversalTx>) -> Result<u64> {
+    let fee_lamports = ctx.accounts.fee_vault.inbound_fee_lamports;
+    if fee_lamports == 0 {
+        return Ok(0);
+    }
+    let cpi_ctx = CpiContext::new(
+        ctx.accounts.system_program.to_account_info(),
+        anchor_lang::system_program::Transfer {
+            from: ctx.accounts.caller.to_account_info(),
+            to: ctx.accounts.fee_vault.to_account_info(),
+        },
+    );
+    anchor_lang::system_program::transfer(cpi_ctx, fee_lamports)?;
+    Ok(fee_lamports)
 }
 
 pub fn send_pc20_universal_tx_from_finalize_cea<'info>(
@@ -456,6 +485,8 @@ pub fn send_pc20_universal_tx_from_finalize_cea<'info>(
         recipient: args.recipient,
         payload: args.payload,
         revert_recipient: args.revert_recipient,
+        // CEA-routed burn is Push-routed via finalize_universal_tx gas model; no inbound fee.
+        fee_collected: 0,
         from_cea: true,
     });
 
@@ -634,6 +665,16 @@ fn validate_pc20_mint_authority(
 fn decode_execute_payload(user_data: &[u8]) -> Result<DecodedExecutePayload> {
     let mut offset = 0usize;
     let accounts_len = read_u32_be(user_data, &mut offset)? as usize;
+    // Bound before allocation: each entry needs at least 33 bytes (pubkey + writable), and the
+    // buffer must still contain the ix header (u32 ix_len + u8 instruction_id + 32-byte target).
+    require!(
+        accounts_len
+            .checked_mul(33)
+            .and_then(|n| n.checked_add(offset + 4 + 1 + 32))
+            .map(|n| n <= user_data.len())
+            .unwrap_or(false),
+        GatewayError::InvalidInput
+    );
     let mut accounts = Vec::with_capacity(accounts_len);
     for _ in 0..accounts_len {
         let pubkey = Pubkey::new_from_array(read_fixed::<32>(user_data, &mut offset)?);

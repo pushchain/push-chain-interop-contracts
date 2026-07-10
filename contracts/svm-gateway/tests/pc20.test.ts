@@ -309,6 +309,19 @@ describe("Universal Gateway - PC20", () => {
   const getMintRent = async () =>
     provider.connection.getMinimumBalanceForRentExemption(MINT_SIZE);
 
+  const setInboundFee = async (feeLamports: number) => {
+    await gatewayProgram.methods
+      .setInboundFee(new anchor.BN(feeLamports))
+      .accountsPartial({
+        config: configPda,
+        feeVault: feeVaultPda,
+        admin: admin.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([admin])
+      .rpc();
+  };
+
   const expectError = async (promise: Promise<unknown>, expected: string) => {
     let matched = false;
     try {
@@ -974,39 +987,53 @@ describe("Universal Gateway - PC20", () => {
     );
     const pushRecipient = generate20Bytes();
     const pushPayload = Buffer.from("push-unlock", "utf8");
+    const inboundFee = 12_345;
 
-    const txSig = await gatewayProgram.methods
-      .sendPc20UniversalTx(
-        Array.from(burnSubTxId),
-        Array.from(sourceAsset),
-        new anchor.BN(burnAmount),
-        Array.from(pushRecipient),
-        pushPayload,
-        revertRecipient.publicKey
-      )
-      .accountsPartial({
-        config: configPda,
-        caller: directRecipient.publicKey,
-        pc20Mint: wrappedMint,
-        userAta: recipientAta,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .signers([directRecipient])
-      .rpc();
+    await setInboundFee(inboundFee);
+    const feeVaultBefore = await provider.connection.getBalance(feeVaultPda);
+
+    let txSig: string;
+    try {
+      txSig = await gatewayProgram.methods
+        .sendPc20UniversalTx(
+          Array.from(burnSubTxId),
+          Array.from(sourceAsset),
+          new anchor.BN(burnAmount),
+          Array.from(pushRecipient),
+          pushPayload,
+          revertRecipient.publicKey
+        )
+        .accountsPartial({
+          config: configPda,
+          caller: directRecipient.publicKey,
+          pc20Mint: wrappedMint,
+          userAta: recipientAta,
+          feeVault: feeVaultPda,
+          systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([directRecipient])
+        .rpc();
+    } finally {
+      await setInboundFee(0);
+    }
 
     const afterMint = await getMint(provider.connection, wrappedMint);
     const afterBalance = Number(
       (await getAccount(provider.connection, recipientAta)).amount
     );
+    const feeVaultAfter = await provider.connection.getBalance(feeVaultPda);
     expect(Number(afterMint.supply)).to.equal(
       Number(beforeMint.supply) - burnAmount
     );
     expect(afterBalance).to.equal(beforeBalance - burnAmount);
+    expect(feeVaultAfter - feeVaultBefore).to.equal(inboundFee);
 
     const events = await decodeEvents(provider, gatewayProgram, txSig);
     const burnEvent = events.find((event) => event.name === "pc20UniversalTx");
     expect(burnEvent!.data.fromCea).to.equal(false);
     expect(Number(burnEvent!.data.amount)).to.equal(burnAmount);
+    expect(Number(burnEvent!.data.feeCollected)).to.equal(inboundFee);
   });
 
   it("burns wrapped supply from the CEA after an EVM-key-authorized request", async () => {
@@ -1208,6 +1235,7 @@ describe("Universal Gateway - PC20", () => {
     );
     expect(burnEvent!.data.fromCea).to.equal(true);
     expect(Number(burnEvent!.data.amount)).to.equal(amount);
+    expect(Number(burnEvent!.data.feeCollected)).to.equal(0);
   });
 
   it("remints wrapped supply after a finalize-routed CEA PC20 burn revert", async () => {
@@ -1337,6 +1365,8 @@ describe("Universal Gateway - PC20", () => {
         caller: directRecipient.publicKey,
         pc20Mint: wrappedMint,
         userAta: recipientAta,
+        feeVault: feeVaultPda,
+        systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([directRecipient])
@@ -1455,6 +1485,8 @@ describe("Universal Gateway - PC20", () => {
         caller: directRecipient.publicKey,
         pc20Mint: wrappedMint,
         userAta: recipientAta,
+        feeVault: feeVaultPda,
+        systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([directRecipient])
@@ -2263,6 +2295,8 @@ describe("Universal Gateway - PC20", () => {
           caller: directRecipient.publicKey,
           pc20Mint: wrappedMint,
           userAta: recipientAta,
+          feeVault: feeVaultPda,
+          systemProgram: SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([directRecipient])
@@ -2285,6 +2319,8 @@ describe("Universal Gateway - PC20", () => {
           caller: directRecipient.publicKey,
           pc20Mint: wrappedMint,
           userAta: recipientAta,
+          feeVault: feeVaultPda,
+          systemProgram: SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([directRecipient])
@@ -2307,6 +2343,8 @@ describe("Universal Gateway - PC20", () => {
           caller: directRecipient.publicKey,
           pc20Mint: wrappedMint,
           userAta: recipientAta,
+          feeVault: feeVaultPda,
+          systemProgram: SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([directRecipient])
@@ -2343,6 +2381,8 @@ describe("Universal Gateway - PC20", () => {
         caller: directRecipient.publicKey,
         pc20Mint: wrappedMint,
         userAta: recipientAta,
+        feeVault: feeVaultPda,
+        systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([directRecipient])
@@ -2362,6 +2402,8 @@ describe("Universal Gateway - PC20", () => {
         caller: directRecipient.publicKey,
         pc20Mint: wrappedMint,
         userAta: recipientAta,
+        feeVault: feeVaultPda,
+        systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([directRecipient])
@@ -2689,6 +2731,8 @@ describe("Universal Gateway - PC20", () => {
             caller: directRecipient.publicKey,
             pc20Mint: wrappedMint,
             userAta: recipientAta,
+            feeVault: feeVaultPda,
+            systemProgram: SystemProgram.programId,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .signers([directRecipient])

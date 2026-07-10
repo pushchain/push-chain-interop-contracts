@@ -340,6 +340,9 @@ pub struct Pc20UniversalTx {
     pub recipient: [u8; 20],
     pub payload: Vec<u8>,
     pub revert_recipient: Pubkey,
+    /// Flat inbound fee (lamports) taken from the direct-burn caller and forwarded to `fee_vault`.
+    /// Always `0` for CEA-routed burns (paid via the `finalize_universal_tx` gas model).
+    pub fee_collected: u64,
     pub from_cea: bool,
 }
 

@@ -312,15 +312,9 @@ pub mod universal_gateway {
     }
 
     // =========================
-    //          RESCUE
-    // =========================
-    /// @notice TSS-verified emergency rescue of locked funds from vault.
-    ///         SOL path: token_mint = None. SPL path: token_mint = Some.
-    ///         Replay-protected via ExecutedSubTx PDA
-    /// @param deadline Unix timestamp (seconds) after which TSS signature is invalid.
-    // =========================
     //            PC20
     // =========================
+    /// @notice TSS-authorized Push -> Solana PC20 export settlement.
     pub fn finalize_pc20_export(
         ctx: Context<FinalizePc20Export>,
         sub_tx_id: [u8; 32],
@@ -379,6 +373,13 @@ pub mod universal_gateway {
         )
     }
 
+    // =========================
+    //          RESCUE
+    // =========================
+    /// @notice TSS-verified emergency rescue of locked funds from vault.
+    ///         SOL path: token_mint = None. SPL path: token_mint = Some.
+    ///         Replay-protected via ExecutedSubTx PDA
+    /// @param deadline Unix timestamp (seconds) after which TSS signature is invalid.
     pub fn rescue_funds(
         ctx: Context<RescueFunds>,
         sub_tx_id: [u8; 32],
