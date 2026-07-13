@@ -4490,6 +4490,8 @@ async function run() {
     { pubkey: pc20Mint, isWritable: true },
     { pubkey: pc20CeaAta, isWritable: true },
     { pubkey: spl.TOKEN_PROGRAM_ID, isWritable: false },
+    { pubkey: feeVaultPda, isWritable: true },
+    { pubkey: SystemProgram.programId, isWritable: false },
   ];
   const pc20CeaBurnGasFee =
     SIGNATURE_FEE_LAMPORTS + pc20ExecutedRent + COMPUTE_BUFFER;

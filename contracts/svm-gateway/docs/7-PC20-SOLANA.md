@@ -215,7 +215,8 @@ not through a separate public CEA-burn instruction.
 Outer finalize requirements: `instruction_id = 2`,
 `destination_program == program_id`, `amount = 0`, native path only, `ix_data`
 starts with the `send_pc20_universal_tx` discriminator, and remaining accounts
-are exactly writable `Pc20Mint`, writable CEA ATA, readonly SPL Token program.
+are exactly writable `Pc20Mint`, writable CEA ATA, readonly SPL Token program,
+writable `FeeVault`, readonly System program.
 
 Key guarantees:
 
@@ -223,9 +224,12 @@ Key guarantees:
 - `sub_tx_id` inside `ix_data` must equal the outer finalize `sub_tx_id`,
 - CEA ATA is validated against the canonical mint and CEA authority,
 - burn uses CEA PDA signer seeds,
-- emits `Pc20UniversalTx` with `from_cea = true`,
-- relayer reimbursement follows the normal Push-routed finalize path from
-  `vault_sol`.
+- inbound fee is transferred from the CEA PDA to `FeeVault` (CEA-signed
+  `system_program::transfer`), mirroring EVM `sendPC20UniversalTx`
+  `_collectInboundFee`. CEA must hold `>= inbound_fee_lamports` SOL or the
+  burn reverts with `InsufficientInboundFee`; no-op when the fee is 0.
+- emits `Pc20UniversalTx` with `from_cea = true` and real `fee_collected`,
+- outer-finalize gas is still reimbursed from `vault_sol`.
 
 ### `revert_pc20_burn`
 
@@ -265,18 +269,19 @@ quoted_budget = gasPrice * gasLimit
 
 On Solana, this value is a signed lamport budget, not literal EVM gas.
 
-Reimbursement source is direction-aware:
+Gas reimbursement (operational) and inbound fee (revenue) are separate:
 
-| Route | Reimbursement |
-| --- | --- |
-| Push -> Solana `finalize_pc20_export` | `vault_sol` |
-| Push-routed CEA PC20 burn through `finalize_universal_tx` | `vault_sol` |
-| User `send_pc20_universal_tx` burn | none; caller pays |
-| Solana burn recovery `revert_pc20_burn` | `fee_vault` |
+| Route | Relayer gas | Inbound fee |
+| --- | --- | --- |
+| `finalize_pc20_export` | `vault_sol` | none |
+| CEA PC20 burn via `finalize_universal_tx` | `vault_sol` | CEA PDA pays |
+| User `send_pc20_universal_tx` burn | caller pays tx cost | caller pays |
+| `revert_pc20_burn` | `fee_vault` | none |
 
-Reasoning: Push-routed finalizations pair with source-side gas burn via
-`swapAndBurnGas`, while burn revert has no paired Push-side gas burn because the
-Push unlock failed.
+Gas is `vault_sol` for Push-routed finalizations (paired with source-side
+`swapAndBurnGas`) and `fee_vault` for burn revert (no paired Push-side burn).
+Inbound fee is charged on every PC20 burn — direct or CEA — mirroring EVM
+`sendPC20UniversalTx._collectInboundFee`.
 
 Current PC20 gas-used components:
 
