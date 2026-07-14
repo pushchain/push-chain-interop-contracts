@@ -277,14 +277,13 @@ contract Vault is
             pc20Factory.deployWrapper(sourceAsset, name, symbol, decimals);
         }
 
-        if (userData.length == 0) {
-            pc20Factory.mintFor(sourceAsset, recipient, amount);
-        } else {
-            (address cea, bool isDeployed) = CEAFactory.getCEAForPushAccount(pushAccount);
-            if (!isDeployed) {
-                cea = CEAFactory.deployCEA(pushAccount);
-            }
-            pc20Factory.mintFor(sourceAsset, cea, amount);
+        (address cea, bool isDeployed) = CEAFactory.getCEAForPushAccount(pushAccount);
+        if (!isDeployed) {
+            cea = CEAFactory.deployCEA(pushAccount);
+        }
+        pc20Factory.mintFor(sourceAsset, cea, amount);
+
+        if (userData.length > 0) {
             ICEA(cea).executeUniversalTx(subTxId, universalTxId, pushAccount, recipient, userData);
         }
 

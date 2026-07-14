@@ -75,6 +75,7 @@ contract SendPC20UniversalTxTest is BaseTest {
         gateway.updatePC20Factory(address(pc20Factory));
 
         // Deploy a wrapper via Vault's unified finalizeUniversalTx (PC20 path)
+        // Tokens are minted to CEA; transfer to users afterwards
         bytes memory pc20Data1 = abi.encodePacked(
             bytes4(0x50433230),
             abi.encode("Push Token", "pTKN", uint8(18), bytes(""))
@@ -90,7 +91,6 @@ contract SendPC20UniversalTxTest is BaseTest {
             pc20Data1
         );
 
-        // Mint additional tokens to user2
         bytes memory pc20Data2 = abi.encodePacked(
             bytes4(0x50433230),
             abi.encode("Push Token", "pTKN", uint8(18), bytes(""))
@@ -107,6 +107,15 @@ contract SendPC20UniversalTxTest is BaseTest {
         );
 
         wrapper = PC20Wrapper(pc20Factory.getWrapper(sourceAsset));
+
+        // Transfer tokens from CEA to users
+        (address cea,) = ceaFactory.getCEAForPushAccount(
+            makeAddr("pushAccount")
+        );
+        vm.startPrank(cea);
+        wrapper.transfer(user1, 10_000e18);
+        wrapper.transfer(user2, 5_000e18);
+        vm.stopPrank();
     }
 
     // =========================================================

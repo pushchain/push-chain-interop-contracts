@@ -71,7 +71,8 @@ contract RevertPC20BurnTest is BaseTest {
         vm.prank(admin);
         gateway.updatePC20Factory(address(pc20Factory));
 
-        // Deploy wrapper + mint tokens to user1 via Vault PC20 export path
+        // Deploy wrapper + mint tokens via Vault PC20 export path
+        // Tokens go to CEA; transfer to user1 afterwards
         bytes memory pc20Data = abi.encodePacked(
             bytes4(0x50433230),
             abi.encode("Push Token", "pTKN", uint8(18), bytes(""))
@@ -88,6 +89,12 @@ contract RevertPC20BurnTest is BaseTest {
         );
 
         wrapper = PC20Wrapper(pc20Factory.getWrapper(sourceAsset));
+
+        (address cea,) = ceaFactory.getCEAForPushAccount(
+            makeAddr("pushAccount")
+        );
+        vm.prank(cea);
+        wrapper.transfer(user1, 10_000e18);
     }
 
     // =========================================================

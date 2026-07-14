@@ -146,12 +146,14 @@ contract VaultPC20ExportTest is Test {
     //  11.1 Path A (No UserData) Happy Path
     // =========================================================
 
-    function test_PathA_FirstExportDeploysAndMints() public {
+    function test_PathA_FirstExportDeploysAndMintsToCEA() public {
         _finalize(_tx(1), sourceA, 1000e18, "");
 
         address wrapper = factory.getWrapper(sourceA);
         assertTrue(wrapper != address(0));
-        assertEq(PC20Wrapper(wrapper).balanceOf(recipient), 1000e18);
+
+        (address cea,) = ceaFactory.getCEAForPushAccount(pushAccount);
+        assertEq(PC20Wrapper(wrapper).balanceOf(cea), 1000e18);
         assertTrue(vault.isPC20Executed(_tx(1)));
     }
 
@@ -163,7 +165,8 @@ contract VaultPC20ExportTest is Test {
         address wrapper2 = factory.getWrapper(sourceA);
 
         assertEq(wrapper1, wrapper2);
-        assertEq(PC20Wrapper(wrapper1).balanceOf(recipient), 800e18);
+        (address cea,) = ceaFactory.getCEAForPushAccount(pushAccount);
+        assertEq(PC20Wrapper(wrapper1).balanceOf(cea), 800e18);
     }
 
     function test_PathA_CorrectWrapperMetadata() public {
@@ -193,10 +196,11 @@ contract VaultPC20ExportTest is Test {
         );
     }
 
-    function test_PathA_RecipientGetsAmount() public {
+    function test_PathA_CEAGetsAmount() public {
         _finalize(_tx(1), sourceA, 777e18, "");
         address wrapper = factory.getWrapper(sourceA);
-        assertEq(PC20Wrapper(wrapper).balanceOf(recipient), 777e18);
+        (address cea,) = ceaFactory.getCEAForPushAccount(pushAccount);
+        assertEq(PC20Wrapper(wrapper).balanceOf(cea), 777e18);
     }
 
     function test_PathA_EmitsEvent() public {
@@ -384,8 +388,9 @@ contract VaultPC20ExportTest is Test {
         _finalize(_tx(2), sourceA, 200e18, "");
 
         address wrapper = factory.getWrapper(sourceA);
+        (address cea,) = ceaFactory.getCEAForPushAccount(pushAccount);
         assertEq(
-            PC20Wrapper(wrapper).balanceOf(recipient), 300e18
+            PC20Wrapper(wrapper).balanceOf(cea), 300e18
         );
     }
 
@@ -397,8 +402,9 @@ contract VaultPC20ExportTest is Test {
             _buildPC20Data("Push Int", "pINT", 0, "")
         );
         address wrapper = factory.getWrapper(sourceA);
+        (address cea,) = ceaFactory.getCEAForPushAccount(pushAccount);
         assertEq(PC20Wrapper(wrapper).decimals(), 0);
-        assertEq(PC20Wrapper(wrapper).balanceOf(recipient), 100);
+        assertEq(PC20Wrapper(wrapper).balanceOf(cea), 100);
     }
 
     // =========================================================
@@ -413,14 +419,13 @@ contract VaultPC20ExportTest is Test {
         assertTrue(vault.isPC20Executed(_tx(2)));
     }
 
-    function test_Replay_PathADoesNotInvolveCEA() public {
+    function test_Replay_PathADeploysCEA() public {
         _finalize(_tx(1), sourceA, 100e18, "");
         assertTrue(vault.isPC20Executed(_tx(1)));
-        // No CEA deployed for Path A
         (, bool isDeployed) = ceaFactory.getCEAForPushAccount(
             pushAccount
         );
-        assertFalse(isDeployed);
+        assertTrue(isDeployed);
     }
 
     // =========================================================
