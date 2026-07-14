@@ -24,6 +24,7 @@ contract RevertPC20BurnTest is BaseTest {
     MockCEAFactory public ceaFactory;
 
     bytes32 constant SUB_TX_ID = bytes32(uint256(1001));
+    bytes32 constant UNIVERSAL_TX_ID = bytes32(uint256(2001));
     uint256 constant BURN_AMOUNT = 1_000e18;
 
     function setUp() public override {
@@ -110,12 +111,12 @@ contract RevertPC20BurnTest is BaseTest {
 
         vm.expectEmit(true, true, true, true);
         emit IUniversalGateway.PC20BurnReverted(
-            SUB_TX_ID, sourceAsset, user1, BURN_AMOUNT
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, BURN_AMOUNT, user1
         );
 
         vm.prank(tss);
         gateway.revertPC20Burn(
-            SUB_TX_ID, sourceAsset, BURN_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, BURN_AMOUNT, user1
         );
 
         assertEq(
@@ -127,7 +128,7 @@ contract RevertPC20BurnTest is BaseTest {
     function test_RevertPC20Burn_DifferentRecipient() public {
         vm.prank(tss);
         gateway.revertPC20Burn(
-            SUB_TX_ID, sourceAsset, BURN_AMOUNT, user2
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, BURN_AMOUNT, user2
         );
 
         assertEq(wrapper.balanceOf(user2), BURN_AMOUNT);
@@ -141,7 +142,7 @@ contract RevertPC20BurnTest is BaseTest {
         vm.prank(user1);
         vm.expectRevert(Errors.InvalidInput.selector);
         gateway.revertPC20Burn(
-            SUB_TX_ID, sourceAsset, BURN_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, BURN_AMOUNT, user1
         );
     }
 
@@ -152,7 +153,7 @@ contract RevertPC20BurnTest is BaseTest {
         vm.prank(tss);
         vm.expectRevert();
         gateway.revertPC20Burn(
-            SUB_TX_ID, sourceAsset, BURN_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, BURN_AMOUNT, user1
         );
     }
 
@@ -163,13 +164,13 @@ contract RevertPC20BurnTest is BaseTest {
     function test_RevertPC20Burn_Reverts_AlreadyExecuted() public {
         vm.prank(tss);
         gateway.revertPC20Burn(
-            SUB_TX_ID, sourceAsset, BURN_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, BURN_AMOUNT, user1
         );
 
         vm.prank(tss);
         vm.expectRevert(Errors.PayloadExecuted.selector);
         gateway.revertPC20Burn(
-            SUB_TX_ID, sourceAsset, BURN_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, BURN_AMOUNT, user1
         );
     }
 
@@ -177,6 +178,7 @@ contract RevertPC20BurnTest is BaseTest {
         vm.prank(tss);
         gateway.revertPC20Burn(
             bytes32(uint256(1)),
+            UNIVERSAL_TX_ID,
             sourceAsset,
             BURN_AMOUNT,
             user1
@@ -185,6 +187,7 @@ contract RevertPC20BurnTest is BaseTest {
         vm.prank(tss);
         gateway.revertPC20Burn(
             bytes32(uint256(2)),
+            UNIVERSAL_TX_ID,
             sourceAsset,
             BURN_AMOUNT,
             user1
@@ -204,7 +207,7 @@ contract RevertPC20BurnTest is BaseTest {
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidAmount.selector);
         gateway.revertPC20Burn(
-            SUB_TX_ID, sourceAsset, 0, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, 0, user1
         );
     }
 
@@ -212,7 +215,7 @@ contract RevertPC20BurnTest is BaseTest {
         vm.prank(tss);
         vm.expectRevert(Errors.ZeroAddress.selector);
         gateway.revertPC20Burn(
-            SUB_TX_ID, address(0), BURN_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, address(0), BURN_AMOUNT, user1
         );
     }
 
@@ -222,7 +225,7 @@ contract RevertPC20BurnTest is BaseTest {
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidRecipient.selector);
         gateway.revertPC20Burn(
-            SUB_TX_ID, sourceAsset, BURN_AMOUNT, address(0)
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, BURN_AMOUNT, address(0)
         );
     }
 
@@ -232,7 +235,7 @@ contract RevertPC20BurnTest is BaseTest {
         (bool ok,) = address(gateway).call{value: 1 ether}(
             abi.encodeCall(
                 gateway.revertPC20Burn,
-                (SUB_TX_ID, sourceAsset, BURN_AMOUNT, user1)
+                (SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, BURN_AMOUNT, user1)
             )
         );
         assertFalse(ok);
@@ -250,7 +253,7 @@ contract RevertPC20BurnTest is BaseTest {
             )
         );
         gateway.revertPC20Burn(
-            SUB_TX_ID, fakeSource, BURN_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, fakeSource, BURN_AMOUNT, user1
         );
     }
 
@@ -266,14 +269,14 @@ contract RevertPC20BurnTest is BaseTest {
         // Use the ID for a PC20 burn revert
         vm.prank(tss);
         gateway.revertPC20Burn(
-            sharedId, sourceAsset, BURN_AMOUNT, user1
+            sharedId, UNIVERSAL_TX_ID, sourceAsset, BURN_AMOUNT, user1
         );
 
         // Same ID cannot be reused (isExecuted is shared)
         vm.prank(tss);
         vm.expectRevert(Errors.PayloadExecuted.selector);
         gateway.revertPC20Burn(
-            sharedId, sourceAsset, BURN_AMOUNT, user1
+            sharedId, UNIVERSAL_TX_ID, sourceAsset, BURN_AMOUNT, user1
         );
     }
 }

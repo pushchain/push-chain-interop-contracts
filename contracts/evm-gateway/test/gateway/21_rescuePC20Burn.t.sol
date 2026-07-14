@@ -23,6 +23,7 @@ contract RescuePC20BurnTest is BaseTest {
     MockCEAFactory public ceaFactory;
 
     bytes32 constant SUB_TX_ID = bytes32(uint256(2001));
+    bytes32 constant UNIVERSAL_TX_ID = bytes32(uint256(3001));
     uint256 constant RESCUE_AMOUNT = 1_000e18;
 
     function setUp() public override {
@@ -98,12 +99,12 @@ contract RescuePC20BurnTest is BaseTest {
 
         vm.expectEmit(true, true, true, true);
         emit IUniversalGateway.PC20BurnRescued(
-            SUB_TX_ID, sourceAsset, user1, RESCUE_AMOUNT
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
         );
 
         vm.prank(tss);
         gateway.rescuePC20Burn(
-            SUB_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
         );
 
         assertEq(
@@ -115,7 +116,7 @@ contract RescuePC20BurnTest is BaseTest {
     function test_RescuePC20Burn_DifferentRecipient() public {
         vm.prank(tss);
         gateway.rescuePC20Burn(
-            SUB_TX_ID, sourceAsset, RESCUE_AMOUNT, user2
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user2
         );
 
         assertEq(wrapper.balanceOf(user2), RESCUE_AMOUNT);
@@ -129,7 +130,7 @@ contract RescuePC20BurnTest is BaseTest {
         vm.prank(user1);
         vm.expectRevert(Errors.InvalidInput.selector);
         gateway.rescuePC20Burn(
-            SUB_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
         );
     }
 
@@ -140,7 +141,7 @@ contract RescuePC20BurnTest is BaseTest {
         vm.prank(tss);
         vm.expectRevert();
         gateway.rescuePC20Burn(
-            SUB_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
         );
     }
 
@@ -151,13 +152,13 @@ contract RescuePC20BurnTest is BaseTest {
     function test_RescuePC20Burn_Reverts_AlreadyExecuted() public {
         vm.prank(tss);
         gateway.rescuePC20Burn(
-            SUB_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
         );
 
         vm.prank(tss);
         vm.expectRevert(Errors.PayloadExecuted.selector);
         gateway.rescuePC20Burn(
-            SUB_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
         );
     }
 
@@ -165,6 +166,7 @@ contract RescuePC20BurnTest is BaseTest {
         vm.prank(tss);
         gateway.rescuePC20Burn(
             bytes32(uint256(1)),
+            UNIVERSAL_TX_ID,
             sourceAsset,
             RESCUE_AMOUNT,
             user1
@@ -173,6 +175,7 @@ contract RescuePC20BurnTest is BaseTest {
         vm.prank(tss);
         gateway.rescuePC20Burn(
             bytes32(uint256(2)),
+            UNIVERSAL_TX_ID,
             sourceAsset,
             RESCUE_AMOUNT,
             user1
@@ -192,7 +195,7 @@ contract RescuePC20BurnTest is BaseTest {
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidAmount.selector);
         gateway.rescuePC20Burn(
-            SUB_TX_ID, sourceAsset, 0, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, 0, user1
         );
     }
 
@@ -200,7 +203,7 @@ contract RescuePC20BurnTest is BaseTest {
         vm.prank(tss);
         vm.expectRevert(Errors.ZeroAddress.selector);
         gateway.rescuePC20Burn(
-            SUB_TX_ID, address(0), RESCUE_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, address(0), RESCUE_AMOUNT, user1
         );
     }
 
@@ -208,7 +211,7 @@ contract RescuePC20BurnTest is BaseTest {
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidRecipient.selector);
         gateway.rescuePC20Burn(
-            SUB_TX_ID, sourceAsset, RESCUE_AMOUNT, address(0)
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, address(0)
         );
     }
 
@@ -224,7 +227,7 @@ contract RescuePC20BurnTest is BaseTest {
             )
         );
         gateway.rescuePC20Burn(
-            SUB_TX_ID, fakeSource, RESCUE_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, fakeSource, RESCUE_AMOUNT, user1
         );
     }
 
@@ -236,24 +239,24 @@ contract RescuePC20BurnTest is BaseTest {
         // Rescue emits PC20BurnRescued
         vm.expectEmit(true, true, true, true);
         emit IUniversalGateway.PC20BurnRescued(
-            SUB_TX_ID, sourceAsset, user1, RESCUE_AMOUNT
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
         );
 
         vm.prank(tss);
         gateway.rescuePC20Burn(
-            SUB_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
+            SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
         );
 
         // Revert emits PC20BurnReverted (different event)
         bytes32 revertSubTxId = bytes32(uint256(3001));
         vm.expectEmit(true, true, true, true);
         emit IUniversalGateway.PC20BurnReverted(
-            revertSubTxId, sourceAsset, user1, RESCUE_AMOUNT
+            revertSubTxId, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
         );
 
         vm.prank(tss);
         gateway.revertPC20Burn(
-            revertSubTxId, sourceAsset, RESCUE_AMOUNT, user1
+            revertSubTxId, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
         );
     }
 
@@ -266,14 +269,14 @@ contract RescuePC20BurnTest is BaseTest {
 
         vm.prank(tss);
         gateway.rescuePC20Burn(
-            sharedId, sourceAsset, RESCUE_AMOUNT, user1
+            sharedId, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
         );
 
         // Same ID used for revert should fail
         vm.prank(tss);
         vm.expectRevert(Errors.PayloadExecuted.selector);
         gateway.revertPC20Burn(
-            sharedId, sourceAsset, RESCUE_AMOUNT, user1
+            sharedId, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user1
         );
     }
 
@@ -287,7 +290,7 @@ contract RescuePC20BurnTest is BaseTest {
         (bool ok,) = address(gateway).call{value: 1 ether}(
             abi.encodeCall(
                 gateway.rescuePC20Burn,
-                (SUB_TX_ID, sourceAsset, RESCUE_AMOUNT, user1)
+                (SUB_TX_ID, UNIVERSAL_TX_ID, sourceAsset, RESCUE_AMOUNT, user1)
             )
         );
         assertFalse(ok);

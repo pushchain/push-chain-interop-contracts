@@ -720,6 +720,7 @@ contract UniversalGateway is
     /// @inheritdoc IUniversalGateway
     function revertPC20Burn(
         bytes32 subTxId,
+        bytes32 universalTxId,
         address sourceAsset,
         uint256 amount,
         address revertRecipient
@@ -737,13 +738,14 @@ contract UniversalGateway is
         pc20Factory.revertMint(sourceAsset, revertRecipient, amount);
 
         emit PC20BurnReverted(
-            subTxId, sourceAsset, revertRecipient, amount
+            subTxId, universalTxId, sourceAsset, amount, revertRecipient
         );
     }
 
     /// @inheritdoc IUniversalGateway
     function rescuePC20Burn(
         bytes32 subTxId,
+        bytes32 universalTxId,
         address sourceAsset,
         uint256 amount,
         address rescueRecipient
@@ -761,7 +763,7 @@ contract UniversalGateway is
         pc20Factory.revertMint(sourceAsset, rescueRecipient, amount);
 
         emit PC20BurnRescued(
-            subTxId, sourceAsset, rescueRecipient, amount
+            subTxId, universalTxId, sourceAsset, amount, rescueRecipient
         );
     }
 
