@@ -726,6 +726,94 @@ contract SendPC20UniversalTxTest is BaseTest {
     }
 
     // =========================================================
+    //  11.11 CEA Fee Skip
+    // =========================================================
+
+    function _deployCEAAndFund()
+        internal
+        returns (address cea)
+    {
+        vm.prank(admin);
+        gateway.updateCEAFactory(address(ceaFactory));
+
+        // Deploy a CEA via the factory (must call as vault)
+        vm.prank(address(vaultContract));
+        cea = ceaFactory.deployCEA(makeAddr("ceaOwner"));
+
+        // Transfer wrapper tokens to the CEA
+        vm.prank(user1);
+        wrapper.transfer(cea, 500e18);
+    }
+
+    function test_CEA_SkipsInboundFee() public {
+        address cea = _deployCEAAndFund();
+
+        uint256 fee = 0.01 ether;
+        vm.prank(admin);
+        gateway.setInboundFee(fee);
+
+        uint256 feesBefore = gateway.totalProtocolFeesCollected();
+
+        PC20BurnRequest memory req = _buildBurnReq(
+            address(wrapper),
+            100e18,
+            abi.encodePacked(PUSH_RECIPIENT),
+            bytes(""),
+            makeAddr("ceaOwner")
+        );
+
+        vm.prank(cea);
+        gateway.sendPC20UniversalTx(req);
+
+        assertEq(
+            gateway.totalProtocolFeesCollected(),
+            feesBefore,
+            "Fee should not increase for CEA caller"
+        );
+    }
+
+    function test_CEA_NoFeeRequiredWhenFeeSet() public {
+        address cea = _deployCEAAndFund();
+
+        uint256 fee = 0.01 ether;
+        vm.prank(admin);
+        gateway.setInboundFee(fee);
+
+        PC20BurnRequest memory req = _buildBurnReq(
+            address(wrapper),
+            100e18,
+            abi.encodePacked(PUSH_RECIPIENT),
+            bytes(""),
+            makeAddr("ceaOwner")
+        );
+
+        // Should NOT revert with InsufficientProtocolFee
+        vm.prank(cea);
+        gateway.sendPC20UniversalTx(req);
+    }
+
+    function test_NonCEA_StillChargesInboundFee() public {
+        _deployCEAAndFund();
+
+        uint256 fee = 0.01 ether;
+        vm.prank(admin);
+        gateway.setInboundFee(fee);
+
+        uint256 feesBefore = gateway.totalProtocolFeesCollected();
+
+        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+
+        vm.prank(user1);
+        gateway.sendPC20UniversalTx{value: fee}(req);
+
+        assertEq(
+            gateway.totalProtocolFeesCollected(),
+            feesBefore + fee,
+            "Fee should still be charged for non-CEA caller"
+        );
+    }
+
+    // =========================================================
     //  Event declarations
     // =========================================================
 

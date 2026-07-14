@@ -438,8 +438,11 @@ contract UniversalGateway is
 
         address sourceAsset = PC20Wrapper(req.wrapper).SOURCE_ASSET();
 
-        (, uint256 feeCollected) = _collectInboundFee(msg.value);
-        totalProtocolFeesCollected += feeCollected;
+        uint256 feeCollected;
+        if (!_isCallerCEA()) {
+            (, feeCollected) = _collectInboundFee(msg.value);
+            totalProtocolFeesCollected += feeCollected;
+        }
 
         pc20Factory.burnFrom(sourceAsset, _msgSender(), req.amount);
 
