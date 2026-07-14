@@ -53,7 +53,7 @@ interface IVaultPC20 {
     function recordLock(address token, uint256 amount) external;
 
     // ==============================
-    //      UNLOCK / REVERT (TSS_ROLE)
+    //   UNLOCK / REVERT (UE MODULE)
     // ==============================
 
     /// @notice Releases locked PC20 tokens to recipient after wrapped tokens burned on dest chain.

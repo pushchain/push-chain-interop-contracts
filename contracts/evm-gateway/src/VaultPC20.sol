@@ -30,14 +30,30 @@ contract VaultPC20 is
     using SafeERC20 for IERC20;
 
     // ==============================
+    //   PROTOCOL CONSTANTS
+    // ==============================
+
+    address public immutable UNIVERSAL_EXECUTOR_MODULE = 0x14191Ea54B4c176fCf86f51b0FAc7CB1E71Df7d7;
+
+    // ==============================
     //      ROLES
     // ==============================
 
     bytes32 public constant ROLE_MANAGER_ROLE = keccak256("ROLE_MANAGER_ROLE");
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
-    bytes32 public constant TSS_ROLE = keccak256("TSS_ROLE");
     bytes32 public constant GATEWAY_ROLE = keccak256("GATEWAY_ROLE");
+
+    // ==============================
+    //      MODIFIERS
+    // ==============================
+
+    modifier onlyUEModule() {
+        if (msg.sender != UNIVERSAL_EXECUTOR_MODULE) {
+            revert Errors.CallerIsNotUEModule();
+        }
+        _;
+    }
 
     // ==============================
     //      STATE
@@ -62,18 +78,15 @@ contract VaultPC20 is
 
     /// @param admin     DEFAULT_ADMIN_ROLE + ROLE_MANAGER_ROLE + OPERATOR_ROLE holder
     /// @param pauser    PAUSER_ROLE holder
-    /// @param tss       TSS_ROLE holder
     /// @param gatewayPC GATEWAY_ROLE holder (UGPC address)
     function initialize(
         address admin,
         address pauser,
-        address tss,
         address gatewayPC
     ) external initializer {
         if (
             admin == address(0) ||
             pauser == address(0) ||
-            tss == address(0) ||
             gatewayPC == address(0)
         ) {
             revert Errors.ZeroAddress();
@@ -83,7 +96,6 @@ contract VaultPC20 is
         __ReentrancyGuard_init();
         __AccessControlDefaultAdminRules_init(1 days, admin);
 
-        _setRoleAdmin(TSS_ROLE, ROLE_MANAGER_ROLE);
         _setRoleAdmin(OPERATOR_ROLE, ROLE_MANAGER_ROLE);
         _setRoleAdmin(PAUSER_ROLE, ROLE_MANAGER_ROLE);
         _setRoleAdmin(GATEWAY_ROLE, ROLE_MANAGER_ROLE);
@@ -91,7 +103,6 @@ contract VaultPC20 is
         _grantRole(ROLE_MANAGER_ROLE, admin);
         _grantRole(OPERATOR_ROLE, admin);
         _grantRole(PAUSER_ROLE, pauser);
-        _grantRole(TSS_ROLE, tss);
         _grantRole(GATEWAY_ROLE, gatewayPC);
 
         universalGatewayPC = gatewayPC;
@@ -116,7 +127,7 @@ contract VaultPC20 is
     }
 
     // ==============================
-    //      UNLOCK (TSS_ROLE)
+    //   UNLOCK (UE MODULE)
     // ==============================
 
     /// @inheritdoc IVaultPC20
@@ -125,7 +136,7 @@ contract VaultPC20 is
         address token,
         uint256 amount,
         address recipient
-    ) external nonReentrant whenNotPaused onlyRole(TSS_ROLE) {
+    ) external nonReentrant whenNotPaused onlyUEModule {
         if (isExecuted[subTxId]) revert Errors.PayloadExecuted();
         isExecuted[subTxId] = true;
 
@@ -142,7 +153,7 @@ contract VaultPC20 is
     }
 
     // ==============================
-    //      REVERT (TSS_ROLE)
+    //   REVERT (UE MODULE)
     // ==============================
 
     /// @inheritdoc IVaultPC20
@@ -151,7 +162,7 @@ contract VaultPC20 is
         address token,
         uint256 amount,
         address revertRecipient
-    ) external nonReentrant whenNotPaused onlyRole(TSS_ROLE) {
+    ) external nonReentrant whenNotPaused onlyUEModule {
         if (isExecuted[subTxId]) revert Errors.PayloadExecuted();
         isExecuted[subTxId] = true;
 

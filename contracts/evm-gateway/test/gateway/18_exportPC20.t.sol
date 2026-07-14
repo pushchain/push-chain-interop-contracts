@@ -103,7 +103,7 @@ contract ExportPC20Test is Test {
         address tempGateway = makeAddr("tempGateway");
         bytes memory data = abi.encodeWithSelector(
             VaultPC20.initialize.selector,
-            admin, pauser, tss, tempGateway
+            admin, pauser, tempGateway
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), data);
         vaultPC20 = VaultPC20(address(proxy));
