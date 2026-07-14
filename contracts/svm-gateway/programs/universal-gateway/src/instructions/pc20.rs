@@ -8,13 +8,11 @@ use crate::state::{
 use crate::utils::{
     create_pda_account, encode_u64_be, ensure_associated_token_account,
     invoke_signed_gateway_instruction, parse_token_account, pda_burn, pda_mint_to,
-    pda_system_transfer, reimburse_relayer_from_fee_vault, serialize_ix_data, serialize_string, spl_burn,
+    reimburse_relayer_from_fee_vault, serialize_ix_data, serialize_string, spl_burn,
     transfer_gas_fee_to_caller, validate_remaining_accounts,
 };
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::{
-    hash::hash as solana_hash, program::invoke, program_pack::Pack, system_program,
-};
+use anchor_lang::solana_program::{hash::hash as solana_hash, program::invoke, program_pack::Pack};
 use anchor_spl::associated_token::{spl_associated_token_account, AssociatedToken};
 use anchor_spl::token::{spl_token, Mint, Token, TokenAccount};
 
@@ -392,7 +390,8 @@ pub fn send_pc20_universal_tx(
         GatewayError::InvalidRecipient
     );
 
-    // Inbound fee mirrors EVM sendPC20UniversalTx._collectInboundFee.
+    // Collect flat inbound fee (mirrors send_universal_tx + EVM sendPC20UniversalTx).
+    // CEA-routed burns pay via the finalize_universal_tx gas model and skip this.
     let fee_collected = collect_pc20_inbound_fee(&ctx)?;
 
     spl_burn(
@@ -467,8 +466,6 @@ pub fn send_pc20_universal_tx_from_finalize_cea<'info>(
         remaining_accounts,
         args.source_asset,
     )?;
-    let fee_collected =
-        collect_pc20_cea_inbound_fee(cea_authority, &route_accounts, cea_seeds)?;
 
     pda_burn(
         &route_accounts.pc20_mint,
@@ -488,42 +485,12 @@ pub fn send_pc20_universal_tx_from_finalize_cea<'info>(
         recipient: args.recipient,
         payload: args.payload,
         revert_recipient: args.revert_recipient,
-        fee_collected,
+        // CEA-routed burn is Push-routed via finalize_universal_tx gas model; no inbound fee.
+        fee_collected: 0,
         from_cea: true,
     });
 
     Ok(())
-}
-
-fn collect_pc20_cea_inbound_fee<'info>(
-    cea_authority: &AccountInfo<'info>,
-    route_accounts: &Pc20CeaBurnAccounts<'info>,
-    cea_seeds: &[&[u8]],
-) -> Result<u64> {
-    let fee_lamports = {
-        let data = route_accounts.fee_vault.try_borrow_data()?;
-        FeeVault::try_deserialize(&mut &data[..])
-            .map_err(|_| error!(GatewayError::InvalidAccount))?
-            .inbound_fee_lamports
-    };
-    if fee_lamports == 0 {
-        return Ok(0);
-    }
-
-    require!(
-        cea_authority.lamports() >= fee_lamports,
-        GatewayError::InsufficientInboundFee
-    );
-
-    pda_system_transfer(
-        cea_authority,
-        &route_accounts.fee_vault,
-        &route_accounts.system_program,
-        fee_lamports,
-        cea_seeds,
-    )?;
-
-    Ok(fee_lamports)
 }
 
 pub fn revert_pc20_burn(
@@ -919,8 +886,6 @@ pub fn is_send_pc20_universal_tx_ix(ix_data: &[u8]) -> bool {
 struct Pc20CeaBurnAccounts<'info> {
     pc20_mint: AccountInfo<'info>,
     cea_ata: AccountInfo<'info>,
-    fee_vault: AccountInfo<'info>,
-    system_program: AccountInfo<'info>,
 }
 
 fn parse_pc20_cea_burn_accounts<'info>(
@@ -930,26 +895,20 @@ fn parse_pc20_cea_burn_accounts<'info>(
     source_asset: [u8; 20],
 ) -> Result<Pc20CeaBurnAccounts<'info>> {
     require!(
-        remaining_accounts.len() == 5,
+        remaining_accounts.len() == 3,
         GatewayError::AccountListLengthMismatch
     );
 
     let pc20_mint = remaining_accounts[0].clone();
     let cea_ata = remaining_accounts[1].clone();
     let token_program = remaining_accounts[2].clone();
-    let fee_vault_info = remaining_accounts[3].clone();
-    let system_program_info = remaining_accounts[4].clone();
 
     require!(
-        pc20_mint.is_writable && cea_ata.is_writable && fee_vault_info.is_writable,
+        pc20_mint.is_writable && cea_ata.is_writable,
         GatewayError::AccountWritableFlagMismatch
     );
     require!(
-        !pc20_mint.is_signer
-            && !cea_ata.is_signer
-            && !token_program.is_signer
-            && !fee_vault_info.is_signer
-            && !system_program_info.is_signer,
+        !pc20_mint.is_signer && !cea_ata.is_signer && !token_program.is_signer,
         GatewayError::UnexpectedOuterSigner
     );
     require!(
@@ -957,21 +916,6 @@ fn parse_pc20_cea_burn_accounts<'info>(
         GatewayError::InvalidAccount
     );
     require!(token_program.executable, GatewayError::InvalidProgram);
-    require!(
-        system_program_info.key() == system_program::ID,
-        GatewayError::InvalidAccount
-    );
-    require!(system_program_info.executable, GatewayError::InvalidProgram);
-
-    let (expected_fee_vault, _) = Pubkey::find_program_address(&[FEE_VAULT_SEED], program_id);
-    require!(
-        fee_vault_info.key() == expected_fee_vault,
-        GatewayError::InvalidAccount
-    );
-    require!(
-        fee_vault_info.owner == program_id,
-        GatewayError::InvalidAccount
-    );
 
     let (expected_mint, _) =
         Pubkey::find_program_address(&[PC20_MINT_SEED, source_asset.as_ref()], program_id);
@@ -995,10 +939,5 @@ fn parse_pc20_cea_burn_accounts<'info>(
         GatewayError::InvalidAccount
     );
 
-    Ok(Pc20CeaBurnAccounts {
-        pc20_mint,
-        cea_ata,
-        fee_vault: fee_vault_info,
-        system_program: system_program_info,
-    })
+    Ok(Pc20CeaBurnAccounts { pc20_mint, cea_ata })
 }

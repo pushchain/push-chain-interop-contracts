@@ -469,8 +469,6 @@ describe("Universal Gateway - PC20", () => {
       { pubkey: wrappedMint, isWritable: true },
       { pubkey: ceaAta, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isWritable: false },
-      { pubkey: feeVaultPda, isWritable: true },
-      { pubkey: SystemProgram.programId, isWritable: false },
     ];
     const gasUsed =
       SIGNATURE_FEE_LAMPORTS +
@@ -1144,16 +1142,6 @@ describe("Universal Gateway - PC20", () => {
     );
     expect(ceaBefore).to.equal(ceaBalanceBeforeFinalize + amount);
 
-    // EVM parity: sendPC20UniversalTx charges inbound fee for all callers.
-    const ceaInboundFee = 23_456;
-    await setInboundFee(ceaInboundFee);
-    const feeVaultLamportsBeforeBurn = await provider.connection.getBalance(
-      feeVaultPda
-    );
-    const ceaLamportsBeforeBurn = await provider.connection.getBalance(
-      ceaAuthority
-    );
-
     const pushRecipient = generate20Bytes();
     const pushPayload = Buffer.from("cea-burn", "utf8");
     const burnUniversalTxId = generateUniversalTxId();
@@ -1169,8 +1157,6 @@ describe("Universal Gateway - PC20", () => {
       { pubkey: wrappedMint, isWritable: true },
       { pubkey: ceaAta, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isWritable: false },
-      { pubkey: feeVaultPda, isWritable: true },
-      { pubkey: SystemProgram.programId, isWritable: false },
     ];
     const burnWritableFlags = accountsToWritableFlagsOnly(burnAccounts);
     const burnGasUsed =
@@ -1243,27 +1229,13 @@ describe("Universal Gateway - PC20", () => {
     );
     expect(ceaAfter).to.equal(ceaBalanceBeforeFinalize);
 
-    const feeVaultLamportsAfterBurn = await provider.connection.getBalance(
-      feeVaultPda
-    );
-    const ceaLamportsAfterBurn = await provider.connection.getBalance(
-      ceaAuthority
-    );
-    expect(feeVaultLamportsAfterBurn - feeVaultLamportsBeforeBurn).to.equal(
-      ceaInboundFee
-    );
-    expect(ceaLamportsBeforeBurn - ceaLamportsAfterBurn).to.equal(ceaInboundFee);
-
     const burnEvents = await decodeEvents(provider, gatewayProgram, burnTxSig);
     const burnEvent = burnEvents.find(
       (event) => event.name === "pc20UniversalTx"
     );
     expect(burnEvent!.data.fromCea).to.equal(true);
     expect(Number(burnEvent!.data.amount)).to.equal(amount);
-    expect(Number(burnEvent!.data.feeCollected)).to.equal(ceaInboundFee);
-
-    // Reset so downstream tests observe the fee=0 baseline.
-    await setInboundFee(0);
+    expect(Number(burnEvent!.data.feeCollected)).to.equal(0);
   });
 
   it("remints wrapped supply after a finalize-routed CEA PC20 burn revert", async () => {
@@ -2554,8 +2526,6 @@ describe("Universal Gateway - PC20", () => {
       { pubkey: directRecipient.publicKey, isWritable: true },
       { pubkey: ceaAta, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isWritable: false },
-      { pubkey: feeVaultPda, isWritable: true },
-      { pubkey: SystemProgram.programId, isWritable: false },
     ];
     const burnGasUsed =
       SIGNATURE_FEE_LAMPORTS +
@@ -2651,8 +2621,6 @@ describe("Universal Gateway - PC20", () => {
       { pubkey: wrappedMint, isWritable: true },
       { pubkey: ceaAta, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isWritable: false },
-      { pubkey: feeVaultPda, isWritable: true },
-      { pubkey: SystemProgram.programId, isWritable: false },
     ];
     const wrongCeaAtaSubTxId = generate32Bytes();
     const wrongTokenProgramSubTxId = generate32Bytes();
