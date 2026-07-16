@@ -8,6 +8,7 @@ import {TransparentUpgradeableProxy} from
     "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 import {Vault} from "../../src/Vault.sol";
+import {IVault} from "../../src/interfaces/IVault.sol";
 import {PC20Factory} from "../../src/PC20Factory.sol";
 import {PC20Wrapper} from "../../src/PC20Wrapper.sol";
 import {UniversalGateway} from "../../src/UniversalGateway.sol";
@@ -201,7 +202,7 @@ contract VaultPC20ExportTest is Test {
 
     function test_PathA_EmitsEvent() public {
         vm.expectEmit(true, true, true, true);
-        emit PC20ExportFinalized(
+        emit IVault.UniversalTxFinalized(
             _tx(1), _tx(999), pushAccount,
             recipient, sourceA, 1000e18, ""
         );
@@ -239,7 +240,7 @@ contract VaultPC20ExportTest is Test {
     function test_PathB_EmitsEventWithUserData() public {
         bytes memory ud = _emptyMulticall();
         vm.expectEmit(true, true, true, true);
-        emit PC20ExportFinalized(
+        emit IVault.UniversalTxFinalized(
             _tx(1), _tx(999), pushAccount,
             recipient, sourceA, 100e18, ud
         );
@@ -504,16 +505,6 @@ contract VaultPC20ExportTest is Test {
     // =========================================================
     //  Event declarations
     // =========================================================
-
-    event PC20ExportFinalized(
-        bytes32 indexed subTxId,
-        bytes32 indexed universalTxId,
-        address indexed pushAccount,
-        address recipient,
-        address sourceAsset,
-        uint256 amount,
-        bytes userData
-    );
 
     event PC20FactoryUpdated(
         address indexed oldFactory,
