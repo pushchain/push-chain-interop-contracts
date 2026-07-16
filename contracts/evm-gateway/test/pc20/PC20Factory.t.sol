@@ -522,31 +522,26 @@ contract PC20FactoryTest is Test {
     // =========================================================
 
     function test_ComputeAddress_MatchesActual() public {
-        address predicted = factory.computeWrapperAddress(
-            sourceA, "Push Token", "pTKN", 18
-        );
+        address predicted = factory.computeWrapperAddress(sourceA);
         address actual = _deployDefaultWrapper();
         assertEq(predicted, actual);
     }
 
     function test_ComputeAddress_DifferentSources() public view {
-        address pA = factory.computeWrapperAddress(
-            sourceA, "Push A", "pA", 18
-        );
-        address pB = factory.computeWrapperAddress(
-            sourceB, "Push B", "pB", 18
-        );
+        address pA = factory.computeWrapperAddress(sourceA);
+        address pB = factory.computeWrapperAddress(sourceB);
         assertTrue(pA != pB);
     }
 
     function test_ComputeAddress_Deterministic() public view {
-        address p1 = factory.computeWrapperAddress(
-            sourceA, "Push Token", "pTKN", 18
-        );
-        address p2 = factory.computeWrapperAddress(
-            sourceA, "Push Token", "pTKN", 18
-        );
+        address p1 = factory.computeWrapperAddress(sourceA);
+        address p2 = factory.computeWrapperAddress(sourceA);
         assertEq(p1, p2);
+    }
+
+    function test_ComputeAddress_IndependentOfMetadata() public view {
+        address p = factory.computeWrapperAddress(sourceA);
+        assertNotEq(p, address(0));
     }
 
     // =========================================================

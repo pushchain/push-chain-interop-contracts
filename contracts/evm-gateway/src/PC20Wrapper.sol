@@ -5,7 +5,11 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract PC20Wrapper is ERC20 {
     address public immutable SOURCE_ASSET;
-    uint8 private immutable _decimals;
+
+    string private _wrappedName;
+    string private _wrappedSymbol;
+    uint8 private _wrappedDecimals;
+    bool private _initialized;
 
     address public factory;
     address public pendingFactory;
@@ -13,6 +17,7 @@ contract PC20Wrapper is ERC20 {
     error OnlyFactory();
     error OnlyPendingFactory();
     error ZeroAddress();
+    error AlreadyInitialized();
 
     modifier onlyFactory() {
         if (msg.sender != factory) revert OnlyFactory();
@@ -20,17 +25,43 @@ contract PC20Wrapper is ERC20 {
     }
 
     constructor(
-        string memory name_,
-        string memory symbol_,
-        uint8 decimals_,
         address sourceAsset_,
         address factory_
-    ) ERC20(name_, symbol_) {
+    ) ERC20("", "") {
         if (sourceAsset_ == address(0)) revert ZeroAddress();
         if (factory_ == address(0)) revert ZeroAddress();
         SOURCE_ASSET = sourceAsset_;
         factory = factory_;
-        _decimals = decimals_;
+    }
+
+    function initialize(
+        string calldata name_,
+        string calldata symbol_,
+        uint8 decimals_
+    ) external onlyFactory {
+        if (_initialized) revert AlreadyInitialized();
+        _initialized = true;
+        _wrappedName = name_;
+        _wrappedSymbol = symbol_;
+        _wrappedDecimals = decimals_;
+    }
+
+    function name()
+        public
+        view
+        override
+        returns (string memory)
+    {
+        return _wrappedName;
+    }
+
+    function symbol()
+        public
+        view
+        override
+        returns (string memory)
+    {
+        return _wrappedSymbol;
     }
 
     function decimals()
@@ -39,7 +70,7 @@ contract PC20Wrapper is ERC20 {
         override
         returns (uint8)
     {
-        return _decimals;
+        return _wrappedDecimals;
     }
 
     function mint(

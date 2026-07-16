@@ -580,7 +580,8 @@ contract SendPC20UniversalTxTest is BaseTest {
 
     function test_MaliciousContractMimickingSourceAssetFails() public {
         // Deploy a wrapper-like contract not via factory
-        PC20Wrapper fake = new PC20Wrapper("Fake", "FAKE", 18, sourceAsset, address(this));
+        PC20Wrapper fake = new PC20Wrapper(sourceAsset, address(this));
+        fake.initialize("Fake", "FAKE", 18);
 
         UniversalTxRequest memory req = _buildPC20Req(address(fake), 100e18, PUSH_RECIPIENT, bytes(""), user1);
 
