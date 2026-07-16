@@ -147,19 +147,8 @@ interface IVault {
     ) external payable;
 
     // =========================
-    //  V_2b: PC20 EVENTS & ADMIN
+    //  V_2b: PC20 ADMIN
     // =========================
-
-    /// @notice Emitted when a PC20 export is finalized (wrapped ERC-20 minted on this chain).
-    event PC20ExportFinalized(
-        bytes32 indexed subTxId,
-        bytes32 indexed universalTxId,
-        address indexed pushAccount,
-        address recipient,
-        address sourceAsset,
-        uint256 amount,
-        bytes userData
-    );
 
     event PC20FactoryUpdated(
         address indexed oldFactory,

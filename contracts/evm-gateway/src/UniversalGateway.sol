@@ -717,56 +717,6 @@ contract UniversalGateway is
         emit FundsRescued(subTxId, universalTxId, token, amount, revertInstruction);
     }
 
-    /// @inheritdoc IUniversalGateway
-    function revertPC20Burn(
-        bytes32 subTxId,
-        bytes32 universalTxId,
-        address sourceAsset,
-        uint256 amount,
-        address revertRecipient
-    ) external nonReentrant whenNotPaused {
-        if (msg.sender != tssAddress) revert Errors.InvalidInput();
-        if (isExecuted[subTxId]) revert Errors.PayloadExecuted();
-        if (amount == 0) revert Errors.InvalidAmount();
-        if (sourceAsset == address(0)) revert Errors.ZeroAddress();
-        if (revertRecipient == address(0)) {
-            revert Errors.InvalidRecipient();
-        }
-
-        isExecuted[subTxId] = true;
-
-        pc20Factory.revertMint(sourceAsset, revertRecipient, amount);
-
-        emit PC20BurnReverted(
-            subTxId, universalTxId, sourceAsset, amount, revertRecipient
-        );
-    }
-
-    /// @inheritdoc IUniversalGateway
-    function rescuePC20Burn(
-        bytes32 subTxId,
-        bytes32 universalTxId,
-        address sourceAsset,
-        uint256 amount,
-        address rescueRecipient
-    ) external nonReentrant whenNotPaused {
-        if (msg.sender != tssAddress) revert Errors.InvalidInput();
-        if (isExecuted[subTxId]) revert Errors.PayloadExecuted();
-        if (amount == 0) revert Errors.InvalidAmount();
-        if (sourceAsset == address(0)) revert Errors.ZeroAddress();
-        if (rescueRecipient == address(0)) {
-            revert Errors.InvalidRecipient();
-        }
-
-        isExecuted[subTxId] = true;
-
-        pc20Factory.revertMint(sourceAsset, rescueRecipient, amount);
-
-        emit PC20BurnRescued(
-            subTxId, universalTxId, sourceAsset, amount, rescueRecipient
-        );
-    }
-
     /// @dev Validates common revert/rescue parameters and marks subTxId as executed.
     function _validateRevertParams(bytes32 subTxId, uint256 amount, address token, address revertRecipient) private {
         if (isExecuted[subTxId]) revert Errors.PayloadExecuted();
