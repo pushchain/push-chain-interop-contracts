@@ -425,22 +425,16 @@ contract UniversalGateway is
     /// @dev PC20 inbound burn path. Called from _routeUniversalTx when req.token
     ///      is a PC20 wrapper. Burns wrapper tokens and emits UniversalTx with
     ///      PC_20_SELECTOR-prefixed payload so cosmos can distinguish PC20 from PRC20.
-    function _routePC20Tx(
-        UniversalTxRequest memory req,
-        address caller,
-        bool fromCEA
-    ) private {
-        if (address(pc20Factory) == address(0)) revert Errors.InvalidInput();
-        if (!pc20Factory.isPC20Wrapper(req.token)) revert Errors.NotSupported();
+    ///      When nativeValue > 0 (excess ETH after fee), routes it as a standard
+    ///      FUNDS transfer to the caller's UEA via _sendTxWithFunds.
+    function _routePC20Tx(UniversalTxRequest memory req, address caller, uint256 nativeValue, bool fromCEA) private {
         if (req.amount == 0) revert Errors.ZeroAmount();
 
         address sourceAsset = PC20Wrapper(req.token).SOURCE_ASSET();
 
         pc20Factory.burnFrom(sourceAsset, caller, req.amount);
 
-        bytes memory prefixedPayload = abi.encodePacked(
-            PC_20_SELECTOR, req.payload
-        );
+        bytes memory prefixedPayload = abi.encodePacked(PC_20_SELECTOR, req.payload);
 
         _emitUniversalTx(
             caller,
@@ -453,6 +447,20 @@ contract UniversalGateway is
             req.signatureData,
             fromCEA
         );
+
+        // Route excess native value as a standard FUNDS transfer to caller's UEA
+        if (nativeValue > 0) {
+            UniversalTxRequest memory nativeReq = UniversalTxRequest({
+                recipient: req.recipient,
+                token: address(0),
+                amount: nativeValue,
+                payload: bytes(""),
+                revertRecipient: req.revertRecipient,
+                signatureData: req.signatureData
+            });
+            TX_TYPE nativeTxType = _fetchTxType(nativeReq, nativeValue);
+            _sendTxWithFunds(nativeReq, nativeValue, nativeTxType, fromCEA);
+        }
     }
 
     // ==============================
@@ -712,30 +720,6 @@ contract UniversalGateway is
         }
 
         emit FundsRescued(subTxId, universalTxId, token, amount, revertInstruction);
-    }
-
-    /// @inheritdoc IUniversalGateway
-    function revertPC20Burn(
-        bytes32 subTxId,
-        address sourceAsset,
-        uint256 amount,
-        address revertRecipient
-    ) external nonReentrant whenNotPaused {
-        if (msg.sender != tssAddress) revert Errors.InvalidInput();
-        if (isExecuted[subTxId]) revert Errors.PayloadExecuted();
-        if (amount == 0) revert Errors.InvalidAmount();
-        if (sourceAsset == address(0)) revert Errors.ZeroAddress();
-        if (revertRecipient == address(0)) {
-            revert Errors.InvalidRecipient();
-        }
-
-        isExecuted[subTxId] = true;
-
-        pc20Factory.revertMint(sourceAsset, revertRecipient, amount);
-
-        emit PC20BurnReverted(
-            subTxId, sourceAsset, revertRecipient, amount
-        );
     }
 
     /// @dev Validates common revert/rescue parameters and marks subTxId as executed.
@@ -1146,7 +1130,7 @@ contract UniversalGateway is
 
         // PC20 early exit: if token is a PC20 wrapper, route to burn path
         if (_isPC20Wrapper(req.token)) {
-            _routePC20Tx(req, caller, fromCEA);
+            _routePC20Tx(req, caller, nativeValue, fromCEA);
             return;
         }
 

@@ -101,10 +101,7 @@ interface IUniversalGateway {
     /// @notice                  PC20Factory updated event
     /// @param oldFactory        Previous PC20Factory address
     /// @param newFactory        New PC20Factory address
-    event PC20FactoryUpdated(
-        address indexed oldFactory,
-        address indexed newFactory
-    );
+    event PC20FactoryUpdated(address indexed oldFactory, address indexed newFactory);
 
     // ==============================
     //  UG_2: UNIVERSAL TRANSACTION
