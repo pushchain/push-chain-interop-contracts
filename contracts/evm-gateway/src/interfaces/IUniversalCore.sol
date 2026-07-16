@@ -28,13 +28,10 @@ interface IUniversalCore {
             uint256 gasLimitUsed
         );
 
-    function swapAndBurnGas(
-        address gasToken,
-        uint24 fee,
-        uint256 gasFee,
-        uint256 deadline,
-        address caller
-    ) external payable returns (uint256 gasTokenOut, uint256 refund);
+    function swapAndBurnGas(address gasToken, uint24 fee, uint256 gasFee, uint256 deadline, address caller)
+        external
+        payable
+        returns (uint256 gasTokenOut, uint256 refund);
 
     function getRescueFundsGasLimit(address _prc20)
         external
@@ -47,11 +44,7 @@ interface IUniversalCore {
             string memory chainNamespace
         );
 
-    function getPC20ExportGasAndFees(
-        string memory destChainNamespace,
-        uint256 gasLimit,
-        address pc20Token
-    )
+    function getPC20ExportGasAndFees(string memory destChainNamespace, uint256 gasLimit, address pc20Token)
         external
         view
         returns (
@@ -63,4 +56,6 @@ interface IUniversalCore {
             uint256 gasLimitUsed,
             bool isFirstExport
         );
+
+    function pc20Deployed(address sourceAsset, string memory destChain) external view returns (bool);
 }

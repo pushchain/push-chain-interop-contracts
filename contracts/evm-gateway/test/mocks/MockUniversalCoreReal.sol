@@ -55,6 +55,12 @@ contract MockUniversalCoreReal is IUniversalCore {
     /// @notice PC20 deployment gas overhead per chain namespace
     mapping(string => uint256) public pc20DeploymentGasOverhead;
 
+    /// @notice PC20 deploy flag per (token, chain)
+    mapping(address => mapping(string => bool)) public pc20Deployed;
+
+    /// @notice PC20Factory address per chain namespace
+    mapping(string => address) public pc20FactoryByChain;
+
     /// @notice Role for managing gas-related configurations
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
     bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
@@ -276,10 +282,7 @@ contract MockUniversalCoreReal is IUniversalCore {
         if (gasLimitWithBaseLimit == 0) {
             gasLimitWithBaseLimit = baseLimit;
         } else {
-            require(
-                gasLimitWithBaseLimit >= baseLimit,
-                "MockUniversalCore: gas limit below base"
-            );
+            require(gasLimitWithBaseLimit >= baseLimit, "MockUniversalCore: gas limit below base");
         }
 
         gasToken = gasTokenPRC20ByChainNamespace[chainNamespace];
@@ -318,11 +321,7 @@ contract MockUniversalCoreReal is IUniversalCore {
         gasFee = gasPrice * rescueGasLimit;
     }
 
-    function getPC20ExportGasAndFees(
-        string memory destChainNamespace,
-        uint256 gasLimit,
-        address pc20Token
-    )
+    function getPC20ExportGasAndFees(string memory destChainNamespace, uint256 gasLimit, address pc20Token)
         public
         view
         returns (
@@ -352,7 +351,7 @@ contract MockUniversalCoreReal is IUniversalCore {
         }
 
         uint256 deployOverhead = pc20DeploymentGasOverhead[destChainNamespace];
-        if (deployOverhead > 0) {
+        if (!pc20Deployed[pc20Token][destChainNamespace] && deployOverhead > 0) {
             isFirstExport = true;
             gasLimitUsed += deployOverhead;
         }
@@ -362,28 +361,37 @@ contract MockUniversalCoreReal is IUniversalCore {
         chainNamespace = destChainNamespace;
     }
 
-    function setPC20DeploymentGasOverhead(
-        string memory chainNamespace,
-        uint256 overhead
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setPC20DeploymentGasOverhead(string memory chainNamespace, uint256 overhead)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         pc20DeploymentGasOverhead[chainNamespace] = overhead;
     }
 
-    function setBaseGasLimitByChain(
-        string memory chainNamespace,
-        uint256 gasLimit
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setWrapperDeployed(address sourceAsset, string calldata destChain) external onlyUEModule {
+        pc20Deployed[sourceAsset][destChain] = true;
+    }
+
+    function setPC20FactoryByChain(string memory chainNamespace, address factory)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        pc20FactoryByChain[chainNamespace] = factory;
+    }
+
+    function setBaseGasLimitByChain(string memory chainNamespace, uint256 gasLimit)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         baseGasLimitByChainNamespace[chainNamespace] = gasLimit;
     }
 
     // ========= Swap Functions =========
-    function swapAndBurnGas(
-        address gasTokenAddr,
-        uint24,
-        uint256 gasFee,
-        uint256,
-        address caller
-    ) external payable returns (uint256 gasTokenOut, uint256 refund) {
+    function swapAndBurnGas(address gasTokenAddr, uint24, uint256 gasFee, uint256, address caller)
+        external
+        payable
+        returns (uint256 gasTokenOut, uint256 refund)
+    {
         require(gasFee > 0, "MockUniversalCore: zero total output");
 
         // Burn gasFee portion (mint then burn to simulate swap+burn)
@@ -395,12 +403,12 @@ contract MockUniversalCoreReal is IUniversalCore {
         // Refund unused PC directly to the caller (1:1 ratio for mock simplicity)
         if (msg.value > gasFee) {
             refund = msg.value - gasFee;
-            (bool ok,) = caller.call{value: refund}("");
+            (bool ok,) = caller.call{ value: refund }("");
             require(ok, "MockUniversalCore: refund failed");
         }
     }
 
-    receive() external payable {}
+    receive() external payable { }
 
     // ========= Test Helper Functions =========
     function setUniversalExecutorModule(address _uem) external {
