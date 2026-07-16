@@ -2,7 +2,7 @@
 pragma solidity 0.8.26;
 
 import { RevertInstructions, TX_TYPE } from "../libraries/Types.sol";
-import { UniversalTxRequest, UniversalTokenTxRequest, PC20BurnRequest } from "../libraries/TypesUG.sol";
+import { UniversalTxRequest, UniversalTokenTxRequest } from "../libraries/TypesUG.sol";
 
 interface IUniversalGateway {
     // ==============================
@@ -96,38 +96,6 @@ interface IUniversalGateway {
         address indexed token,
         uint256 amount,
         RevertInstructions revertInstruction
-    );
-
-    /// @notice                  PC20 burn event for inbound path (burn wrapper, unlock on Push Chain)
-    /// @param sender            User who burned the wrapper tokens
-    /// @param sourceAsset       Original PC20 asset address on Push Chain
-    /// @param wrapper           PC20Wrapper address burned on this chain
-    /// @param amount            Amount of wrapper tokens burned
-    /// @param recipient         Push Chain recipient (bytes for cross-VM compat)
-    /// @param payload           Optional execution payload on Push Chain
-    /// @param revertRecipient   Address to receive re-minted tokens if unlock fails
-    /// @param feeCollected      Protocol fee collected in native currency
-    event PC20UniversalTx(
-        address indexed sender,
-        address indexed sourceAsset,
-        address indexed wrapper,
-        uint256 amount,
-        bytes   recipient,
-        bytes   payload,
-        address revertRecipient,
-        uint256 feeCollected
-    );
-
-    /// @notice                  PC20 burn reverted — wrapper tokens re-minted
-    /// @param subTxId           Transaction identifier (replay protection)
-    /// @param sourceAsset       Original PC20 asset address on Push Chain
-    /// @param revertRecipient   Address that received re-minted wrapper tokens
-    /// @param amount            Amount of wrapper tokens re-minted
-    event PC20BurnReverted(
-        bytes32 indexed subTxId,
-        address indexed sourceAsset,
-        address indexed revertRecipient,
-        uint256 amount
     );
 
     /// @notice                  PC20Factory updated event
@@ -231,29 +199,6 @@ interface IUniversalGateway {
         uint256 amount,
         RevertInstructions calldata revertInstruction
     ) external payable;
-
-    /// @notice                  Revert a PC20 burn by re-minting wrapper tokens (TSS-only).
-    /// @dev                     Called when Push-side unlock fails after wrapper burn.
-    /// @param subTxId           Transaction identifier (for replay protection)
-    /// @param sourceAsset       Original PC20 asset address on Push Chain
-    /// @param amount            Amount of wrapper tokens to re-mint
-    /// @param revertRecipient   Address to receive re-minted wrapper tokens
-    function revertPC20Burn(
-        bytes32 subTxId,
-        address sourceAsset,
-        uint256 amount,
-        address revertRecipient
-    ) external;
-
-    // ==============================
-    //  UG_3b: PC20 BURN (INBOUND)
-    // ==============================
-
-    /// @notice                  Burn wrapped PC20 tokens to unlock originals on Push Chain.
-    /// @dev                     Permissionless. No rate limiting (burns reduce supply).
-    ///                          No approval needed (factory calls OZ _burn internally).
-    /// @param req               PC20BurnRequest struct
-    function sendPC20UniversalTx(PC20BurnRequest calldata req) external payable;
 
     /// @notice                  Update the PC20Factory address.
     /// @param newFactory        New PC20Factory address

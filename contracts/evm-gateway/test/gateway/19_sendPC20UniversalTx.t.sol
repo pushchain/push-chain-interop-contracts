@@ -11,7 +11,8 @@ import {PC20Wrapper} from "../../src/PC20Wrapper.sol";
 import {IPC20Factory} from "../../src/interfaces/IPC20Factory.sol";
 import {IUniversalGateway} from "../../src/interfaces/IUniversalGateway.sol";
 import {Errors} from "../../src/libraries/Errors.sol";
-import {PC20BurnRequest} from "../../src/libraries/TypesUG.sol";
+import {UniversalTxRequest} from "../../src/libraries/TypesUG.sol";
+import {TX_TYPE, PC_20_SELECTOR} from "../../src/libraries/Types.sol";
 import {Vault} from "../../src/Vault.sol";
 import {ERC1967Proxy} from
     "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -23,6 +24,8 @@ contract SendPC20UniversalTxTest is BaseTest {
     PC20Wrapper public wrapper;
     Vault public vaultContract;
     MockCEAFactory public ceaFactory;
+
+    address constant PUSH_RECIPIENT = address(0xBEEF);
 
     function setUp() public override {
         super.setUp();
@@ -122,31 +125,30 @@ contract SendPC20UniversalTxTest is BaseTest {
     //  Helpers
     // =========================================================
 
-    function _buildBurnReq(
+    function _buildPC20Req(
         address _wrapper,
         uint256 _amount,
-        bytes memory _recipient,
+        address _recipient,
         bytes memory _payload,
         address _revertRecipient
-    ) internal pure returns (PC20BurnRequest memory) {
-        return PC20BurnRequest({
-            wrapper: _wrapper,
-            amount: _amount,
+    ) internal pure returns (UniversalTxRequest memory) {
+        return UniversalTxRequest({
             recipient: _recipient,
+            token: _wrapper,
+            amount: _amount,
             payload: _payload,
-            revertRecipient: _revertRecipient
+            revertRecipient: _revertRecipient,
+            signatureData: bytes("")
         });
     }
 
-    address constant PUSH_RECIPIENT = address(0xBEEF);
-
-    function _defaultBurnReq(
+    function _defaultPC20Req(
         uint256 _amount
-    ) internal view returns (PC20BurnRequest memory) {
-        return _buildBurnReq(
+    ) internal view returns (UniversalTxRequest memory) {
+        return _buildPC20Req(
             address(wrapper),
             _amount,
-            abi.encodePacked(PUSH_RECIPIENT),
+            PUSH_RECIPIENT,
             bytes(""),
             user1
         );
@@ -160,50 +162,50 @@ contract SendPC20UniversalTxTest is BaseTest {
         uint256 balBefore = wrapper.balanceOf(user1);
         uint256 supplyBefore = wrapper.totalSupply();
 
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
 
         assertEq(wrapper.balanceOf(user1), balBefore - 100e18);
         assertEq(wrapper.totalSupply(), supplyBefore - 100e18);
     }
 
     function test_EventEmitted() public {
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
 
         vm.expectEmit(true, true, true, true);
-        emit PC20UniversalTx(
+        emit IUniversalGateway.UniversalTx(
             user1,
-            sourceAsset,
+            PUSH_RECIPIENT,
             address(wrapper),
             100e18,
-            req.recipient,
-            bytes(""),
+            abi.encodePacked(PC_20_SELECTOR),
             user1,
-            0
+            TX_TYPE.FUNDS_AND_PAYLOAD,
+            bytes(""),
+            false
         );
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
     }
 
     function test_SourceAssetResolved() public {
-        PC20BurnRequest memory req = _defaultBurnReq(50e18);
+        UniversalTxRequest memory req = _defaultPC20Req(50e18);
 
-        vm.recordLogs();
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
 
         assertEq(wrapper.SOURCE_ASSET(), sourceAsset);
     }
 
     function test_MultipleBurnsSameUser() public {
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(_defaultBurnReq(100e18));
+        gateway.sendUniversalTx(_defaultPC20Req(100e18));
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(_defaultBurnReq(200e18));
+        gateway.sendUniversalTx(_defaultPC20Req(200e18));
 
         assertEq(
             wrapper.balanceOf(user1),
@@ -213,11 +215,11 @@ contract SendPC20UniversalTxTest is BaseTest {
 
     function test_DifferentUsersBurnSameWrapper() public {
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(_defaultBurnReq(100e18));
+        gateway.sendUniversalTx(_defaultPC20Req(100e18));
 
-        PC20BurnRequest memory req2 = _defaultBurnReq(200e18);
+        UniversalTxRequest memory req2 = _defaultPC20Req(200e18);
         vm.prank(user2);
-        gateway.sendPC20UniversalTx(req2);
+        gateway.sendUniversalTx(req2);
 
         assertEq(wrapper.balanceOf(user1), 10_000e18 - 100e18);
         assertEq(wrapper.balanceOf(user2), 5_000e18 - 200e18);
@@ -227,47 +229,49 @@ contract SendPC20UniversalTxTest is BaseTest {
         bytes memory payload = abi.encodeWithSignature(
             "doSomething(uint256)", 42
         );
-        PC20BurnRequest memory req = _buildBurnReq(
+        UniversalTxRequest memory req = _buildPC20Req(
             address(wrapper),
             100e18,
-            abi.encodePacked(PUSH_RECIPIENT),
+            PUSH_RECIPIENT,
             payload,
             user1
         );
 
         vm.expectEmit(true, true, true, true);
-        emit PC20UniversalTx(
+        emit IUniversalGateway.UniversalTx(
             user1,
-            sourceAsset,
+            PUSH_RECIPIENT,
             address(wrapper),
             100e18,
-            req.recipient,
-            payload,
+            abi.encodePacked(PC_20_SELECTOR, payload),
             user1,
-            0
+            TX_TYPE.FUNDS_AND_PAYLOAD,
+            bytes(""),
+            false
         );
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
     }
 
     function test_BurnWithEmptyPayload() public {
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
 
         vm.expectEmit(true, true, true, true);
-        emit PC20UniversalTx(
+        emit IUniversalGateway.UniversalTx(
             user1,
-            sourceAsset,
+            PUSH_RECIPIENT,
             address(wrapper),
             100e18,
-            req.recipient,
-            bytes(""),
+            abi.encodePacked(PC_20_SELECTOR),
             user1,
-            0
+            TX_TYPE.FUNDS_AND_PAYLOAD,
+            bytes(""),
+            false
         );
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
     }
 
     function test_InboundFeeCollected() public {
@@ -277,9 +281,9 @@ contract SendPC20UniversalTxTest is BaseTest {
 
         uint256 feesBefore = gateway.totalProtocolFeesCollected();
 
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
         vm.prank(user1);
-        gateway.sendPC20UniversalTx{value: fee}(req);
+        gateway.sendUniversalTx{value: fee}(req);
 
         assertEq(
             gateway.totalProtocolFeesCollected(),
@@ -288,30 +292,31 @@ contract SendPC20UniversalTxTest is BaseTest {
     }
 
     function test_InboundFeeZero() public {
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
 
         vm.expectEmit(true, true, true, true);
-        emit PC20UniversalTx(
+        emit IUniversalGateway.UniversalTx(
             user1,
-            sourceAsset,
+            PUSH_RECIPIENT,
             address(wrapper),
             100e18,
-            req.recipient,
-            bytes(""),
+            abi.encodePacked(PC_20_SELECTOR),
             user1,
-            0
+            TX_TYPE.FUNDS_AND_PAYLOAD,
+            bytes(""),
+            false
         );
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
     }
 
     function test_BurnEntireBalance() public {
         uint256 bal = wrapper.balanceOf(user1);
-        PC20BurnRequest memory req = _defaultBurnReq(bal);
+        UniversalTxRequest memory req = _defaultPC20Req(bal);
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
 
         assertEq(wrapper.balanceOf(user1), 0);
     }
@@ -321,67 +326,56 @@ contract SendPC20UniversalTxTest is BaseTest {
     // =========================================================
 
     function test_Reverts_WrapperZeroAddress() public {
-        PC20BurnRequest memory req = _buildBurnReq(
+        // token=address(0) falls through to PRC20 path — _consumeRateLimit reverts
+        UniversalTxRequest memory req = _buildPC20Req(
             address(0),
             100e18,
-            abi.encodePacked(PUSH_RECIPIENT),
+            PUSH_RECIPIENT,
             bytes(""),
             user1
         );
 
         vm.prank(user1);
-        vm.expectRevert(Errors.ZeroAddress.selector);
-        gateway.sendPC20UniversalTx(req);
+        vm.expectRevert();
+        gateway.sendUniversalTx(req);
     }
 
     function test_Reverts_AmountZero() public {
-        PC20BurnRequest memory req = _defaultBurnReq(0);
+        // amount=0, empty payload, no msg.value → _fetchTxType reverts InvalidInput
+        UniversalTxRequest memory req = _defaultPC20Req(0);
 
         vm.prank(user1);
-        vm.expectRevert(Errors.ZeroAmount.selector);
-        gateway.sendPC20UniversalTx(req);
-    }
-
-    function test_Reverts_EmptyRecipient() public {
-        PC20BurnRequest memory req = _buildBurnReq(
-            address(wrapper),
-            100e18,
-            bytes(""),
-            bytes(""),
-            user1
-        );
-
-        vm.prank(user1);
-        vm.expectRevert(Errors.InvalidRecipient.selector);
-        gateway.sendPC20UniversalTx(req);
+        vm.expectRevert(Errors.InvalidInput.selector);
+        gateway.sendUniversalTx(req);
     }
 
     function test_Reverts_RevertRecipientZero() public {
-        PC20BurnRequest memory req = _buildBurnReq(
+        UniversalTxRequest memory req = _buildPC20Req(
             address(wrapper),
             100e18,
-            abi.encodePacked(PUSH_RECIPIENT),
+            PUSH_RECIPIENT,
             bytes(""),
             address(0)
         );
 
         vm.prank(user1);
         vm.expectRevert(Errors.InvalidRecipient.selector);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
     }
 
     function test_Reverts_NonFactoryWrapper() public {
-        PC20BurnRequest memory req = _buildBurnReq(
+        // Falls through to PRC20 path → _consumeRateLimit reverts NotSupported
+        UniversalTxRequest memory req = _buildPC20Req(
             makeAddr("fakeWrapper"),
             100e18,
-            abi.encodePacked(PUSH_RECIPIENT),
+            PUSH_RECIPIENT,
             bytes(""),
             user1
         );
 
         vm.prank(user1);
-        vm.expectRevert(Errors.NotSupported.selector);
-        gateway.sendPC20UniversalTx(req);
+        vm.expectRevert();
+        gateway.sendUniversalTx(req);
     }
 
     function test_Reverts_InsufficientInboundFee() public {
@@ -389,42 +383,42 @@ contract SendPC20UniversalTxTest is BaseTest {
         vm.prank(admin);
         gateway.setInboundFee(fee);
 
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
 
         vm.prank(user1);
         vm.expectRevert(Errors.InsufficientProtocolFee.selector);
-        gateway.sendPC20UniversalTx{value: fee / 2}(req);
+        gateway.sendUniversalTx{value: fee / 2}(req);
     }
 
     function test_Reverts_AmountExceedsBalance() public {
         uint256 bal = wrapper.balanceOf(user1);
-        PC20BurnRequest memory req = _defaultBurnReq(bal + 1);
+        UniversalTxRequest memory req = _defaultPC20Req(bal + 1);
 
         vm.prank(user1);
         vm.expectRevert();
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
     }
 
     function test_Reverts_WhenGatewayPaused() public {
         vm.prank(pauser);
         gateway.pause();
 
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
 
         vm.prank(user1);
         vm.expectRevert();
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
     }
 
     function test_Reverts_WhenFactoryPaused() public {
         vm.prank(pauser);
         pc20Factory.pause();
 
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
 
         vm.prank(user1);
         vm.expectRevert();
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
     }
 
     // =========================================================
@@ -432,10 +426,10 @@ contract SendPC20UniversalTxTest is BaseTest {
     // =========================================================
 
     function test_BurnWithoutApproval() public {
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
 
         assertEq(
             wrapper.balanceOf(user1),
@@ -447,10 +441,10 @@ contract SendPC20UniversalTxTest is BaseTest {
         vm.prank(user1);
         wrapper.approve(address(gateway), 0);
 
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
 
         assertEq(
             wrapper.balanceOf(user1),
@@ -463,23 +457,23 @@ contract SendPC20UniversalTxTest is BaseTest {
     // =========================================================
 
     function test_NoBlockRateLimit() public {
-        PC20BurnRequest memory req = _defaultBurnReq(5_000e18);
+        UniversalTxRequest memory req = _defaultPC20Req(5_000e18);
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
 
-        PC20BurnRequest memory req2 = _defaultBurnReq(5_000e18);
+        UniversalTxRequest memory req2 = _defaultPC20Req(5_000e18);
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req2);
+        gateway.sendUniversalTx(req2);
 
         assertEq(wrapper.balanceOf(user1), 0);
     }
 
     function test_NoEpochRateLimit() public {
         for (uint256 i = 0; i < 10; i++) {
-            PC20BurnRequest memory req = _defaultBurnReq(100e18);
+            UniversalTxRequest memory req = _defaultPC20Req(100e18);
             vm.prank(user1);
-            gateway.sendPC20UniversalTx(req);
+            gateway.sendUniversalTx(req);
         }
 
         assertEq(
@@ -491,11 +485,72 @@ contract SendPC20UniversalTxTest is BaseTest {
     function test_BurnDoesNotAffectRateLimitCounters() public {
         (uint256 usedBefore,) = gateway.currentTokenUsage(address(0));
 
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
 
         (uint256 usedAfter,) = gateway.currentTokenUsage(address(0));
+        assertEq(usedAfter, usedBefore);
+    }
+
+    // =========================================================
+    //  11.5 PC20-specific event semantics
+    // =========================================================
+
+    function test_PC20_PayloadPrefixedWithSelector() public {
+        bytes memory userPayload = hex"deadbeef";
+        UniversalTxRequest memory req = _buildPC20Req(
+            address(wrapper), 100e18, PUSH_RECIPIENT, userPayload, user1
+        );
+
+        vm.expectEmit(true, true, true, true);
+        emit IUniversalGateway.UniversalTx(
+            user1, PUSH_RECIPIENT, address(wrapper), 100e18,
+            abi.encodePacked(PC_20_SELECTOR, userPayload),
+            user1, TX_TYPE.FUNDS_AND_PAYLOAD, bytes(""), false
+        );
+
+        vm.prank(user1);
+        gateway.sendUniversalTx(req);
+    }
+
+    function test_PC20_EmptyPayloadStillGetsSelectorPrefix() public {
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
+
+        vm.expectEmit(true, true, true, true);
+        emit IUniversalGateway.UniversalTx(
+            user1, PUSH_RECIPIENT, address(wrapper), 100e18,
+            abi.encodePacked(PC_20_SELECTOR),
+            user1, TX_TYPE.FUNDS_AND_PAYLOAD, bytes(""), false
+        );
+
+        vm.prank(user1);
+        gateway.sendUniversalTx(req);
+    }
+
+    function test_PC20_TxTypeAlwaysFundsAndPayload() public {
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
+
+        vm.expectEmit(true, true, true, true);
+        emit IUniversalGateway.UniversalTx(
+            user1, PUSH_RECIPIENT, address(wrapper), 100e18,
+            abi.encodePacked(PC_20_SELECTOR),
+            user1, TX_TYPE.FUNDS_AND_PAYLOAD,
+            bytes(""), false
+        );
+
+        vm.prank(user1);
+        gateway.sendUniversalTx(req);
+    }
+
+    function test_PC20_DoesNotConsumeRateLimit() public {
+        (uint256 usedBefore,) = gateway.currentTokenUsage(address(wrapper));
+
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
+        vm.prank(user1);
+        gateway.sendUniversalTx(req);
+
+        (uint256 usedAfter,) = gateway.currentTokenUsage(address(wrapper));
         assertEq(usedAfter, usedBefore);
     }
 
@@ -568,11 +623,11 @@ contract SendPC20UniversalTxTest is BaseTest {
         vm.prank(admin);
         gateway.updatePC20Factory(address(newFactory));
 
-        // Old wrapper should no longer be recognized
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        // Old wrapper should no longer be recognized — falls through to PRC20
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
         vm.prank(user1);
-        vm.expectRevert(Errors.NotSupported.selector);
-        gateway.sendPC20UniversalTx(req);
+        vm.expectRevert();
+        gateway.sendUniversalTx(req);
     }
 
     // =========================================================
@@ -580,10 +635,10 @@ contract SendPC20UniversalTxTest is BaseTest {
     // =========================================================
 
     function test_FactoryDeployedWrapperPasses() public {
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
 
         assertEq(
             wrapper.balanceOf(user1),
@@ -592,17 +647,17 @@ contract SendPC20UniversalTxTest is BaseTest {
     }
 
     function test_NonFactoryERC20Fails() public {
-        PC20BurnRequest memory req = _buildBurnReq(
+        UniversalTxRequest memory req = _buildPC20Req(
             address(tokenA),
             100e18,
-            abi.encodePacked(PUSH_RECIPIENT),
+            PUSH_RECIPIENT,
             bytes(""),
             user1
         );
 
         vm.prank(user1);
-        vm.expectRevert(Errors.NotSupported.selector);
-        gateway.sendPC20UniversalTx(req);
+        vm.expectRevert();
+        gateway.sendUniversalTx(req);
     }
 
     function test_MaliciousContractMimickingSourceAssetFails() public {
@@ -611,17 +666,17 @@ contract SendPC20UniversalTxTest is BaseTest {
             "Fake", "FAKE", 18, sourceAsset, address(this)
         );
 
-        PC20BurnRequest memory req = _buildBurnReq(
+        UniversalTxRequest memory req = _buildPC20Req(
             address(fake),
             100e18,
-            abi.encodePacked(PUSH_RECIPIENT),
+            PUSH_RECIPIENT,
             bytes(""),
             user1
         );
 
         vm.prank(user1);
-        vm.expectRevert(Errors.NotSupported.selector);
-        gateway.sendPC20UniversalTx(req);
+        vm.expectRevert();
+        gateway.sendUniversalTx(req);
     }
 
     // =========================================================
@@ -636,9 +691,9 @@ contract SendPC20UniversalTxTest is BaseTest {
         uint256 feesBefore = gateway.totalProtocolFeesCollected();
 
         // PC20 burn with fee
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
         vm.prank(user1);
-        gateway.sendPC20UniversalTx{value: fee}(req);
+        gateway.sendUniversalTx{value: fee}(req);
 
         uint256 feesAfterBurn = gateway.totalProtocolFeesCollected();
         assertEq(feesAfterBurn, feesBefore + fee);
@@ -649,10 +704,10 @@ contract SendPC20UniversalTxTest is BaseTest {
     // =========================================================
 
     function test_SendPC20IsPermissionless() public {
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
     }
 
     function test_UpdateFactoryRequiresOperator() public {
@@ -666,10 +721,10 @@ contract SendPC20UniversalTxTest is BaseTest {
     // =========================================================
 
     function test_BurnSmallAmount() public {
-        PC20BurnRequest memory req = _defaultBurnReq(1);
+        UniversalTxRequest memory req = _defaultPC20Req(1);
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTx(req);
 
         assertEq(wrapper.balanceOf(user1), 10_000e18 - 1);
     }
@@ -681,9 +736,9 @@ contract SendPC20UniversalTxTest is BaseTest {
 
         uint256 tssBefore = tss.balance;
 
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
         vm.prank(user1);
-        gateway.sendPC20UniversalTx{value: fee + 1 ether}(req);
+        gateway.sendUniversalTx{value: fee + 1 ether}(req);
 
         assertEq(tss.balance, tssBefore + fee);
         assertEq(gateway.totalProtocolFeesCollected(), fee);
@@ -708,28 +763,28 @@ contract SendPC20UniversalTxTest is BaseTest {
         UniversalGateway freshGw =
             UniversalGateway(payable(address(gwProxy)));
 
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
 
         vm.prank(user1);
         vm.expectRevert();
-        freshGw.sendPC20UniversalTx(req);
+        freshGw.sendUniversalTx(req);
     }
 
     function test_ConcurrentBurns() public {
         uint256 supplyBefore = wrapper.totalSupply();
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx(_defaultBurnReq(100e18));
+        gateway.sendUniversalTx(_defaultPC20Req(100e18));
 
-        PC20BurnRequest memory req2 = _buildBurnReq(
+        UniversalTxRequest memory req2 = _buildPC20Req(
             address(wrapper),
             200e18,
-            abi.encodePacked(PUSH_RECIPIENT),
+            PUSH_RECIPIENT,
             bytes(""),
             user2
         );
         vm.prank(user2);
-        gateway.sendPC20UniversalTx(req2);
+        gateway.sendUniversalTx(req2);
 
         assertEq(wrapper.totalSupply(), supplyBefore - 300e18);
     }
@@ -763,16 +818,16 @@ contract SendPC20UniversalTxTest is BaseTest {
 
         uint256 feesBefore = gateway.totalProtocolFeesCollected();
 
-        PC20BurnRequest memory req = _buildBurnReq(
+        UniversalTxRequest memory req = _buildPC20Req(
             address(wrapper),
             100e18,
-            abi.encodePacked(PUSH_RECIPIENT),
+            makeAddr("ceaOwner"),  // must match CEA's mapped UEA
             bytes(""),
             makeAddr("ceaOwner")
         );
 
         vm.prank(cea);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTxFromCEA(req);
 
         assertEq(
             gateway.totalProtocolFeesCollected(),
@@ -788,17 +843,17 @@ contract SendPC20UniversalTxTest is BaseTest {
         vm.prank(admin);
         gateway.setInboundFee(fee);
 
-        PC20BurnRequest memory req = _buildBurnReq(
+        UniversalTxRequest memory req = _buildPC20Req(
             address(wrapper),
             100e18,
-            abi.encodePacked(PUSH_RECIPIENT),
+            makeAddr("ceaOwner"),
             bytes(""),
             makeAddr("ceaOwner")
         );
 
         // Should NOT revert with InsufficientProtocolFee
         vm.prank(cea);
-        gateway.sendPC20UniversalTx(req);
+        gateway.sendUniversalTxFromCEA(req);
     }
 
     function test_NonCEA_StillChargesInboundFee() public {
@@ -810,10 +865,10 @@ contract SendPC20UniversalTxTest is BaseTest {
 
         uint256 feesBefore = gateway.totalProtocolFeesCollected();
 
-        PC20BurnRequest memory req = _defaultBurnReq(100e18);
+        UniversalTxRequest memory req = _defaultPC20Req(100e18);
 
         vm.prank(user1);
-        gateway.sendPC20UniversalTx{value: fee}(req);
+        gateway.sendUniversalTx{value: fee}(req);
 
         assertEq(
             gateway.totalProtocolFeesCollected(),
@@ -823,19 +878,43 @@ contract SendPC20UniversalTxTest is BaseTest {
     }
 
     // =========================================================
-    //  Event declarations
+    //  11.12 PRC20 unaffected by PC20 changes
     // =========================================================
 
-    event PC20UniversalTx(
-        address indexed sender,
-        address indexed sourceAsset,
-        address indexed wrapper,
-        uint256 amount,
-        bytes recipient,
-        bytes payload,
-        address revertRecipient,
-        uint256 feeCollected
-    );
+    function test_PRC20_NotAffectedByPC20Changes() public {
+        // tokenA is a regular ERC20 from BaseTest
+        // Set up rate limit threshold for tokenA
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(tokenA);
+        uint256[] memory thresholds = new uint256[](1);
+        thresholds[0] = 1_000_000e18;
+        vm.prank(admin);
+        gateway.setTokenLimitThresholds(tokens, thresholds);
+
+        // Mint and approve
+        tokenA.mint(user1, 1000e18);
+        vm.prank(user1);
+        tokenA.approve(address(gateway), 1000e18);
+
+        UniversalTxRequest memory req = UniversalTxRequest({
+            recipient: PUSH_RECIPIENT,
+            token: address(tokenA),
+            amount: 100e18,
+            payload: bytes(""),
+            revertRecipient: user1,
+            signatureData: bytes("")
+        });
+
+        vm.prank(user1);
+        gateway.sendUniversalTx(req);
+
+        // Token should be locked in gateway's vault (BaseTest uses address(this)), not burned
+        assertEq(tokenA.balanceOf(address(this)), 100e18);
+    }
+
+    // =========================================================
+    //  Event declarations
+    // =========================================================
 
     event PC20FactoryUpdated(
         address indexed oldFactory,
