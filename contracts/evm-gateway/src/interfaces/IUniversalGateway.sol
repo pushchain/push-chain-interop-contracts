@@ -2,7 +2,7 @@
 pragma solidity 0.8.26;
 
 import { RevertInstructions, TX_TYPE } from "../libraries/Types.sol";
-import { UniversalTxRequest, UniversalTokenTxRequest, PC20BurnRequest } from "../libraries/TypesUG.sol";
+import { UniversalTxRequest, UniversalTokenTxRequest } from "../libraries/TypesUG.sol";
 
 interface IUniversalGateway {
     // ==============================
@@ -98,33 +98,10 @@ interface IUniversalGateway {
         RevertInstructions revertInstruction
     );
 
-    /// @notice                  PC20 burn event for inbound path (burn wrapper, unlock on Push Chain)
-    /// @param sender            User who burned the wrapper tokens
-    /// @param sourceAsset       Original PC20 asset address on Push Chain
-    /// @param wrapper           PC20Wrapper address burned on this chain
-    /// @param amount            Amount of wrapper tokens burned
-    /// @param recipient         Push Chain recipient (bytes for cross-VM compat)
-    /// @param payload           Optional execution payload on Push Chain
-    /// @param revertRecipient   Address to receive re-minted tokens if unlock fails
-    /// @param feeCollected      Protocol fee collected in native currency
-    event PC20UniversalTx(
-        address indexed sender,
-        address indexed sourceAsset,
-        address indexed wrapper,
-        uint256 amount,
-        bytes   recipient,
-        bytes   payload,
-        address revertRecipient,
-        uint256 feeCollected
-    );
-
     /// @notice                  PC20Factory updated event
     /// @param oldFactory        Previous PC20Factory address
     /// @param newFactory        New PC20Factory address
-    event PC20FactoryUpdated(
-        address indexed oldFactory,
-        address indexed newFactory
-    );
+    event PC20FactoryUpdated(address indexed oldFactory, address indexed newFactory);
 
     // ==============================
     //  UG_2: UNIVERSAL TRANSACTION
@@ -219,16 +196,6 @@ interface IUniversalGateway {
         uint256 amount,
         RevertInstructions calldata revertInstruction
     ) external payable;
-
-    // ==============================
-    //  UG_3b: PC20 BURN (INBOUND)
-    // ==============================
-
-    /// @notice                  Burn wrapped PC20 tokens to unlock originals on Push Chain.
-    /// @dev                     Permissionless. No rate limiting (burns reduce supply).
-    ///                          No approval needed (factory calls OZ _burn internally).
-    /// @param req               PC20BurnRequest struct
-    function sendPC20UniversalTx(PC20BurnRequest calldata req) external payable;
 
     /// @notice                  Update the PC20Factory address.
     /// @param newFactory        New PC20Factory address
