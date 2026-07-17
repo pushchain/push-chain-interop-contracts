@@ -113,7 +113,8 @@ pub fn create_pda_account<'info>(
     lamports: u64,
     signer_seeds: &[&[u8]],
     invalid_account_error: impl Fn() -> Error,
-) -> Result<()> {
+) -> Result<u64> {
+    let lamports_before = account.lamports();
     if account.lamports() > 0 {
         if account.owner != &system_program::ID {
             return Err(invalid_account_error());
@@ -154,7 +155,7 @@ pub fn create_pda_account<'info>(
     if account.owner != owner {
         return Err(invalid_account_error());
     }
-    Ok(())
+    Ok(lamports.saturating_sub(lamports_before))
 }
 
 /// Ensure the supplied account is the canonical ATA and create it when missing.

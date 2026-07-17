@@ -107,6 +107,17 @@ export const getPc20MintPda = (
   return pda;
 };
 
+export const getPc20StatePda = (
+  wrappedMint: PublicKey,
+  programId: PublicKey
+): PublicKey => {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("pc20_state"), wrappedMint.toBuffer()],
+    programId
+  );
+  return pda;
+};
+
 export const getTokenRateLimitPda = (
   tokenMint: PublicKey,
   programId: PublicKey

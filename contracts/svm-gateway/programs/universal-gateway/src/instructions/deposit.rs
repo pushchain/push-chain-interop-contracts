@@ -1,4 +1,8 @@
 use crate::errors::GatewayError;
+use crate::instructions::pc20::{
+    is_pc20_burn_account_shape, pc20_burn_tx_type, pc20_prefixed_payload,
+    validate_pc20_mint_authority, validate_pc20_state_fields,
+};
 use crate::state::*;
 use crate::utils::*;
 use anchor_lang::prelude::*;
@@ -14,8 +18,8 @@ use pyth_solana_receiver_sdk::price_update::PriceUpdateV2;
 /// @dev    Single entrypoint for all deposit types with internal routing mechanism.
 ///         `native_amount` mirrors `msg.value` on EVM chains - represents total native SOL sent.
 ///         Routes to GAS (instant) or FUNDS (standard) handlers based on derived tx type.
-pub fn send_universal_tx(
-    mut ctx: Context<SendUniversalTx>,
+pub fn send_universal_tx<'info>(
+    mut ctx: Context<'_, '_, '_, 'info, SendUniversalTx<'info>>,
     req: UniversalTxRequest,
     native_amount: u64,
 ) -> Result<()> {
@@ -28,6 +32,10 @@ pub fn send_universal_tx(
 
     // Collect inbound fee first so all downstream routing sees post-fee native amount.
     let adjusted_native_amount = collect_inbound_fee(&mut ctx, native_amount)?;
+
+    if is_pc20_burn_account_shape(ctx.program_id, ctx.remaining_accounts, req.token) {
+        return route_pc20_universal_tx(&mut ctx, req, adjusted_native_amount);
+    }
 
     let tx_type = fetch_tx_type(&req, adjusted_native_amount)?;
     route_universal_tx(&mut ctx, req, adjusted_native_amount, tx_type)
@@ -92,6 +100,96 @@ fn route_universal_tx(
     }
 }
 
+fn route_pc20_universal_tx<'info>(
+    ctx: &mut Context<'_, '_, '_, 'info, SendUniversalTx<'info>>,
+    req: UniversalTxRequest,
+    adjusted_native_amount: u64,
+) -> Result<()> {
+    let tx_type = pc20_burn_tx_type(req.amount)?;
+    require!(req.token != Pubkey::default(), GatewayError::InvalidMint);
+    require!(req.recipient != [0u8; 20], GatewayError::InvalidRecipient);
+    require!(
+        req.revert_recipient != Pubkey::default(),
+        GatewayError::InvalidRecipient
+    );
+    require!(
+        ctx.accounts.gateway_token_account.is_none(),
+        GatewayError::InvalidAccount
+    );
+
+    require!(
+        ctx.remaining_accounts.len() == 2,
+        GatewayError::AccountListLengthMismatch
+    );
+    let pc20_state = ctx.remaining_accounts[0].clone();
+    let pc20_mint = ctx.remaining_accounts[1].clone();
+
+    require!(pc20_mint.key() == req.token, GatewayError::InvalidMint);
+    require!(
+        pc20_state.owner == ctx.program_id,
+        GatewayError::InvalidAccount
+    );
+    require!(
+        !pc20_state.is_signer && !pc20_mint.is_signer,
+        GatewayError::UnexpectedOuterSigner
+    );
+    require!(
+        pc20_mint.is_writable,
+        GatewayError::AccountWritableFlagMismatch
+    );
+
+    let state = Pc20State::try_deserialize(&mut &pc20_state.try_borrow_data()?[..])?;
+    let source_asset =
+        validate_pc20_state_fields(ctx.program_id, pc20_state.key, &state, req.token)?;
+    validate_pc20_mint_authority(&pc20_mint, req.token)?;
+
+    let user_ata = ctx
+        .accounts
+        .user_token_account
+        .as_ref()
+        .ok_or(error!(GatewayError::InvalidAccount))?;
+    let parsed_user = parse_token_account(&user_ata.to_account_info())?;
+    require!(
+        parsed_user.owner == ctx.accounts.user.key(),
+        GatewayError::InvalidOwner
+    );
+    require!(parsed_user.mint == req.token, GatewayError::InvalidMint);
+
+    spl_burn(
+        &pc20_mint,
+        &user_ata.to_account_info(),
+        &ctx.accounts.user.to_account_info(),
+        req.amount,
+    )?;
+
+    let prefixed_payload = pc20_prefixed_payload(source_asset, &req.payload);
+    emit!(UniversalTx {
+        sender: ctx.accounts.user.key(),
+        recipient: req.recipient,
+        token: req.token,
+        amount: req.amount,
+        payload: prefixed_payload,
+        revert_recipient: req.revert_recipient,
+        tx_type,
+        signature_data: req.signature_data.clone(),
+        from_cea: false,
+    });
+
+    if adjusted_native_amount > 0 {
+        let native_req = UniversalTxRequest {
+            recipient: req.recipient,
+            token: Pubkey::default(),
+            amount: adjusted_native_amount,
+            payload: Vec::new(),
+            revert_recipient: req.revert_recipient,
+            signature_data: req.signature_data,
+        };
+        send_tx_with_funds_route(ctx, native_req, adjusted_native_amount, TxType::Funds)?;
+    }
+
+    Ok(())
+}
+
 fn fetch_tx_type(req: &UniversalTxRequest, native_amount: u64) -> Result<TxType> {
     let has_payload = !req.payload.is_empty();
     let has_funds = req.amount > 0;
@@ -152,7 +250,10 @@ fn send_tx_with_gas_route(
     // Payload-only execution (gas_amount == 0) - EVM V0 parity
     // User already has UEA with gas on Push Chain, just execute payload
     if gas_amount == 0 {
-        require!(tx_type == TxType::GasAndPayload, GatewayError::InvalidAmount);
+        require!(
+            tx_type == TxType::GasAndPayload,
+            GatewayError::InvalidAmount
+        );
 
         emit!(UniversalTx {
             sender: ctx.accounts.user.key(),
@@ -171,8 +272,7 @@ fn send_tx_with_gas_route(
 
     // Performs rate-limit checks and handle deposit
     // USD caps: min $1, max $10 (enforced via Pyth oracle)
-    let usd_amount =
-        check_usd_caps(&ctx.accounts.config, gas_amount, &ctx.accounts.price_update)?;
+    let usd_amount = check_usd_caps(&ctx.accounts.config, gas_amount, &ctx.accounts.price_update)?;
     // Block-based USD cap: per-slot limit (disabled if block_usd_cap == 0)
     check_block_usd_cap(&mut ctx.accounts.rate_limit_config, usd_amount)?;
 
@@ -242,7 +342,14 @@ fn handle_native_funds_route(
 
     let gas_amount = native_amount.saturating_sub(req.amount);
     if gas_amount > 0 {
-        send_tx_with_gas_route(ctx, TxType::Gas, gas_amount, &[], &req.revert_recipient, &req.signature_data)?;
+        send_tx_with_gas_route(
+            ctx,
+            TxType::Gas,
+            gas_amount,
+            &[],
+            &req.revert_recipient,
+            &req.signature_data,
+        )?;
     }
 
     validate_token_and_consume_rate_limit(
@@ -273,7 +380,14 @@ fn handle_spl_funds_route(
     if tx_type == TxType::Funds {
         require!(native_amount == 0, GatewayError::InvalidAmount);
     } else if native_amount > 0 {
-        send_tx_with_gas_route(ctx, TxType::Gas, native_amount, &[], &req.revert_recipient, &req.signature_data)?;
+        send_tx_with_gas_route(
+            ctx,
+            TxType::Gas,
+            native_amount,
+            &[],
+            &req.revert_recipient,
+            &req.signature_data,
+        )?;
     }
 
     validate_token_and_consume_rate_limit(
@@ -287,8 +401,16 @@ fn handle_spl_funds_route(
 
 /// Emit the UniversalTx event for FUNDS / FUNDS_AND_PAYLOAD routes.
 /// FUNDS carries the user-specified recipient; FUNDS_AND_PAYLOAD targets UEA (zero address).
-fn emit_funds_route_event(ctx: &Context<SendUniversalTx>, req: UniversalTxRequest, tx_type: TxType) {
-    let recipient = if tx_type == TxType::Funds { req.recipient } else { [0u8; 20] };
+fn emit_funds_route_event(
+    ctx: &Context<SendUniversalTx>,
+    req: UniversalTxRequest,
+    tx_type: TxType,
+) {
+    let recipient = if tx_type == TxType::Funds {
+        req.recipient
+    } else {
+        [0u8; 20]
+    };
     emit!(UniversalTx {
         sender: ctx.accounts.user.key(),
         recipient,
@@ -317,21 +439,32 @@ fn deposit_spl_to_vault(ctx: &Context<SendUniversalTx>, token: Pubkey, amount: u
         .ok_or_else(|| error!(GatewayError::InvalidAccount))?;
 
     let user_token_info = user_token_account.to_account_info();
-    require!(user_token_info.owner == &spl_token::ID, GatewayError::InvalidOwner);
+    require!(
+        user_token_info.owner == &spl_token::ID,
+        GatewayError::InvalidOwner
+    );
 
     // Validate source: authority must be the signer, mint must match requested token.
     // Without this, a malicious user could pass someone else's token account.
     let parsed_user = parse_token_account(&user_token_info)?;
-    require!(parsed_user.owner == ctx.accounts.user.key(), GatewayError::InvalidOwner);
+    require!(
+        parsed_user.owner == ctx.accounts.user.key(),
+        GatewayError::InvalidOwner
+    );
     require!(parsed_user.mint == token, GatewayError::InvalidMint);
 
     // SECURITY: Validate gateway_token_account is the vault's ATA for this token.
     // This prevents users from providing their own token account and stealing funds.
     let parsed = parse_token_account(&gateway_token_account.to_account_info())?;
-    require!(parsed.owner == ctx.accounts.vault.key(), GatewayError::InvalidOwner);
+    require!(
+        parsed.owner == ctx.accounts.vault.key(),
+        GatewayError::InvalidOwner
+    );
     require!(parsed.mint == token, GatewayError::InvalidMint);
-    let expected_gateway_ata =
-        spl_associated_token_account::get_associated_token_address(&ctx.accounts.vault.key(), &token);
+    let expected_gateway_ata = spl_associated_token_account::get_associated_token_address(
+        &ctx.accounts.vault.key(),
+        &token,
+    );
     require!(
         gateway_token_account.key() == expected_gateway_ata,
         GatewayError::InvalidAccount

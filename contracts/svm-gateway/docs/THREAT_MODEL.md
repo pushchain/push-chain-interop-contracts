@@ -130,6 +130,14 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Risk: issuer retains `mint_authority` and/or `freeze_authority`, affecting collateral assumptions or freezing vault flows.  
    Control: `set_token_rate_limit` requires explicit acknowledgment flags for retained mint and freeze authorities before a non-zero threshold can be set.
 
+14. **PC20 emergency rescue minting**
+   Risk: PC20 rescue mints wrapped supply on Solana instead of transferring from a token vault. A bad TSS rescue signature can create uncollateralized wrapped supply unless the matching Push-side ledger action has already happened.
+   Control: PC20 rescue remains TSS-authorized, domain-separated with `"PC20" || source_asset`, and replay-protected by `ExecutedSubTx`; off-chain TSS policy must require Push-side confirmation before signing rescue.
+
+15. **PC20 CEA burn self-route interpretation**
+   Risk: `finalize_universal_tx` with `destination_program = gateway` can treat an inner generic `send_universal_tx` discriminator as a PC20 CEA burn when the signed remaining accounts match the PC20 account shape.
+   Control: TSS signs the destination program, inner instruction data, account list, and writable flags; signer policy must explicitly classify `target = gateway`, inner `send_universal_tx`, `outer amount = 0`, and PC20 remaining accounts as PC20 burn intent.
+
 ---
 
 ## 5. Cross-Program / Operational Risks

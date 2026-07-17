@@ -11,6 +11,8 @@ pub const EXECUTED_SUB_TX_SEED: &[u8] = b"executed_sub_tx";
 pub const STORED_IX_DATA_SEED: &[u8] = b"stored_ix_data";
 pub const CEA_SEED: &[u8] = b"push_identity";
 pub const PC20_MINT_SEED: &[u8] = b"pc20_mint";
+pub const PC20_STATE_SEED: &[u8] = b"pc20_state";
+pub const PC20_SELECTOR: [u8; 4] = *b"PC20";
 pub const MAX_INBOUND_FEE_LAMPORTS: u64 = 2_000_000;
 /// Base Solana transaction fee per signature (protocol constant, unchanged since genesis).
 ///
@@ -113,6 +115,21 @@ pub struct FeeVault {
 impl FeeVault {
     // 8 (discriminator) + 8 (fee) + 1 (bump) + 50 (padding)
     pub const LEN: usize = 8 + 8 + 1 + 50;
+}
+
+/// Reverse lookup for an SVM PC20 wrapped mint.
+/// EVM wrappers expose `SOURCE_ASSET()` at runtime; SPL mints do not, so generic
+/// PC20 routes use this canonical PDA to recover and validate the Push source asset.
+#[account]
+pub struct Pc20State {
+    pub source_asset: [u8; 20],
+    pub wrapped_mint: Pubkey,
+    pub decimals: u8,
+    pub bump: u8,
+}
+
+impl Pc20State {
+    pub const LEN: usize = 8 + 20 + 32 + 1 + 1;
 }
 
 /// Rate limiting configuration (separate account for backward compatibility)
@@ -309,52 +326,4 @@ pub struct FundsRescued {
     pub token: Pubkey,
     pub amount: u64,
     pub revert_instruction: RevertInstructions,
-}
-
-#[event]
-pub struct Pc20ExportFinalized {
-    pub sub_tx_id: [u8; 32],
-    pub universal_tx_id: [u8; 32],
-    pub push_account: [u8; 20],
-    pub source_asset: [u8; 20],
-    pub wrapped_mint: Pubkey,
-    pub recipient: Pubkey,
-    pub amount: u64,
-    pub gas_fee: u64,
-    pub gas_used: u64,
-    pub gas_to_refund: u64,
-    pub mint_created: bool,
-    pub recipient_ata_created: bool,
-    pub cea_ata_created: bool,
-    pub payload_executed: bool,
-}
-
-#[event]
-pub struct Pc20UniversalTx {
-    pub sub_tx_id: [u8; 32],
-    pub sender: Pubkey,
-    pub push_account: [u8; 20],
-    pub source_asset: [u8; 20],
-    pub wrapped_mint: Pubkey,
-    pub amount: u64,
-    pub recipient: [u8; 20],
-    pub payload: Vec<u8>,
-    pub revert_recipient: Pubkey,
-    /// Flat inbound fee (lamports) taken from the direct-burn caller and forwarded to `fee_vault`.
-    /// Always `0` for CEA-routed burns (paid via the `finalize_universal_tx` gas model).
-    pub fee_collected: u64,
-    pub from_cea: bool,
-}
-
-#[event]
-pub struct Pc20BurnReverted {
-    pub sub_tx_id: [u8; 32],
-    pub original_burn_sub_tx_id: [u8; 32],
-    pub source_asset: [u8; 20],
-    pub wrapped_mint: Pubkey,
-    pub amount: u64,
-    pub revert_recipient: Pubkey,
-    pub gas_fee: u64,
-    pub gas_used: u64,
-    pub recipient_ata_created: bool,
 }

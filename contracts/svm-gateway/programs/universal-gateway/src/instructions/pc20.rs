@@ -1,26 +1,24 @@
 use crate::errors::GatewayError;
+use crate::instructions::execute::FinalizeUniversalTx;
 use crate::instructions::tss::validate_message;
 use crate::state::{
-    Config, ExecutedSubTx, FeeVault, GatewayAccountMeta, Pc20BurnReverted, Pc20ExportFinalized,
-    Pc20UniversalTx, CEA_SEED, CONFIG_SEED, EXECUTED_SUB_TX_SEED, FEE_VAULT_SEED, PC20_MINT_SEED,
-    TSS_SEED, VAULT_SEED,
+    ExecutedSubTx, GatewayAccountMeta, Pc20State, TxType, UniversalTx, UniversalTxFinalized,
+    CEA_SEED, PC20_MINT_SEED, PC20_SELECTOR, PC20_STATE_SEED,
 };
 use crate::utils::{
     create_pda_account, encode_u64_be, ensure_associated_token_account,
     invoke_signed_gateway_instruction, parse_token_account, pda_burn, pda_mint_to,
-    reimburse_relayer_from_fee_vault, serialize_ix_data, serialize_string, spl_burn,
-    transfer_gas_fee_to_caller, validate_remaining_accounts,
+    serialize_ix_data, serialize_string, transfer_gas_fee_to_caller, validate_remaining_accounts,
 };
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{hash::hash as solana_hash, program::invoke, program_pack::Pack};
-use anchor_spl::associated_token::{spl_associated_token_account, AssociatedToken};
-use anchor_spl::token::{spl_token, Mint, Token, TokenAccount};
+use anchor_spl::associated_token::spl_associated_token_account;
+use anchor_spl::token::spl_token;
 
 const SIGNATURE_FEE_LAMPORTS: u64 = 5_000;
 const SPL_TOKEN_ACCOUNT_LEN: usize = 165;
 const SPL_MINT_ACCOUNT_LEN: usize = spl_token::state::Mint::LEN;
-const PC20_FINALIZE_INSTRUCTION_ID: u8 = 5;
-const PC20_BURN_REVERT_INSTRUCTION_ID: u8 = 6;
+pub const PC20_FINALIZE_INSTRUCTION_ID: u8 = 5;
 
 struct DecodedExecutePayload {
     accounts: Vec<GatewayAccountMeta>,
@@ -29,163 +27,52 @@ struct DecodedExecutePayload {
     target_program: Pubkey,
 }
 
-#[derive(Accounts)]
-#[instruction(
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct Pc20ExportIxData {
+    pub source_asset: [u8; 20],
+    pub name: String,
+    pub symbol: String,
+    pub decimals: u8,
+    pub user_data: Vec<u8>,
+}
+
+struct Pc20FinalizeParams {
     sub_tx_id: [u8; 32],
     universal_tx_id: [u8; 32],
     source_asset: [u8; 20],
     amount: u64,
-    push_account: [u8; 20]
-)]
-pub struct FinalizePc20Export<'info> {
-    #[account(mut)]
-    pub caller: Signer<'info>,
-
-    #[account(
-        seeds = [CONFIG_SEED],
-        bump = config.bump,
-        constraint = !config.paused @ GatewayError::Paused,
-    )]
-    pub config: Account<'info, Config>,
-
-    #[account(mut, seeds = [VAULT_SEED], bump = config.vault_bump)]
-    pub vault_sol: SystemAccount<'info>,
-
-    /// CHECK: Canonical wrapped mint PDA for the Push-native source asset.
-    #[account(
-        mut,
-        seeds = [PC20_MINT_SEED, source_asset.as_ref()],
-        bump
-    )]
-    pub pc20_mint: UncheckedAccount<'info>,
-
-    /// CHECK: Final recipient wallet for direct mints.
-    pub recipient: UncheckedAccount<'info>,
-
-    /// CHECK: Recipient ATA for direct mints.
-    #[account(mut)]
-    pub recipient_ata: UncheckedAccount<'info>,
-
-    /// CHECK: Canonical Solana identity derived from the Push account.
-    #[account(
-        seeds = [CEA_SEED, push_account.as_ref()],
-        bump
-    )]
-    pub cea_authority: UncheckedAccount<'info>,
-
-    /// CHECK: CEA ATA used for payload execution flows.
-    #[account(mut)]
-    pub cea_ata: UncheckedAccount<'info>,
-
-    #[account(mut, seeds = [TSS_SEED], bump = tss_pda.bump)]
-    pub tss_pda: Account<'info, crate::state::TssPda>,
-
-    #[account(
-        init,
-        payer = caller,
-        space = ExecutedSubTx::LEN,
-        seeds = [EXECUTED_SUB_TX_SEED, sub_tx_id.as_ref()],
-        bump
-    )]
-    pub executed_sub_tx: Account<'info, ExecutedSubTx>,
-
-    pub system_program: Program<'info, System>,
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
-    pub rent: Sysvar<'info, Rent>,
-
-    /// CHECK: Destination program for payload execution. Pass SystemProgram when user_data is empty.
-    pub destination_program: UncheckedAccount<'info>,
+    push_account: [u8; 20],
+    recipient: Pubkey,
+    name: String,
+    symbol: String,
+    decimals: u8,
+    user_data: Vec<u8>,
+    ix_data: Vec<u8>,
+    gas_fee: u64,
+    deadline: i64,
+    signature: [u8; 64],
+    recovery_id: u8,
+    message_hash: [u8; 32],
 }
 
-#[derive(Accounts)]
-#[instruction(_sub_tx_id: [u8; 32], source_asset: [u8; 20])]
-pub struct SendPc20UniversalTx<'info> {
-    #[account(
-        seeds = [CONFIG_SEED],
-        bump = config.bump,
-        constraint = !config.paused @ GatewayError::Paused,
-    )]
-    pub config: Account<'info, Config>,
-
-    #[account(mut)]
-    pub caller: Signer<'info>,
-
-    #[account(
-        mut,
-        seeds = [PC20_MINT_SEED, source_asset.as_ref()],
-        bump
-    )]
-    pub pc20_mint: Account<'info, Mint>,
-
-    #[account(
-        mut,
-        constraint = user_ata.owner == caller.key() @ GatewayError::InvalidOwner,
-        constraint = user_ata.mint == pc20_mint.key() @ GatewayError::InvalidMint,
-    )]
-    pub user_ata: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        seeds = [FEE_VAULT_SEED],
-        bump = fee_vault.bump,
-    )]
-    pub fee_vault: Account<'info, FeeVault>,
-
-    pub token_program: Program<'info, Token>,
-    pub system_program: Program<'info, System>,
-}
-
-#[derive(Accounts)]
-#[instruction(
-    sub_tx_id: [u8; 32],
-    original_burn_sub_tx_id: [u8; 32],
-    source_asset: [u8; 20]
-)]
-pub struct RevertPc20Burn<'info> {
-    #[account(
-        seeds = [CONFIG_SEED],
-        bump = config.bump,
-        constraint = !config.paused @ GatewayError::Paused,
-    )]
-    pub config: Account<'info, Config>,
-
-    #[account(mut, seeds = [FEE_VAULT_SEED], bump = fee_vault.bump)]
-    pub fee_vault: Account<'info, FeeVault>,
-
-    #[account(mut, seeds = [TSS_SEED], bump = tss_pda.bump)]
-    pub tss_pda: Account<'info, crate::state::TssPda>,
-
-    #[account(mut)]
-    pub caller: Signer<'info>,
-
-    #[account(
-        mut,
-        seeds = [PC20_MINT_SEED, source_asset.as_ref()],
-        bump
-    )]
-    pub pc20_mint: Account<'info, Mint>,
-
-    /// CHECK: Solana wallet that receives the reminted wrapped supply.
-    pub revert_recipient: UncheckedAccount<'info>,
-
-    /// CHECK: ATA for the revert recipient. Created lazily when missing.
-    #[account(mut)]
-    pub recipient_ata: UncheckedAccount<'info>,
-
-    #[account(
-        init,
-        payer = caller,
-        space = ExecutedSubTx::LEN,
-        seeds = [EXECUTED_SUB_TX_SEED, sub_tx_id.as_ref()],
-        bump
-    )]
-    pub executed_sub_tx: Account<'info, ExecutedSubTx>,
-
-    pub system_program: Program<'info, System>,
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
-    pub rent: Sysvar<'info, Rent>,
+struct Pc20FinalizeAccountSet<'a, 'info> {
+    program_id: &'a Pubkey,
+    caller: AccountInfo<'info>,
+    vault_sol: AccountInfo<'info>,
+    pc20_mint: AccountInfo<'info>,
+    pc20_state: AccountInfo<'info>,
+    recipient: AccountInfo<'info>,
+    recipient_ata: Option<AccountInfo<'info>>,
+    cea_authority: AccountInfo<'info>,
+    cea_ata: Option<AccountInfo<'info>>,
+    tss_pda: &'a mut Account<'info, crate::state::TssPda>,
+    system_program: AccountInfo<'info>,
+    token_program: AccountInfo<'info>,
+    associated_token_program: AccountInfo<'info>,
+    rent: AccountInfo<'info>,
+    destination_program: AccountInfo<'info>,
+    remaining_accounts: &'a [AccountInfo<'info>],
+    vault_bump: u8,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
@@ -198,240 +85,164 @@ struct SendPc20UniversalTxArgs {
     pub revert_recipient: Pubkey,
 }
 
-pub fn finalize_pc20_export(
-    ctx: Context<FinalizePc20Export>,
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+struct SendUniversalTxIxArgs {
+    pub req: crate::state::UniversalTxRequest,
+    pub native_amount: u64,
+}
+
+struct ParsedPc20BurnArgs {
+    pub source_asset: Option<[u8; 20]>,
+    pub wrapped_mint: Option<Pubkey>,
+    pub amount: u64,
+    pub recipient: [u8; 20],
+    pub payload: Vec<u8>,
+    pub revert_recipient: Pubkey,
+    pub signature_data: Vec<u8>,
+}
+
+pub fn pc20_burn_tx_type(amount: u64) -> Result<TxType> {
+    require!(amount > 0, GatewayError::InvalidAmount);
+    Ok(TxType::FundsAndPayload)
+}
+
+pub fn parse_pc20_export_ix_data(ix_data: &[u8]) -> Result<Option<Pc20ExportIxData>> {
+    if ix_data.len() < PC20_SELECTOR.len()
+        || &ix_data[..PC20_SELECTOR.len()] != PC20_SELECTOR.as_ref()
+    {
+        return Ok(None);
+    }
+
+    Pc20ExportIxData::try_from_slice(&ix_data[PC20_SELECTOR.len()..])
+        .map(Some)
+        .map_err(|_| error!(GatewayError::InvalidInput))
+}
+
+pub fn handle_pc20_export_from_universal<'a, 'b, 'c, 'info>(
+    ctx: &mut Context<'a, 'b, 'c, 'info, FinalizeUniversalTx<'info>>,
+    instruction_id: u8,
     sub_tx_id: [u8; 32],
     universal_tx_id: [u8; 32],
-    source_asset: [u8; 20],
     amount: u64,
     push_account: [u8; 20],
-    recipient: Pubkey,
-    name: String,
-    symbol: String,
-    decimals: u8,
-    user_data: Vec<u8>,
+    writable_flags: Vec<u8>,
+    ix_data: Vec<u8>,
+    export_args: Pc20ExportIxData,
+    store_upload_fee_lamports: u64,
+    store_refund_recipient: Option<&AccountInfo<'info>>,
     gas_fee: u64,
     deadline: i64,
     signature: [u8; 64],
     recovery_id: u8,
     message_hash: [u8; 32],
 ) -> Result<()> {
-    require!(amount > 0, GatewayError::InvalidAmount);
     require!(
-        recipient != Pubkey::default(),
-        GatewayError::InvalidRecipient
+        instruction_id == PC20_FINALIZE_INSTRUCTION_ID,
+        GatewayError::InvalidInstruction
     );
+    require!(writable_flags.is_empty(), GatewayError::InvalidInput);
     require!(
-        ctx.accounts.recipient.key() == recipient,
-        GatewayError::InvalidRecipient
+        ctx.accounts.vault_ata.is_none()
+            && ctx.accounts.mint.is_none()
+            && ctx.accounts.recipient_ata.is_none()
+            && ctx.accounts.rate_limit_config.is_none()
+            && ctx.accounts.token_rate_limit.is_none(),
+        GatewayError::InvalidAccount
     );
-    require!(source_asset != [0u8; 20], GatewayError::ZeroAddress);
 
-    let mint_created = ctx.accounts.pc20_mint.to_account_info().data_is_empty();
-    if mint_created {
-        create_pc20_mint(&ctx, decimals, &source_asset)?;
-        validate_pc20_mint(
-            &ctx.accounts.pc20_mint.to_account_info(),
-            ctx.accounts.pc20_mint.key(),
-            decimals,
-        )?;
-    } else {
-        validate_pc20_mint_authority(
-            &ctx.accounts.pc20_mint.to_account_info(),
-            ctx.accounts.pc20_mint.key(),
-        )?;
-    }
+    let recipient = ctx
+        .accounts
+        .recipient
+        .as_ref()
+        .ok_or(error!(GatewayError::InvalidAccount))?
+        .to_account_info();
+    let token_program = ctx
+        .accounts
+        .token_program
+        .as_ref()
+        .ok_or(error!(GatewayError::InvalidAccount))?
+        .to_account_info();
+    let associated_token_program = ctx
+        .accounts
+        .associated_token_program
+        .as_ref()
+        .ok_or(error!(GatewayError::InvalidAccount))?
+        .to_account_info();
+    let rent = ctx
+        .accounts
+        .rent
+        .as_ref()
+        .ok_or(error!(GatewayError::InvalidAccount))?
+        .to_account_info();
+    let has_payload = !export_args.user_data.is_empty();
+    let control_accounts_len = if has_payload { 2 } else { 3 };
+    require!(
+        ctx.remaining_accounts.len() >= control_accounts_len,
+        GatewayError::AccountListLengthMismatch
+    );
 
-    let decoded_payload = if user_data.is_empty() {
+    let pc20_state = ctx.remaining_accounts[0].clone();
+    let pc20_mint = ctx.remaining_accounts[1].clone();
+    let recipient_ata = if has_payload {
         None
     } else {
-        let payload = decode_execute_payload(&user_data)?;
-        require!(
-            payload.instruction_id == 2,
-            GatewayError::InvalidInstruction
-        );
-        require!(
-            payload.target_program == ctx.accounts.destination_program.key(),
-            GatewayError::InvalidProgram
-        );
-        require!(
-            ctx.accounts.destination_program.executable,
-            GatewayError::InvalidProgram
-        );
-        validate_remaining_accounts(&payload.accounts, ctx.remaining_accounts)?;
-        Some(payload)
+        Some(ctx.remaining_accounts[2].clone())
     };
+    let payload_remaining_accounts = &ctx.remaining_accounts[control_accounts_len..];
+    if !has_payload {
+        require!(
+            payload_remaining_accounts.is_empty(),
+            GatewayError::AccountListLengthMismatch
+        );
+    }
 
-    build_and_validate_pc20_finalize_tss(
-        &mut ctx.accounts.tss_pda,
-        universal_tx_id,
+    let accounts = Pc20FinalizeAccountSet {
+        program_id: ctx.program_id,
+        caller: ctx.accounts.caller.to_account_info(),
+        vault_sol: ctx.accounts.vault_sol.to_account_info(),
+        pc20_mint,
+        pc20_state,
+        recipient: recipient.clone(),
+        recipient_ata,
+        cea_authority: ctx.accounts.cea_authority.to_account_info(),
+        cea_ata: ctx
+            .accounts
+            .cea_ata
+            .as_ref()
+            .map(|account| account.to_account_info()),
+        tss_pda: &mut ctx.accounts.tss_pda,
+        system_program: ctx.accounts.system_program.to_account_info(),
+        token_program,
+        associated_token_program,
+        rent,
+        destination_program: ctx.accounts.destination_program.to_account_info(),
+        remaining_accounts: payload_remaining_accounts,
+        vault_bump: ctx.accounts.config.vault_bump,
+    };
+    let params = Pc20FinalizeParams {
         sub_tx_id,
-        source_asset,
-        push_account,
-        recipient,
-        &name,
-        &symbol,
-        decimals,
-        gas_fee,
+        universal_tx_id,
+        source_asset: export_args.source_asset,
         amount,
-        if user_data.is_empty() {
-            None
-        } else {
-            Some(user_data.as_slice())
-        },
+        push_account,
+        recipient: *recipient.key,
+        name: export_args.name,
+        symbol: export_args.symbol,
+        decimals: export_args.decimals,
+        user_data: export_args.user_data,
+        ix_data,
+        gas_fee,
         deadline,
-        &message_hash,
-        &signature,
+        signature,
         recovery_id,
-    )?;
-
-    let (recipient_ata_created, cea_ata_created, mint_destination) = if decoded_payload.is_some() {
-        let cea_ata_created = ensure_associated_token_account(
-            &ctx.accounts.caller.to_account_info(),
-            &ctx.accounts.cea_ata.to_account_info(),
-            &ctx.accounts.cea_authority.to_account_info(),
-            &ctx.accounts.pc20_mint.to_account_info(),
-            &ctx.accounts.system_program.to_account_info(),
-            &ctx.accounts.token_program.to_account_info(),
-            &ctx.accounts.associated_token_program.to_account_info(),
-            &ctx.accounts.rent.to_account_info(),
-        )?;
-        let parsed_ata = parse_token_account(&ctx.accounts.cea_ata.to_account_info())?;
-        require!(
-            parsed_ata.owner == ctx.accounts.cea_authority.key()
-                && parsed_ata.mint == ctx.accounts.pc20_mint.key(),
-            GatewayError::InvalidAccount
-        );
-        (
-            false,
-            cea_ata_created,
-            ctx.accounts.cea_ata.to_account_info(),
-        )
-    } else {
-        let recipient_ata_created = ensure_associated_token_account(
-            &ctx.accounts.caller.to_account_info(),
-            &ctx.accounts.recipient_ata.to_account_info(),
-            &ctx.accounts.recipient.to_account_info(),
-            &ctx.accounts.pc20_mint.to_account_info(),
-            &ctx.accounts.system_program.to_account_info(),
-            &ctx.accounts.token_program.to_account_info(),
-            &ctx.accounts.associated_token_program.to_account_info(),
-            &ctx.accounts.rent.to_account_info(),
-        )?;
-        let parsed_ata = parse_token_account(&ctx.accounts.recipient_ata.to_account_info())?;
-        require!(
-            parsed_ata.owner == ctx.accounts.recipient.key()
-                && parsed_ata.mint == ctx.accounts.pc20_mint.key(),
-            GatewayError::InvalidAccount
-        );
-        (
-            recipient_ata_created,
-            false,
-            ctx.accounts.recipient_ata.to_account_info(),
-        )
+        message_hash,
     };
-
-    let mint_bump = [ctx.bumps.pc20_mint];
-    let mint_seeds = [PC20_MINT_SEED, source_asset.as_ref(), &mint_bump[..]];
-    pda_mint_to(
-        &ctx.accounts.pc20_mint.to_account_info(),
-        &mint_destination,
-        &ctx.accounts.pc20_mint.to_account_info(),
-        amount,
-        &mint_seeds,
-    )?;
-
-    if let Some(payload) = decoded_payload.as_ref() {
-        dispatch_pc20_payload(&ctx, payload, push_account)?;
-    }
-
-    let (gas_used, gas_to_refund) = settle_pc20_finalize_gas(
-        &ctx,
-        gas_fee,
-        mint_created,
-        recipient_ata_created,
-        cea_ata_created,
-    )?;
-
-    emit!(Pc20ExportFinalized {
-        sub_tx_id,
-        universal_tx_id,
-        push_account,
-        source_asset,
-        wrapped_mint: ctx.accounts.pc20_mint.key(),
-        recipient,
-        amount,
-        gas_fee,
-        gas_used,
-        gas_to_refund,
-        mint_created,
-        recipient_ata_created,
-        cea_ata_created,
-        payload_executed: decoded_payload.is_some(),
-    });
-
-    Ok(())
-}
-
-pub fn send_pc20_universal_tx(
-    ctx: Context<SendPc20UniversalTx>,
-    sub_tx_id: [u8; 32],
-    source_asset: [u8; 20],
-    amount: u64,
-    recipient: [u8; 20],
-    payload: Vec<u8>,
-    revert_recipient: Pubkey,
-) -> Result<()> {
-    require!(amount > 0, GatewayError::InvalidAmount);
-    require!(source_asset != [0u8; 20], GatewayError::ZeroAddress);
-    require!(recipient != [0u8; 20], GatewayError::InvalidRecipient);
-    require!(
-        revert_recipient != Pubkey::default(),
-        GatewayError::InvalidRecipient
-    );
-
-    // Collect flat inbound fee (mirrors send_universal_tx + EVM sendPC20UniversalTx).
-    // CEA-routed burns pay via the finalize_universal_tx gas model and skip this.
-    let fee_collected = collect_pc20_inbound_fee(&ctx)?;
-
-    spl_burn(
-        &ctx.accounts.pc20_mint.to_account_info(),
-        &ctx.accounts.user_ata.to_account_info(),
-        &ctx.accounts.caller.to_account_info(),
-        amount,
-    )?;
-
-    emit!(Pc20UniversalTx {
-        sub_tx_id,
-        sender: ctx.accounts.caller.key(),
-        push_account: [0u8; 20],
-        source_asset,
-        wrapped_mint: ctx.accounts.pc20_mint.key(),
-        amount,
-        recipient,
-        payload,
-        revert_recipient,
-        fee_collected,
-        from_cea: false,
-    });
-
-    Ok(())
-}
-
-fn collect_pc20_inbound_fee(ctx: &Context<SendPc20UniversalTx>) -> Result<u64> {
-    let fee_lamports = ctx.accounts.fee_vault.inbound_fee_lamports;
-    if fee_lamports == 0 {
-        return Ok(0);
-    }
-    let cpi_ctx = CpiContext::new(
-        ctx.accounts.system_program.to_account_info(),
-        anchor_lang::system_program::Transfer {
-            from: ctx.accounts.caller.to_account_info(),
-            to: ctx.accounts.fee_vault.to_account_info(),
-        },
-    );
-    anchor_lang::system_program::transfer(cpi_ctx, fee_lamports)?;
-    Ok(fee_lamports)
+    process_pc20_export(
+        accounts,
+        params,
+        store_upload_fee_lamports,
+        store_refund_recipient,
+    )
 }
 
 pub fn send_pc20_universal_tx_from_finalize_cea<'info>(
@@ -443,18 +254,13 @@ pub fn send_pc20_universal_tx_from_finalize_cea<'info>(
     ix_data: &[u8],
     cea_seeds: &[&[u8]],
 ) -> Result<()> {
-    require!(
-        is_send_pc20_universal_tx_ix(ix_data),
-        GatewayError::InvalidInput
-    );
-
-    let args = SendPc20UniversalTxArgs::try_from_slice(&ix_data[8..])
-        .map_err(|_| error!(GatewayError::InvalidInput))?;
-    require!(args.sub_tx_id == sub_tx_id, GatewayError::InvalidInput);
-    require!(args.amount > 0, GatewayError::InvalidAmount);
-    require!(args.source_asset != [0u8; 20], GatewayError::ZeroAddress);
+    let args = parse_pc20_burn_ix(sub_tx_id, ix_data)?;
+    let tx_type = pc20_burn_tx_type(args.amount)?;
     require!(push_account != [0u8; 20], GatewayError::ZeroAddress);
-    require!(args.recipient != [0u8; 20], GatewayError::InvalidRecipient);
+    require!(
+        args.recipient == push_account,
+        GatewayError::InvalidRecipient
+    );
     require!(
         args.revert_recipient != Pubkey::default(),
         GatewayError::InvalidRecipient
@@ -465,6 +271,7 @@ pub fn send_pc20_universal_tx_from_finalize_cea<'info>(
         cea_authority,
         remaining_accounts,
         args.source_asset,
+        args.wrapped_mint,
     )?;
 
     pda_burn(
@@ -475,129 +282,320 @@ pub fn send_pc20_universal_tx_from_finalize_cea<'info>(
         cea_seeds,
     )?;
 
-    emit!(Pc20UniversalTx {
-        sub_tx_id,
+    emit!(UniversalTx {
         sender: *cea_authority.key,
-        push_account,
-        source_asset: args.source_asset,
-        wrapped_mint: *route_accounts.pc20_mint.key,
-        amount: args.amount,
         recipient: args.recipient,
-        payload: args.payload,
+        token: *route_accounts.pc20_mint.key,
+        amount: args.amount,
+        payload: pc20_prefixed_payload(route_accounts.source_asset, &args.payload),
         revert_recipient: args.revert_recipient,
-        // CEA-routed burn is Push-routed via finalize_universal_tx gas model; no inbound fee.
-        fee_collected: 0,
+        tx_type,
+        signature_data: args.signature_data.clone(),
         from_cea: true,
     });
 
     Ok(())
 }
 
-pub fn revert_pc20_burn(
-    ctx: Context<RevertPc20Burn>,
-    sub_tx_id: [u8; 32],
-    original_burn_sub_tx_id: [u8; 32],
-    source_asset: [u8; 20],
-    amount: u64,
-    revert_recipient: Pubkey,
-    gas_fee: u64,
-    deadline: i64,
-    signature: [u8; 64],
-    recovery_id: u8,
-    message_hash: [u8; 32],
+fn parse_pc20_burn_ix(sub_tx_id: [u8; 32], ix_data: &[u8]) -> Result<ParsedPc20BurnArgs> {
+    require!(ix_data.len() >= 8, GatewayError::InvalidInput);
+
+    if is_send_pc20_universal_tx_ix(ix_data) {
+        let args = SendPc20UniversalTxArgs::try_from_slice(&ix_data[8..])
+            .map_err(|_| error!(GatewayError::InvalidInput))?;
+        require!(args.sub_tx_id == sub_tx_id, GatewayError::InvalidInput);
+        return Ok(ParsedPc20BurnArgs {
+            source_asset: Some(args.source_asset),
+            wrapped_mint: None,
+            amount: args.amount,
+            recipient: args.recipient,
+            payload: args.payload,
+            revert_recipient: args.revert_recipient,
+            signature_data: vec![],
+        });
+    }
+
+    if is_send_universal_tx_ix(ix_data) {
+        let args = SendUniversalTxIxArgs::try_from_slice(&ix_data[8..])
+            .map_err(|_| error!(GatewayError::InvalidInput))?;
+        require!(args.native_amount == 0, GatewayError::InvalidAmount);
+        return Ok(ParsedPc20BurnArgs {
+            source_asset: None,
+            wrapped_mint: Some(args.req.token),
+            amount: args.req.amount,
+            recipient: args.req.recipient,
+            payload: args.req.payload,
+            revert_recipient: args.req.revert_recipient,
+            signature_data: args.req.signature_data,
+        });
+    }
+
+    err!(GatewayError::InvalidInput)
+}
+
+fn process_pc20_export<'a, 'info>(
+    accounts: Pc20FinalizeAccountSet<'a, 'info>,
+    params: Pc20FinalizeParams,
+    store_upload_fee_lamports: u64,
+    store_refund_recipient: Option<&AccountInfo<'info>>,
 ) -> Result<()> {
-    require!(amount > 0, GatewayError::InvalidAmount);
-    require!(source_asset != [0u8; 20], GatewayError::ZeroAddress);
+    require!(params.amount > 0, GatewayError::InvalidAmount);
     require!(
-        revert_recipient != Pubkey::default(),
+        params.recipient != Pubkey::default(),
         GatewayError::InvalidRecipient
     );
     require!(
-        ctx.accounts.revert_recipient.key() == revert_recipient,
+        *accounts.recipient.key == params.recipient,
         GatewayError::InvalidRecipient
     );
-
-    let gas_fee_buf = encode_u64_be(gas_fee);
-    let recipient_bytes = revert_recipient.to_bytes();
-    let additional: [&[u8]; 5] = [
-        &sub_tx_id,
-        &original_burn_sub_tx_id,
-        &source_asset,
-        &recipient_bytes,
-        &gas_fee_buf,
-    ];
-    validate_message(
-        &mut ctx.accounts.tss_pda,
-        PC20_BURN_REVERT_INSTRUCTION_ID,
-        Some(amount),
-        deadline,
-        &additional,
-        &message_hash,
-        &signature,
-        recovery_id,
-    )?;
-
-    validate_pc20_mint_authority(
-        &ctx.accounts.pc20_mint.to_account_info(),
-        ctx.accounts.pc20_mint.key(),
-    )?;
-
-    let recipient_ata_created = ensure_associated_token_account(
-        &ctx.accounts.caller.to_account_info(),
-        &ctx.accounts.recipient_ata.to_account_info(),
-        &ctx.accounts.revert_recipient.to_account_info(),
-        &ctx.accounts.pc20_mint.to_account_info(),
-        &ctx.accounts.system_program.to_account_info(),
-        &ctx.accounts.token_program.to_account_info(),
-        &ctx.accounts.associated_token_program.to_account_info(),
-        &ctx.accounts.rent.to_account_info(),
-    )?;
-    let parsed_ata = parse_token_account(&ctx.accounts.recipient_ata.to_account_info())?;
+    require!(params.push_account != [0u8; 20], GatewayError::ZeroAddress);
+    require!(params.source_asset != [0u8; 20], GatewayError::ZeroAddress);
     require!(
-        parsed_ata.owner == revert_recipient && parsed_ata.mint == ctx.accounts.pc20_mint.key(),
+        accounts.token_program.key() == spl_token::ID,
+        GatewayError::InvalidAccount
+    );
+    require!(
+        accounts.associated_token_program.key() == spl_associated_token_account::ID,
+        GatewayError::InvalidAccount
+    );
+    require!(
+        accounts.rent.key() == anchor_lang::solana_program::sysvar::rent::id(),
         GatewayError::InvalidAccount
     );
 
-    let mint_bump = [ctx.bumps.pc20_mint];
-    let mint_seeds = [PC20_MINT_SEED, source_asset.as_ref(), &mint_bump[..]];
+    let (expected_mint, mint_bump) = Pubkey::find_program_address(
+        &[PC20_MINT_SEED, params.source_asset.as_ref()],
+        accounts.program_id,
+    );
+    require!(
+        accounts.pc20_mint.key() == expected_mint,
+        GatewayError::InvalidPc20Mint
+    );
+    let (expected_cea, cea_bump) = Pubkey::find_program_address(
+        &[CEA_SEED, params.push_account.as_ref()],
+        accounts.program_id,
+    );
+    require!(
+        accounts.cea_authority.key() == expected_cea,
+        GatewayError::InvalidAccount
+    );
+
+    let mint_created = accounts.pc20_mint.data_is_empty();
+    let mint_lamports_paid = if mint_created {
+        let lamports_paid = create_pc20_mint(
+            &accounts.caller,
+            &accounts.pc20_mint,
+            &accounts.system_program,
+            &accounts.rent,
+            params.decimals,
+            &params.source_asset,
+            mint_bump,
+        )?;
+        validate_pc20_mint(
+            &accounts.pc20_mint,
+            *accounts.pc20_mint.key,
+            params.decimals,
+        )?;
+        lamports_paid
+    } else {
+        validate_pc20_mint_authority(&accounts.pc20_mint, *accounts.pc20_mint.key)?;
+        0
+    };
+    let (_pc20_state_created, pc20_state_lamports_paid) = create_or_validate_pc20_state(
+        accounts.program_id,
+        &accounts.caller,
+        &accounts.pc20_mint,
+        &accounts.pc20_state,
+        &accounts.system_program,
+        params.source_asset,
+        params.decimals,
+    )?;
+
+    let decoded_payload = if params.user_data.is_empty() {
+        None
+    } else {
+        let payload = decode_execute_payload(&params.user_data)?;
+        require!(
+            payload.instruction_id == 2,
+            GatewayError::InvalidInstruction
+        );
+        require!(
+            payload.target_program == *accounts.destination_program.key,
+            GatewayError::InvalidProgram
+        );
+        require!(
+            accounts.destination_program.executable,
+            GatewayError::InvalidProgram
+        );
+        validate_remaining_accounts(&payload.accounts, accounts.remaining_accounts)?;
+        Some(payload)
+    };
+
+    build_and_validate_pc20_finalize_tss(
+        accounts.tss_pda,
+        params.universal_tx_id,
+        params.sub_tx_id,
+        params.source_asset,
+        params.push_account,
+        params.recipient,
+        &params.name,
+        &params.symbol,
+        params.decimals,
+        params.gas_fee,
+        params.amount,
+        if params.user_data.is_empty() {
+            None
+        } else {
+            Some(params.user_data.as_slice())
+        },
+        params.deadline,
+        &params.message_hash,
+        &params.signature,
+        params.recovery_id,
+    )?;
+
+    let (
+        recipient_ata_created,
+        recipient_ata_lamports_paid,
+        cea_ata_created,
+        cea_ata_lamports_paid,
+        mint_destination,
+    ) = if decoded_payload.is_some() {
+            let cea_ata = accounts
+                .cea_ata
+                .as_ref()
+                .ok_or(error!(GatewayError::InvalidAccount))?;
+            let cea_ata_lamports_before = cea_ata.lamports();
+            let cea_ata_created = ensure_associated_token_account(
+                &accounts.caller,
+                cea_ata,
+                &accounts.cea_authority,
+                &accounts.pc20_mint,
+                &accounts.system_program,
+                &accounts.token_program,
+                &accounts.associated_token_program,
+                &accounts.rent,
+            )?;
+            let parsed_ata = parse_token_account(cea_ata)?;
+            require!(
+                parsed_ata.owner == *accounts.cea_authority.key
+                    && parsed_ata.mint == *accounts.pc20_mint.key,
+                GatewayError::InvalidAccount
+            );
+            let cea_ata_lamports_paid = if cea_ata_created {
+                Rent::get()?
+                    .minimum_balance(SPL_TOKEN_ACCOUNT_LEN)
+                    .saturating_sub(cea_ata_lamports_before)
+            } else {
+                0
+            };
+        (
+            false,
+            0,
+            cea_ata_created,
+            cea_ata_lamports_paid,
+            cea_ata.clone(),
+        )
+    } else {
+            let recipient_ata = accounts
+                .recipient_ata
+                .as_ref()
+                .ok_or(error!(GatewayError::InvalidAccount))?;
+            let recipient_ata_lamports_before = recipient_ata.lamports();
+            let recipient_ata_created = ensure_associated_token_account(
+                &accounts.caller,
+                recipient_ata,
+                &accounts.recipient,
+                &accounts.pc20_mint,
+                &accounts.system_program,
+                &accounts.token_program,
+                &accounts.associated_token_program,
+                &accounts.rent,
+            )?;
+            let parsed_ata = parse_token_account(recipient_ata)?;
+            require!(
+                parsed_ata.owner == *accounts.recipient.key
+                    && parsed_ata.mint == *accounts.pc20_mint.key,
+                GatewayError::InvalidAccount
+            );
+            let recipient_ata_lamports_paid = if recipient_ata_created {
+                Rent::get()?
+                    .minimum_balance(SPL_TOKEN_ACCOUNT_LEN)
+                    .saturating_sub(recipient_ata_lamports_before)
+            } else {
+                0
+            };
+        (
+            recipient_ata_created,
+            recipient_ata_lamports_paid,
+            false,
+            0,
+            recipient_ata.clone(),
+        )
+    };
+
+    let mint_bump_bytes = [mint_bump];
+    let mint_seeds = [
+        PC20_MINT_SEED,
+        params.source_asset.as_ref(),
+        &mint_bump_bytes[..],
+    ];
     pda_mint_to(
-        &ctx.accounts.pc20_mint.to_account_info(),
-        &ctx.accounts.recipient_ata.to_account_info(),
-        &ctx.accounts.pc20_mint.to_account_info(),
-        amount,
+        &accounts.pc20_mint,
+        &mint_destination,
+        &accounts.pc20_mint,
+        params.amount,
         &mint_seeds,
     )?;
 
-    let gas_used = settle_pc20_revert_gas(&ctx, sub_tx_id, gas_fee, recipient_ata_created)?;
+    if let Some(payload) = decoded_payload.as_ref() {
+        dispatch_pc20_payload(&accounts, payload, params.push_account, cea_bump)?;
+    }
 
-    emit!(Pc20BurnReverted {
-        sub_tx_id,
-        original_burn_sub_tx_id,
-        source_asset,
-        wrapped_mint: ctx.accounts.pc20_mint.key(),
-        amount,
-        revert_recipient,
-        gas_fee,
+    let (gas_used, gas_to_refund) = settle_pc20_finalize_gas(
+        &accounts,
+        params.gas_fee,
+        mint_lamports_paid,
+        pc20_state_lamports_paid,
+        recipient_ata_lamports_paid,
+        cea_ata_lamports_paid,
+        store_upload_fee_lamports,
+        store_refund_recipient,
+    )?;
+
+    emit!(UniversalTxFinalized {
+        sub_tx_id: params.sub_tx_id,
+        universal_tx_id: params.universal_tx_id,
+        gas_fee: params.gas_fee,
         gas_used,
-        recipient_ata_created,
+        gas_to_refund,
+        ata_created: recipient_ata_created || cea_ata_created,
+        push_account: params.push_account,
+        target: *accounts.destination_program.key,
+        token: *accounts.pc20_mint.key,
+        amount: params.amount,
+        payload: params.ix_data,
     });
 
     Ok(())
 }
 
 fn create_pc20_mint<'info>(
-    ctx: &Context<FinalizePc20Export<'info>>,
+    caller: &AccountInfo<'info>,
+    pc20_mint: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    rent: &AccountInfo<'info>,
     decimals: u8,
     source_asset: &[u8; 20],
-) -> Result<()> {
+    mint_bump: u8,
+) -> Result<u64> {
     let mint_rent = Rent::get()?.minimum_balance(SPL_MINT_ACCOUNT_LEN);
-    let mint_bump = [ctx.bumps.pc20_mint];
-    let mint_seeds = [PC20_MINT_SEED, source_asset.as_ref(), &mint_bump[..]];
-    let mint_info = ctx.accounts.pc20_mint.to_account_info();
-    create_pda_account(
-        &mint_info,
-        &ctx.accounts.caller.to_account_info(),
-        &ctx.accounts.system_program.to_account_info(),
+    let mint_bump_bytes = [mint_bump];
+    let mint_seeds = [PC20_MINT_SEED, source_asset.as_ref(), &mint_bump_bytes[..]];
+    let lamports_paid = create_pda_account(
+        pc20_mint,
+        caller,
+        system_program,
         &spl_token::ID,
         SPL_MINT_ACCOUNT_LEN,
         mint_rent.max(1),
@@ -607,20 +605,143 @@ fn create_pc20_mint<'info>(
 
     let init_mint_ix = spl_token::instruction::initialize_mint(
         &spl_token::ID,
-        &ctx.accounts.pc20_mint.key(),
-        &ctx.accounts.pc20_mint.key(),
+        pc20_mint.key,
+        pc20_mint.key,
         None,
         decimals,
     )?;
-    invoke(
-        &init_mint_ix,
-        &[
-            ctx.accounts.pc20_mint.to_account_info(),
-            ctx.accounts.rent.to_account_info(),
-        ],
-    )?;
+    invoke(&init_mint_ix, &[pc20_mint.clone(), rent.clone()])?;
 
-    Ok(())
+    Ok(lamports_paid)
+}
+
+fn create_or_validate_pc20_state<'info>(
+    program_id: &Pubkey,
+    caller: &AccountInfo<'info>,
+    pc20_mint: &AccountInfo<'info>,
+    pc20_state: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    source_asset: [u8; 20],
+    decimals: u8,
+) -> Result<(bool, u64)> {
+    let mint_key = *pc20_mint.key;
+    let (expected_state, state_bump) =
+        Pubkey::find_program_address(&[PC20_STATE_SEED, mint_key.as_ref()], program_id);
+    require!(
+        pc20_state.key() == expected_state,
+        GatewayError::InvalidAccount
+    );
+
+    if pc20_state.data_is_empty() {
+        let state_rent = Rent::get()?.minimum_balance(Pc20State::LEN);
+        let state_bump_bytes = [state_bump];
+        let state_seeds = [PC20_STATE_SEED, mint_key.as_ref(), &state_bump_bytes[..]];
+        let lamports_paid = create_pda_account(
+            pc20_state,
+            caller,
+            system_program,
+            program_id,
+            Pc20State::LEN,
+            state_rent.max(1),
+            &state_seeds,
+            || error!(GatewayError::InvalidAccount),
+        )?;
+
+        let state = Pc20State {
+            source_asset,
+            wrapped_mint: mint_key,
+            decimals,
+            bump: state_bump,
+        };
+        state.try_serialize(&mut &mut pc20_state.try_borrow_mut_data()?[..])?;
+        return Ok((true, lamports_paid));
+    }
+
+    require!(pc20_state.owner == program_id, GatewayError::InvalidAccount);
+    let state = Pc20State::try_deserialize(&mut &pc20_state.try_borrow_data()?[..])?;
+    require!(
+        state.source_asset == source_asset,
+        GatewayError::InvalidAccount
+    );
+    require!(state.wrapped_mint == mint_key, GatewayError::InvalidAccount);
+    require!(state.bump == state_bump, GatewayError::InvalidAccount);
+    Ok((false, 0))
+}
+
+pub fn validate_pc20_state(
+    program_id: &Pubkey,
+    pc20_state: &Account<Pc20State>,
+    mint: Pubkey,
+) -> Result<[u8; 20]> {
+    validate_pc20_state_fields(program_id, &pc20_state.key(), pc20_state, mint)
+}
+
+pub fn validate_pc20_state_fields(
+    program_id: &Pubkey,
+    pc20_state_key: &Pubkey,
+    pc20_state: &Pc20State,
+    mint: Pubkey,
+) -> Result<[u8; 20]> {
+    let (expected_state, state_bump) =
+        Pubkey::find_program_address(&[PC20_STATE_SEED, mint.as_ref()], program_id);
+    require!(
+        *pc20_state_key == expected_state,
+        GatewayError::InvalidAccount
+    );
+    require!(
+        pc20_state.wrapped_mint == mint,
+        GatewayError::InvalidAccount
+    );
+    require!(pc20_state.bump == state_bump, GatewayError::InvalidAccount);
+
+    let (expected_mint, _) = Pubkey::find_program_address(
+        &[PC20_MINT_SEED, pc20_state.source_asset.as_ref()],
+        program_id,
+    );
+    require!(expected_mint == mint, GatewayError::InvalidPc20Mint);
+    Ok(pc20_state.source_asset)
+}
+
+pub fn is_pc20_burn_account_shape<'info>(
+    program_id: &Pubkey,
+    remaining_accounts: &[AccountInfo<'info>],
+    mint: Pubkey,
+) -> bool {
+    if mint == Pubkey::default() || remaining_accounts.len() != 2 {
+        return false;
+    }
+    let pc20_state = &remaining_accounts[0];
+    let pc20_mint = &remaining_accounts[1];
+    if pc20_mint.key() != mint || pc20_state.owner != program_id || pc20_state.data_is_empty() {
+        return false;
+    }
+    let Ok(state_data) = pc20_state.try_borrow_data() else {
+        return false;
+    };
+    let Ok(state) = Pc20State::try_deserialize(&mut &state_data[..]) else {
+        return false;
+    };
+    validate_pc20_state_fields(program_id, pc20_state.key, &state, mint).is_ok()
+}
+
+pub fn is_pc20_remint_account_shape<'info>(
+    program_id: &Pubkey,
+    remaining_accounts: &[AccountInfo<'info>],
+    mint: Pubkey,
+) -> bool {
+    if remaining_accounts.len() != 5 {
+        return false;
+    }
+    is_pc20_burn_account_shape(program_id, &remaining_accounts[..2], mint)
+}
+
+pub fn pc20_prefixed_payload(source_asset: [u8; 20], payload: &[u8]) -> Vec<u8> {
+    let mut prefixed = Vec::with_capacity(PC20_SELECTOR.len() + 32 + payload.len());
+    prefixed.extend_from_slice(&PC20_SELECTOR);
+    prefixed.extend_from_slice(&[0u8; 12]);
+    prefixed.extend_from_slice(&source_asset);
+    prefixed.extend_from_slice(payload);
+    prefixed
 }
 
 fn validate_pc20_mint(
@@ -636,7 +757,7 @@ fn validate_pc20_mint(
     Ok(())
 }
 
-fn validate_pc20_mint_authority(
+pub fn validate_pc20_mint_authority(
     mint_info: &AccountInfo,
     expected_mint: Pubkey,
 ) -> Result<spl_token::state::Mint> {
@@ -800,79 +921,66 @@ fn build_and_validate_pc20_finalize_tss(
     }
 }
 
-fn dispatch_pc20_payload(
-    ctx: &Context<FinalizePc20Export>,
+fn dispatch_pc20_payload<'a, 'info>(
+    accounts: &Pc20FinalizeAccountSet<'a, 'info>,
     payload: &DecodedExecutePayload,
     push_account: [u8; 20],
+    cea_bump: u8,
 ) -> Result<()> {
-    let cea_bump = [ctx.bumps.cea_authority];
-    let cea_seeds = [CEA_SEED, push_account.as_ref(), &cea_bump[..]];
+    let cea_bump_bytes = [cea_bump];
+    let cea_seeds = [CEA_SEED, push_account.as_ref(), &cea_bump_bytes[..]];
     invoke_signed_gateway_instruction(
         payload.target_program,
         &payload.accounts,
         &payload.ix_data,
-        ctx.accounts.cea_authority.key(),
-        ctx.remaining_accounts,
+        *accounts.cea_authority.key,
+        accounts.remaining_accounts,
         &cea_seeds,
     )
 }
 
-fn settle_pc20_finalize_gas(
-    ctx: &Context<FinalizePc20Export>,
+fn settle_pc20_finalize_gas<'a, 'info>(
+    accounts: &Pc20FinalizeAccountSet<'a, 'info>,
     gas_fee: u64,
-    mint_created: bool,
-    recipient_ata_created: bool,
-    cea_ata_created: bool,
+    mint_lamports_paid: u64,
+    pc20_state_lamports_paid: u64,
+    recipient_ata_lamports_paid: u64,
+    cea_ata_lamports_paid: u64,
+    store_upload_fee_lamports: u64,
+    store_refund_recipient: Option<&AccountInfo<'info>>,
 ) -> Result<(u64, u64)> {
     let mut gas_used = SIGNATURE_FEE_LAMPORTS + Rent::get()?.minimum_balance(ExecutedSubTx::LEN);
-    if mint_created {
-        gas_used = gas_used
-            .checked_add(Rent::get()?.minimum_balance(SPL_MINT_ACCOUNT_LEN))
-            .ok_or(error!(GatewayError::InvalidAmount))?;
-    }
-    if recipient_ata_created {
-        gas_used = gas_used
-            .checked_add(Rent::get()?.minimum_balance(SPL_TOKEN_ACCOUNT_LEN))
-            .ok_or(error!(GatewayError::InvalidAmount))?;
-    }
-    if cea_ata_created {
-        gas_used = gas_used
-            .checked_add(Rent::get()?.minimum_balance(SPL_TOKEN_ACCOUNT_LEN))
-            .ok_or(error!(GatewayError::InvalidAmount))?;
-    }
+    gas_used = gas_used
+        .checked_add(mint_lamports_paid)
+        .and_then(|n| n.checked_add(pc20_state_lamports_paid))
+        .and_then(|n| n.checked_add(recipient_ata_lamports_paid))
+        .and_then(|n| n.checked_add(cea_ata_lamports_paid))
+        .and_then(|n| n.checked_add(store_upload_fee_lamports))
+        .ok_or(error!(GatewayError::InvalidAmount))?;
     require!(gas_fee >= gas_used, GatewayError::InsufficientGasBudget);
 
+    let relayer_gas = gas_used
+        .checked_sub(store_upload_fee_lamports)
+        .ok_or(error!(GatewayError::InvalidAmount))?;
     transfer_gas_fee_to_caller(
-        &ctx.accounts.vault_sol.to_account_info(),
-        &ctx.accounts.caller.to_account_info(),
-        &ctx.accounts.system_program.to_account_info(),
-        gas_used,
-        ctx.accounts.config.vault_bump,
+        &accounts.vault_sol,
+        &accounts.caller,
+        &accounts.system_program,
+        relayer_gas,
+        accounts.vault_bump,
     )?;
+
+    if let Some(refund_recipient) = store_refund_recipient {
+        transfer_gas_fee_to_caller(
+            &accounts.vault_sol,
+            refund_recipient,
+            &accounts.system_program,
+            store_upload_fee_lamports,
+            accounts.vault_bump,
+        )?;
+    }
 
     Ok((gas_used, gas_fee - gas_used))
-}
-
-fn settle_pc20_revert_gas(
-    ctx: &Context<RevertPc20Burn>,
-    sub_tx_id: [u8; 32],
-    gas_fee: u64,
-    recipient_ata_created: bool,
-) -> Result<u64> {
-    let mut gas_used = SIGNATURE_FEE_LAMPORTS + Rent::get()?.minimum_balance(ExecutedSubTx::LEN);
-    if recipient_ata_created {
-        gas_used = gas_used
-            .checked_add(Rent::get()?.minimum_balance(SPL_TOKEN_ACCOUNT_LEN))
-            .ok_or(error!(GatewayError::InvalidAmount))?;
-    }
-    require!(gas_fee >= gas_used, GatewayError::InsufficientGasBudget);
-    reimburse_relayer_from_fee_vault(
-        &ctx.accounts.fee_vault,
-        &ctx.accounts.caller.to_account_info(),
-        sub_tx_id,
-        gas_used,
-    )?;
-    Ok(gas_used)
 }
 
 pub fn is_send_pc20_universal_tx_ix(ix_data: &[u8]) -> bool {
@@ -883,7 +991,20 @@ pub fn is_send_pc20_universal_tx_ix(ix_data: &[u8]) -> bool {
     ix_data[..8] == expected[..8]
 }
 
+pub fn is_send_universal_tx_ix(ix_data: &[u8]) -> bool {
+    if ix_data.len() < 8 {
+        return false;
+    }
+    let expected = solana_hash(b"global:send_universal_tx").to_bytes();
+    ix_data[..8] == expected[..8]
+}
+
+pub fn is_pc20_burn_ix(ix_data: &[u8]) -> bool {
+    is_send_pc20_universal_tx_ix(ix_data) || is_send_universal_tx_ix(ix_data)
+}
+
 struct Pc20CeaBurnAccounts<'info> {
+    source_asset: [u8; 20],
     pc20_mint: AccountInfo<'info>,
     cea_ata: AccountInfo<'info>,
 }
@@ -892,16 +1013,45 @@ fn parse_pc20_cea_burn_accounts<'info>(
     program_id: &Pubkey,
     cea_authority: &AccountInfo<'info>,
     remaining_accounts: &[AccountInfo<'info>],
-    source_asset: [u8; 20],
+    source_asset: Option<[u8; 20]>,
+    wrapped_mint: Option<Pubkey>,
 ) -> Result<Pc20CeaBurnAccounts<'info>> {
-    require!(
-        remaining_accounts.len() == 3,
-        GatewayError::AccountListLengthMismatch
-    );
+    let (source_asset, pc20_mint, cea_ata, token_program) = if let Some(source_asset) = source_asset
+    {
+        require!(
+            remaining_accounts.len() == 3,
+            GatewayError::AccountListLengthMismatch
+        );
+        (
+            source_asset,
+            remaining_accounts[0].clone(),
+            remaining_accounts[1].clone(),
+            remaining_accounts[2].clone(),
+        )
+    } else {
+        require!(
+            remaining_accounts.len() == 4,
+            GatewayError::AccountListLengthMismatch
+        );
+        let pc20_state_info = remaining_accounts[0].clone();
+        let pc20_mint = remaining_accounts[1].clone();
+        let mint_key = wrapped_mint.ok_or(error!(GatewayError::InvalidMint))?;
+        require!(pc20_mint.key() == mint_key, GatewayError::InvalidMint);
 
-    let pc20_mint = remaining_accounts[0].clone();
-    let cea_ata = remaining_accounts[1].clone();
-    let token_program = remaining_accounts[2].clone();
+        require!(
+            pc20_state_info.owner == program_id,
+            GatewayError::InvalidAccount
+        );
+        let state = Pc20State::try_deserialize(&mut &pc20_state_info.try_borrow_data()?[..])?;
+        let source_asset =
+            validate_pc20_state_fields(program_id, pc20_state_info.key, &state, mint_key)?;
+        (
+            source_asset,
+            pc20_mint,
+            remaining_accounts[2].clone(),
+            remaining_accounts[3].clone(),
+        )
+    };
 
     require!(
         pc20_mint.is_writable && cea_ata.is_writable,
@@ -939,5 +1089,9 @@ fn parse_pc20_cea_burn_accounts<'info>(
         GatewayError::InvalidAccount
     );
 
-    Ok(Pc20CeaBurnAccounts { pc20_mint, cea_ata })
+    Ok(Pc20CeaBurnAccounts {
+        source_asset,
+        pc20_mint,
+        cea_ata,
+    })
 }

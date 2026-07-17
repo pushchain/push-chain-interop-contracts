@@ -1,14 +1,11 @@
 # PC20 on Solana - Architecture
 
-This document defines the Solana-side PC20 architecture after the EVM
-3rd-iteration PC20 changes.
+This document describes the Solana-side PC20 architecture after aligning with the
+EVM PC20 route changes from gateway PR #130 and PR #131.
 
-PC20 enables Push-native assets to be represented on Solana as canonical wrapped
-SPL mints. The Solana gateway should match the EVM protocol outcome, but should
-not copy EVM contract structure when Solana PDAs, account validation, and SPL
-Token authority rules give a cleaner implementation.
-
-This is an SVM architecture reference, not a full Push-side or relayer runbook.
+PC20 represents Push-native assets as wrapped SPL mints on Solana. The goal is
+EVM-equivalent protocol behavior while preserving Solana account validation,
+PDA authority, and SPL Token rules.
 
 ---
 
@@ -17,94 +14,43 @@ This is an SVM architecture reference, not a full Push-side or relayer runbook.
 For every Push-native PC20 source asset:
 
 ```text
-locked_on_push == total_wrapped_supply_on_all_destinations
-```
-
-For the Solana leg:
-
-```text
 locked_on_push >= wrapped_supply_on_solana
 ```
 
-The invariant is maintained by Push-side locks, TSS-authorized Solana minting,
-Solana burns before Push unlock, burn-revert remints, and replay protection on
-TSS finalize/revert instructions.
+The Solana leg maintains this by:
+
+- minting only through TSS-authorized exports, reverts, and rescues,
+- burning wrapped SPL supply before Push-side unlock/execution,
+- replay-protecting TSS finalize/revert/rescue instructions with `ExecutedSubTx`,
+- validating the canonical mint and reverse lookup state before every generic
+  PC20 burn/remint route.
 
 ---
 
 ## EVM/SVM Parity
 
-Latest local EVM comparison point: `origin/pc20-3rd-iteration` at
-`51e937ad48a07dd80a97d95af2466c87e8e7bafc`.
+Latest local EVM comparison points:
 
-| Flow / property | EVM 3rd iteration | SVM PC20 | Result |
-| --- | --- | --- | --- |
-| Source event | `sendUniversalTxOutbound()` emits `UniversalTxOutbound` with `PC_20_SELECTOR` payload | relayer consumes the same event and calls SVM PC20 finalize | same source event |
-| Export settlement | `Vault.finalizeUniversalTx()` detects PC20 and calls `_finalizePC20Export()` | `finalize_pc20_export` | same lock -> mint outcome |
-| Wrapper identity | `PC20Factory` maps `sourceAsset` to wrapper contract | SPL mint PDA derived from `["pc20_mint", source_asset]` | same canonical mapping |
-| First-export metadata | wrapper deploy sets metadata; later exports reuse wrapper | first mint creation fixes SPL decimals; name/symbol are signed but not stored | same first-wrapper semantics |
-| User burn | `sendPC20UniversalTx()` burns from caller wrapper balance | `send_pc20_universal_tx` burns from caller-owned ATA | same user-authorized burn |
-| CEA burn | CEA multicall invokes `sendPC20UniversalTx()` | `finalize_universal_tx` self-routes a `send_pc20_universal_tx` payload and burns from CEA ATA | same Push-routed CEA burn outcome |
-| Export revert | Push-side `VaultPC20.revertExport()` | same Push-side recovery; SVM finalize is atomic | same recovery domain |
-| Burn revert | `revertPC20Burn()` calls `PC20Factory.revertMint()` | `revert_pc20_burn` remints via PDA mint authority | same failed-unlock recovery |
-| Burn-revert binding | new revert `subTxId`; no on-chain binding to original burn | new revert `sub_tx_id`; `original_burn_sub_tx_id` is signed/emitted only | same TSS-orchestrated model |
-| TSS freshness | role-gated EVM call | ECDSA TSS signature plus signed `deadline` | SVM is stricter |
+- `origin/pr-130` / `origin/cea-pc20-consistency-fix` (`b8550f7`): direct/CEA PC20 burn merged into regular universal tx route.
+- `origin/rescue-for-pc20` (`a3aaa91`): PC20 revert/rescue merged into regular revert/rescue route.
+- `origin/pc20-3rd-iteration` (`e08eaf0`): 3rd-iteration PC20 interface base.
 
----
+| Flow | EVM | SVM |
+| --- | --- | --- |
+| Export | `Vault.finalizeUniversalTx()` detects PC20 export | `finalize_universal_tx()` detects `PC20`-prefixed `ix_data` |
+| Mint identity | `PC20Factory` maps source asset to wrapper contract | `Pc20Mint = PDA("pc20_mint", source_asset)` |
+| Reverse lookup | wrapper exposes `SOURCE_ASSET()` | `Pc20State = PDA("pc20_state", wrapped_mint)` stores `source_asset`, `wrapped_mint`, `decimals` |
+| Direct burn | `sendUniversalTx(req)` branches to `_routePC20Tx()` | `send_universal_tx(req, native_amount)` branches when PC20 remaining accounts are supplied |
+| CEA burn | `sendUniversalTxFromCEA(req)` / CEA route burns PC20 without inbound fee and requires `req.recipient` to equal the mapped UEA | outer `finalize_universal_tx` self-routes inner generic `send_universal_tx(req, 0)`, requires `req.recipient == push_account`, and burns from CEA ATA when `amount > 0` |
+| Burn revert | `revertUniversalTx()` PC20 branch calls `PC20Factory.revertMint()` | `revert_universal_tx()` PC20 branch remints via PDA mint authority |
+| Rescue | `rescueFunds()` PC20 branch calls `PC20Factory.revertMint()` | `rescue_funds()` PC20 branch remints via PDA mint authority |
+| Events | generic universal events carry `PC_20_SELECTOR || abi.encode(sourceAsset) || payload` | generic universal events carry `PC20 || abi_encode_address(source_asset) || payload` |
+| CEA fee | CEA PC20 burn skips inbound fee | CEA PC20 burn skips inbound fee; direct user burn pays the regular inbound fee |
 
-## Intentional SVM Differences
-
-### No Factory Contract
-
-EVM needs `PC20Factory` because wrappers are contracts. Solana does not.
-
-SVM uses:
-
-```text
-Pc20Mint = PDA("pc20_mint", source_asset_20)
-```
-
-This gives the same canonical `source_asset -> wrapper` mapping without a factory
-or registry account.
-
-### No Registry in v1
-
-No separate `Pc20State` is required in the current implementation. A per-token
-state PDA should only be added later if the program needs mutable data that cannot
-be derived from the mint PDA, token metadata, or source asset.
-
-### Dedicated Export Instruction
-
-EVM can branch inside `Vault.finalizeUniversalTx()` because accounts are runtime
-addresses in calldata. Solana account sets are part of the instruction ABI, so a
-dedicated `finalize_pc20_export` keeps mint, ATA, token-program, and replay
-accounts explicit under Anchor validation.
-
-### CEA Burn Uses Existing Finalize Surface
-
-EVM CEA burn is:
-
-```text
-Vault.finalizeUniversalTx -> CEA.executeUniversalTx -> sendPC20UniversalTx
-```
-
-SVM cannot implement that as a gateway-to-gateway CPI. The gateway instead detects
-the self-route inside `finalize_universal_tx` and dispatches in-process.
-
-The route is:
-
-```text
-finalize_universal_tx
-  instruction_id = 2
-  destination_program = universal_gateway
-  amount = 0
-  native path only
-  ix_data discriminator = send_pc20_universal_tx
-  remaining_accounts = [pc20_mint, cea_ata, token_program]
-```
-
-Authorization is the outer TSS-signed `finalize_universal_tx` message. Burn
-authority is the CEA PDA signer derived from `push_account`.
+All primary PC20 lifecycle routes now use the generic gateway entrypoints. SVM
+still needs PC20-specific `remaining_accounts` because a first export may create
+an uninitialized mint/state/ATA, which cannot be modeled as the existing typed
+SPL accounts without changing the public IDL account structs.
 
 ---
 
@@ -112,304 +58,283 @@ authority is the CEA PDA signer derived from `push_account`.
 
 | Account | Seeds / derivation | Purpose |
 | --- | --- | --- |
-| `Config` | `["config"]` | existing gateway config, pause flag, gas settings |
-| `Vault` / `vault_sol` | `["vault"]` | lamport pool used by Push-routed destination reimbursement |
-| `FeeVault` | `["fee_vault"]` | inbound fee pool used by burn-revert reimbursement |
-| `TssPda` | `["final_tss_pda"]` | stores TSS Ethereum address for signature verification |
+| `Config` | `["config"]` | pause flag, vault bump, price feed, chain config |
+| `Vault` / `vault_sol` | `["vault"]` | lamport pool used for Push-routed destination reimbursement |
+| `FeeVault` | `["fee_vault"]` | inbound fee pool and revert/rescue reimbursement source |
+| `TssPda` | `["final_tss_pda"]` | TSS Ethereum address and signature state |
 | `CEA` PDA | `["push_identity", push_account_20]` | Push-account execution identity on Solana |
-| `ExecutedSubTx` | `["executed_sub_tx", sub_tx_id]` | replay protection for finalize and revert |
-| `StoredIxData` | `["stored_ix_data", sub_tx_id, ix_data_hash]` | existing oversized-payload route; not PC20-specific |
+| `ExecutedSubTx` | `["executed_sub_tx", sub_tx_id]` | replay protection for TSS-routed instructions |
 | `Pc20Mint` | `["pc20_mint", source_asset_20]` | canonical wrapped SPL mint |
-| Recipient / CEA ATA | standard ATA derivation | token account for wrapped SPL balances |
+| `Pc20State` | `["pc20_state", pc20_mint]` | reverse lookup equivalent of EVM `SOURCE_ASSET()` |
+| Recipient / CEA ATA | standard ATA derivation | SPL token account for wrapped PC20 balances |
 
 Mint authority model:
 
 - `Pc20Mint` is also the mint authority.
-- Minting/reminting signs CPIs with the mint PDA seeds.
-- Freeze authority is unset.
-- A separate mint-authority PDA is not needed for v1.
+- Mint/remint CPIs sign with `["pc20_mint", source_asset, bump]`.
+- Freeze authority must be unset.
+- A separate mint-authority PDA is not used.
 
 ---
 
 ## Instruction Surface
 
-### `finalize_pc20_export`
+### `finalize_universal_tx` PC20 export branch
 
 TSS-authorized Push -> Solana export.
 
-Primary data: `sub_tx_id`, `universal_tx_id`, `source_asset`, `amount`,
-`push_account`, Solana `recipient`, `name`, `symbol`, `decimals`, optional
-`user_data`, `gas_fee`, `deadline`, and TSS signature fields.
+Route selection:
 
-Key guarantees:
+```text
+instruction_id = 5
+ix_data = "PC20" || borsh(source_asset, name, symbol, decimals, user_data)
+writable_flags = empty
+```
 
-- rejects zero amount, zero source asset, paused config, and default recipient,
-- requires `ctx.accounts.recipient.key() == recipient`,
-- creates `ExecutedSubTx` for replay protection,
-- creates the canonical mint PDA if missing, using dust-safe PDA creation,
-- initializes new mint decimals from the signed payload,
-- validates existing mint authority and unset freeze authority,
-- signs and verifies TSS payload with `deadline`,
-- mints to recipient ATA when `user_data` is empty,
-- mints to CEA ATA and dispatches CEA payload when `user_data` is present,
-- validates ATA owner and mint after lazy ATA creation,
+Primary behavior:
+
+- validates the TSS-signed `sub_tx_id`, `universal_tx_id`, `source_asset`,
+  `push_account`, `recipient`, metadata fields, `amount`, `gas_fee`, optional
+  `user_data`, and `deadline`,
+- creates or validates `Pc20Mint`,
+- creates or validates `Pc20State`,
+- mints to recipient ATA for direct export,
+- mints to CEA ATA and dispatches `user_data` for CEA export,
 - reimburses relayer from `vault_sol`,
-- emits `Pc20ExportFinalized`.
+- emits the existing generic `UniversalTxFinalized`.
 
-Signed fields include `sub_tx_id`, `universal_tx_id`, `push_account`,
-`source_asset`, `recipient`, `name`, `symbol`, `decimals`, `gas_fee`, `amount`,
-`deadline`, and `user_data` when present.
+`Pc20State` is required because generic Solana burn/revert/rescue routes receive
+only the wrapped mint as `req.token` / `token_mint`. Unlike EVM wrappers, SPL
+mints cannot expose a `SOURCE_ASSET()` function.
 
-Current v1 signs `name`, `symbol`, and `decimals`, but only SPL mint `decimals`
-are stored on-chain. Metaplex metadata is not created by the current program.
-On re-export of an existing `source_asset`, the program validates the canonical
-mint's authority and unset freeze authority only; `name`/`symbol`/`decimals` are
-not re-checked against the first-export values (matches EVM's factory model).
+Metadata note: metadata fields are part of the signed export payload. On first
+mint, `decimals` is enforced by SPL mint initialization. For later exports of an
+existing mint, the program validates the canonical source/mint/state mapping and
+mint authority; it does not store or enforce mutable `name`/`symbol` metadata on
+Solana.
 
-#### `user_data` binary encoding
+### `send_universal_tx` PC20 branch
 
-When present, `user_data` is the concatenation (big-endian lengths):
+Primary direct Solana -> Push burn route.
 
+Route selection:
+
+```text
+if remaining_accounts = [pc20_state, pc20_mint]:
+  validate req.token == pc20_mint
+  require req.amount > 0
+  require native_amount >= inbound_fee_lamports
+  require gateway_token_account = null
+  validate pc20_state PDA and source_asset mapping
+  validate canonical PC20 mint authority
+  validate caller-owned ATA and burn caller ATA balance
+  emit UniversalTx(payload = "PC20" || abi_encode_address(source_asset) || req.payload)
+  if native_amount_after_fee > 0:
+    emit and route a second native Funds UniversalTx
+else:
+  use normal native/SPL routing
 ```
-[u32 BE accounts_len]
-  ( [32 bytes pubkey] [u8 is_writable] ) * accounts_len
-[u32 BE ix_data_len]
-[ix_data_len bytes ix_data]
-[u8 instruction_id]
-[32 bytes target_program]
+
+PC20 burn tx type matches EVM:
+
+```text
+amount > 0 => FundsAndPayload
+amount = 0 => InvalidAmount
 ```
 
-The Solana-side handler validates `target_program == destination_program`,
-`instruction_id == 2`, and that `remaining_accounts` matches the signed
-`accounts` list (pubkey + writable flag).
+Fee behavior:
 
-### `send_pc20_universal_tx`
+- direct PC20 burn pays the same `inbound_fee_lamports` as regular
+  `send_universal_tx`; native lamports above the fee are routed as a second
+  native `Funds` transfer, matching EVM `_routePC20Tx(nativeValue > 0)`,
+- CEA PC20 burn does not pay this fee because it is already inside a
+  Push-routed finalize gas model.
 
-User-initiated Solana -> Push burn.
+There is no public PC20-specific direct burn instruction; direct burns route
+through `send_universal_tx` with `[pc20_state, pc20_mint]` supplied as remaining
+accounts.
 
-Primary data: `sub_tx_id`, `source_asset`, `amount`, Push `recipient`, Push
-`payload`, and Solana `revert_recipient`.
+### CEA PC20 burn through `finalize_universal_tx`
 
-Key guarantees:
+CEA-held wrapped supply is burned through the existing TSS-routed finalize path.
 
-- caller must sign,
-- caller ATA must be owned by caller,
-- caller ATA mint must equal canonical `Pc20Mint`,
-- burns wrapped SPL supply from caller ATA,
-- collects a flat `inbound_fee_lamports` from caller into `FeeVault` (mirrors
-  EVM `sendPC20UniversalTx` `_collectInboundFee`; skipped when `inbound_fee_lamports == 0`),
-- emits `Pc20UniversalTx` with `from_cea = false` and `fee_collected = amount taken`.
+Outer requirements:
 
-This instruction has no TSS signature and no relayer reimbursement. The Solana
-caller pays the transaction cost plus the `inbound_fee`.
+```text
+instruction_id = 2
+destination_program = universal_gateway
+amount = 0
+native path only
+ix_data discriminator = send_universal_tx
+remaining_accounts = [pc20_state, pc20_mint, cea_ata, token_program]
+```
 
-There is no SVM replay marker on the direct burn: `sub_tx_id` uniqueness is a
-Push-side concern, and a repeat call actually burns tokens again (event-only
-signal to Push).
+The handler parses the inner generic `send_universal_tx(req, 0)`, validates
+`Pc20State`, requires `req.recipient == push_account`, validates the CEA ATA
+and burns via CEA PDA signer seeds, and emits:
 
-### CEA PC20 Burn via `finalize_universal_tx`
+- generic `UniversalTx` with
+  `payload = "PC20" || abi_encode_address(source_asset) || req.payload`.
 
-CEA-held wrapped supply is burned through the existing TSS-routed finalize path,
-not through a separate public CEA-burn instruction.
+The old inner `send_pc20_universal_tx` payload discriminator is still accepted
+inside the CEA self-route for compatibility, but it is not a public SVM
+instruction. That legacy inner payload uses
+`remaining_accounts = [pc20_mint, cea_ata, token_program]`; the
+generic inner payload uses `[pc20_state, pc20_mint, cea_ata, token_program]`
+so the program can resolve the source asset without a PC20-specific public IDL
+instruction.
 
-Outer finalize requirements: `instruction_id = 2`,
-`destination_program == program_id`, `amount = 0`, native path only, `ix_data`
-starts with the `send_pc20_universal_tx` discriminator, and remaining accounts
-are exactly writable `Pc20Mint`, writable CEA ATA, readonly SPL Token program.
+### `revert_universal_tx` PC20 branch
 
-Key guarantees:
+TSS-authorized remint when Push-side unlock/execution fails after a Solana burn.
 
-- TSS signature and deadline are verified by `finalize_universal_tx`,
-- `sub_tx_id` inside `ix_data` must equal the outer finalize `sub_tx_id`,
-- CEA ATA is validated against the canonical mint and CEA authority,
-- burn uses CEA PDA signer seeds,
-- emits `Pc20UniversalTx` with `from_cea = true`,
-- relayer reimbursement follows the normal Push-routed finalize path from
-  `vault_sol`.
+Route selection:
 
-### `revert_pc20_burn`
+```text
+if remaining_accounts = [pc20_state, pc20_mint, recipient_ata, associated_token_program, rent]:
+  token_mint must be the wrapped PC20 mint
+  token_vault and recipient_token_account must be absent
+  token_program must be present
+  pc20_mint must equal token_mint and be writable
+  recipient_ata must be writable
+  validate Pc20State and mint authority
+  create recipient ATA when missing
+  remint amount to recipient ATA
+else:
+  use normal native/SPL revert logic
+```
 
-TSS-authorized Solana remint when Push-side unlock fails after a Solana burn.
+This uses the existing generic revert entrypoint and `instruction_id = 3`, but
+PC20 mode is domain-separated in the signed additional data:
 
-Primary data: new revert `sub_tx_id`, `original_burn_sub_tx_id`,
-`source_asset`, `amount`, Solana `revert_recipient`, `gas_fee`, `deadline`, and
-TSS signature fields.
+```text
+sub_tx_id || universal_tx_id || pc20_mint || recipient || gas_fee || revert_msg_hash || "PC20" || source_asset
+```
 
-Key guarantees:
+The generic `revert_universal_tx` IDL account list is unchanged; PC20-only
+accounts are supplied through `remaining_accounts` to avoid breaking normal
+SOL/SPL callers.
 
-- creates `ExecutedSubTx` for replay protection on the revert `sub_tx_id`,
-- requires `ctx.accounts.revert_recipient.key() == revert_recipient`,
-- verifies TSS signature with deadline,
-- validates canonical mint authority and unset freeze authority,
-- creates revert recipient ATA when missing,
-- validates ATA owner and mint,
-- remints wrapped SPL supply to the revert recipient ATA,
-- reimburses relayer from `fee_vault`,
-- emits `Pc20BurnReverted`.
+There is no public PC20-specific revert instruction; remints route through the
+generic `revert_universal_tx` branch.
 
-`original_burn_sub_tx_id` is signed and emitted for indexers and audit trails. It
-is not an on-chain burn-marker check. This matches EVM's `revertPC20Burn()`
-model, where the new revert `subTxId` is replay-protected but not cryptographically
-bound on-chain to the original burn.
+### `rescue_funds` PC20 branch
+
+TSS-authorized emergency remint through the generic rescue route.
+
+Route selection matches `revert_universal_tx`: when the five PC20
+`remaining_accounts` are supplied, the handler validates the PC20 mint/state pair
+and remints to the remaining recipient ATA instead of transferring from a vault
+ATA. The generic `rescue_funds` IDL account list is unchanged for normal SOL/SPL
+rescue callers.
+
+This uses the existing generic rescue entrypoint and `instruction_id = 4`, but
+PC20 mode is domain-separated in the signed additional data:
+
+```text
+sub_tx_id || universal_tx_id || pc20_mint || recipient || gas_fee || "PC20" || source_asset
+```
 
 ---
 
-## Fee Model
+## Fee and Gas Model
 
-PC20 uses the same source-quoted lamport budget model as the rest of the SVM
-gateway:
-
-```text
-quoted_budget = gasPrice * gasLimit
-```
-
-On Solana, this value is a signed lamport budget, not literal EVM gas.
-
-Reimbursement source is direction-aware:
-
-| Route | Reimbursement |
+| Route | Fee / reimbursement behavior |
 | --- | --- |
-| Push -> Solana `finalize_pc20_export` | `vault_sol` |
-| Push-routed CEA PC20 burn through `finalize_universal_tx` | `vault_sol` |
-| User `send_pc20_universal_tx` burn | none; caller pays |
-| Solana burn recovery `revert_pc20_burn` | `fee_vault` |
+| Direct `send_universal_tx` PC20 burn | caller pays `inbound_fee_lamports` to `FeeVault` before burn |
+| CEA PC20 burn via `finalize_universal_tx` | no inbound fee; relayer reimbursement follows outer finalize gas model |
+| `finalize_universal_tx` PC20 export | relayer reimbursed from `vault_sol` for measured signature/rent components actually paid |
+| generic PC20 `revert_universal_tx` | relayer reimbursed from `fee_vault` for measured signature/replay/ATA rent, capped by signed `gas_fee` |
+| generic PC20 `rescue_funds` | relayer reimbursed from `fee_vault` for measured signature/replay/ATA rent, capped by signed `gas_fee` |
 
-Reasoning: Push-routed finalizations pair with source-side gas burn via
-`swapAndBurnGas`, while burn revert has no paired Push-side gas burn because the
-Push unlock failed.
-
-Current PC20 gas-used components:
+PC20 export still uses measured gas accounting:
 
 ```text
 signature_fee
 + executed_sub_tx_rent
 + wrapped_mint_rent_if_created
++ pc20_state_rent_if_created
 + recipient_ata_rent_if_created
 + cea_ata_rent_if_created
 ```
 
-For `revert_pc20_burn`, current components are:
-
-```text
-signature_fee
-+ executed_sub_tx_rent
-+ recipient_ata_rent_if_created
-```
-
-Rules: require `gas_fee >= gas_used`, reimburse only `gas_used`, emit
-`gas_to_refund = gas_fee - gas_used` where applicable, and require callers to
-increase `gasLimit` when expecting mint or ATA creation rent beyond the base path.
-
-Metaplex metadata is not enabled in v1. If it is added later, metadata rent must
-be added to the signed gas budget.
-
----
-
-## Relayer Requirements
-
-Push -> Solana export: listen to `UniversalTxOutbound`, detect
-`PC_20_SELECTOR`, decode the metadata envelope, pass remaining bytes as SVM
-`user_data`, and build `finalize_pc20_export`.
-
-Solana -> Push burn: index `Pc20UniversalTx` and map `source_asset`, `amount`,
-recipient, payload, and `from_cea` to Push-side unlock/execution handling.
-
-CEA PC20 burn: build a payload-only `finalize_universal_tx` to the gateway
-program itself, keep generic SPL staging accounts absent, and pass
-`[pc20_mint, cea_ata, token_program]` in `remaining_accounts`.
-
-Burn revert: when Push-side unlock fails, allocate a new revert `sub_tx_id`,
-include the original burn subTx ID in the signed SVM revert message, and call
-`revert_pc20_burn`.
+The signed gas budget must cover any expected mint/state/ATA creation rent.
+If a PDA/ATA was prefunded, reimbursement uses only the missing lamports paid by
+the relayer, not the full rent constant.
 
 ---
 
 ## Events
 
-Canonical event layouts live in
-`programs/universal-gateway/src/state.rs`.
+Primary indexer surface:
 
-PC20 events:
+- PC20 export emits existing generic `UniversalTxFinalized` with the PC20 export
+  `ix_data` as `payload`.
+- Direct PC20 burn emits generic `UniversalTx` with
+  `payload = "PC20" || abi_encode_address(source_asset) || payload`
+  and `from_cea = false`.
+- Direct PC20 burn with native lamports above the inbound fee also emits the
+  existing native `Funds` `UniversalTx` for the extra native amount.
+- CEA PC20 burn emits generic `UniversalTx` with
+  `payload = "PC20" || abi_encode_address(source_asset) || payload`
+  and `from_cea = true`.
+- PC20 revert through generic route emits existing `RevertUniversalTx`.
+- PC20 rescue through generic route emits existing `FundsRescued`.
 
-| Event | Purpose |
-| --- | --- |
-| `Pc20ExportFinalized` | Push -> Solana export settled and wrapped supply minted |
-| `Pc20UniversalTx` | Solana wrapped supply burned for Push-side unlock/execution |
-| `Pc20BurnReverted` | failed Push-side unlock reminted on Solana |
-
-Push-side source event:
-
-- `UniversalTxOutbound`, distinguished as PC20 by `PC_20_SELECTOR` in payload.
+The selector bytes are ASCII `PC20` (`0x50433230`). For burn events the selector
+is followed by Solidity-compatible `abi.encode(address sourceAsset)`: a 32-byte
+word with 12 leading zero bytes and the 20-byte source asset.
 
 ---
 
 ## Security Properties
 
-- Only TSS-authorized PC20 finalize and burn-revert paths can mint wrapped supply.
-- TSS signatures include signed `deadline`.
-- Finalize and burn-revert paths are replay-protected by `ExecutedSubTx`.
-- Signed recipient pubkeys are bound to supplied Solana accounts.
-- ATAs are validated by expected owner and mint after lazy creation.
-- Canonical wrapped mint is derived from `source_asset`; no registry spoofing path.
-- Mint/remint authority is PDA-controlled.
-- Freeze authority must be unset.
-- Existing mint validation prevents replacing the canonical PDA with a malformed
-  SPL account.
-- Destination excess gas budget is not paid to the relayer; only `gas_used` is
-  reimbursed.
-- CEA PC20 burn is authorized by the outer TSS finalize message and CEA PDA seeds.
-- There is no burn-marker account; burn-revert trust matches latest EVM and relies
-  on TSS not signing duplicate revert subTx IDs for the same failed burn.
+- Mint/remint requires TSS authorization except direct/CEA burns, which only burn
+  already-owned wrapped supply.
+- TSS messages include `deadline`.
+- Generic PC20 revert/rescue signatures include `"PC20" || source_asset` so the
+  same TSS signature cannot be switched between normal SPL transfer and PC20
+  remint by changing `remaining_accounts`.
+- TSS-routed routes create `ExecutedSubTx` replay markers.
+- `Pc20State` prevents a generic `req.token` mint from being treated as a PC20
+  wrapper without a canonical `source_asset` mapping.
+- Wrapped mint PDA derivation ties `source_asset` to `pc20_mint`.
+- Mint authority must equal the mint PDA and freeze authority must be unset.
+- ATAs are validated after lazy creation.
+- Direct burn validates caller-owned ATA before burning.
+- CEA burn validates the CEA ATA and burns only through CEA PDA signer seeds.
+- Generic PC20 revert/rescue reject vault token accounts to avoid accidentally
+  treating vault-held SPL funds as mintable PC20 supply.
 
 ---
 
-## Not in v1
+## Compatibility Notes
 
-- No Metaplex metadata account creation.
-- No `Pc20State` or registry PDA.
-- No separate mint-authority PDA.
-- No stored-by-reference PC20 export finalize route; direct `user_data` is used.
-- No on-chain burn marker tying revert to the original burn.
+The CEA self-route decoder still accepts the old inner
+`send_pc20_universal_tx` payload discriminator for compatibility while the
+EVM-parity route
+moves to generic `finalize_universal_tx`, `send_universal_tx`,
+`revert_universal_tx`, and `rescue_funds`.
+Relayers/indexers should treat the generic events as the only canonical PC20
+event surface.
 
-These are future extensions, not current architecture requirements.
-
----
-
-## Post-Audit Integration Notes
-
-This branch is based on the audit-main-fixes SVM shape:
-
-- TSS PDA seed is `final_tss_pda`.
-- PC20 TSS messages include `deadline`.
-- fee naming follows `inbound_fee`.
-- `StoredIxData` remains available for the generic finalize route.
-- recipient account binding is enforced in PC20 finalize and burn revert.
-- burn-revert parity follows EVM's dedicated `revertPC20Burn()` /
-  `PC20Factory.revertMint()` path.
+Client-level account tables and signed-data byte layouts are in
+`docs/7A-PC20-INTEGRATION.md`.
 
 ---
 
 ## References
 
-### Local code references
+Local code:
 
-- Program entrypoints: `programs/universal-gateway/src/lib.rs`
-- PC20 instruction implementation: `programs/universal-gateway/src/instructions/pc20.rs`
-- CEA self-route dispatch: `programs/universal-gateway/src/instructions/execute.rs`
-- Event structs and PDA seeds: `programs/universal-gateway/src/state.rs`
-- Shared ATA/PDA helpers: `programs/universal-gateway/src/utils/transfers.rs`
+- `programs/universal-gateway/src/instructions/pc20.rs`
+- `programs/universal-gateway/src/instructions/deposit.rs`
+- `programs/universal-gateway/src/instructions/execute.rs`
+- `programs/universal-gateway/src/instructions/revert.rs`
+- `programs/universal-gateway/src/instructions/rescue.rs`
+- `programs/universal-gateway/src/state.rs`
 
-### EVM / Push references
+EVM comparison:
 
-- [PC20 3rd-iteration PR #128](https://github.com/pushchain/push-chain-gateway-contracts/pull/128/changes#top)
-- [3rd-iteration `UniversalGateway.sol`](https://raw.githubusercontent.com/pushchain/push-chain-gateway-contracts/pc20-3rd-iteration/contracts/evm-gateway/src/UniversalGateway.sol)
-- [3rd-iteration `Vault.sol`](https://raw.githubusercontent.com/pushchain/push-chain-gateway-contracts/pc20-3rd-iteration/contracts/evm-gateway/src/Vault.sol)
-- [3rd-iteration `PC20Factory.sol`](https://raw.githubusercontent.com/pushchain/push-chain-gateway-contracts/pc20-3rd-iteration/contracts/evm-gateway/src/PC20Factory.sol)
-- [2nd-iteration `UniversalCore.sol`](https://raw.githubusercontent.com/pushchain/push-chain-core-contracts/pc20-2nd-iteration/src/UniversalCore.sol)
-
-### Solana / Anchor references
-
-- [Program Derived Addresses](https://solana.com/docs/core/pda)
-- [Cross Program Invocation](https://solana.com/docs/core/cpi)
-- [Create a Token Mint](https://solana.com/docs/tokens/basics/create-mint)
-- [Anchor PDA mint authority example](https://www.anchor-lang.com/docs/tokens/basics/mint-tokens)
+- gateway PR #130: generic PC20 burn route
+- gateway PR #131: generic PC20 revert/rescue route

@@ -41,6 +41,7 @@ const PRIVATE_KEY = Buffer.from(privateKeyHex, "hex");
 const PUBLIC_KEY = secp.getPublicKey(PRIVATE_KEY, false).slice(1); // remove 0x04 prefix
 const ETH_ADDRESS_HEX = keccak_256(PUBLIC_KEY).slice(-40);
 const ETH_ADDRESS_BYTES = Buffer.from(ETH_ADDRESS_HEX, "hex");
+const PC20_SELECTOR = Buffer.from("PC20", "ascii");
 
 export function getTssEthAddress(): number[] {
   return Array.from(ETH_ADDRESS_BYTES);
@@ -250,13 +251,15 @@ export function buildRescueAdditionalData(
   universalTxId: BytesLike,
   recipient: PublicKey,
   gasFee: bigint = BigInt(0),
-  tokenMint?: PublicKey
+  tokenMint?: PublicKey,
+  pc20SourceAsset?: BytesLike
 ): BytesLike[] {
   const gasFeeBuf = Buffer.alloc(8);
   gasFeeBuf.writeBigUInt64BE(gasFee, 0);
 
   if (tokenMint) {
-    return [subTxId, universalTxId, tokenMint.toBuffer(), recipient.toBuffer(), gasFeeBuf];
+    const base = [subTxId, universalTxId, tokenMint.toBuffer(), recipient.toBuffer(), gasFeeBuf];
+    return pc20SourceAsset ? [...base, PC20_SELECTOR, pc20SourceAsset] : base;
   }
   return [subTxId, universalTxId, recipient.toBuffer(), gasFeeBuf];
 }
@@ -271,14 +274,15 @@ export function buildRevertAdditionalData(
   recipient: PublicKey,
   revertMsg: Uint8Array,
   gasFee: bigint = BigInt(0),
-  tokenMint?: PublicKey
+  tokenMint?: PublicKey,
+  pc20SourceAsset?: BytesLike
 ): BytesLike[] {
   const gasFeeBuf = Buffer.alloc(8);
   gasFeeBuf.writeBigUInt64BE(gasFee, 0);
   const revertMsgHash = Buffer.from(keccak_256.arrayBuffer(Buffer.from(revertMsg)));
 
   if (tokenMint) {
-    return [
+    const base = [
       subTxId,
       universalTxId,
       tokenMint.toBuffer(),
@@ -286,6 +290,7 @@ export function buildRevertAdditionalData(
       gasFeeBuf,
       revertMsgHash,
     ];
+    return pc20SourceAsset ? [...base, PC20_SELECTOR, pc20SourceAsset] : base;
   }
 
   return [subTxId, universalTxId, recipient.toBuffer(), gasFeeBuf, revertMsgHash];
