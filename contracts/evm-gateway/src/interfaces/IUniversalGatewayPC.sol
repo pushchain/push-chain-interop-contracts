@@ -86,6 +86,18 @@ interface IUniversalGatewayPC {
         address indexed newVaultPC20
     );
 
+    /// @notice                  Emitted when outbound epoch duration is updated
+    event OutboundEpochDurationUpdated(
+        uint256 oldDuration,
+        uint256 newDuration
+    );
+
+    /// @notice                  Emitted when outbound rate limit bps is set for a token
+    event OutboundLimitBpsUpdated(
+        address indexed token,
+        uint256 bps
+    );
+
     // ==============================
     //    UGPC_2: OUTBOUND TX
     // ==============================
@@ -123,4 +135,37 @@ interface IUniversalGatewayPC {
     /// @notice                  Update the VaultPC20 contract address used for PC20 token custody.
     /// @param _vaultPC20        New VaultPC20 address.
     function updateVaultPC20(address _vaultPC20) external;
+
+    // ==============================
+    //  UGPC_5: OUTBOUND RATE LIMIT
+    // ==============================
+
+    /// @notice                  Set the epoch duration for outbound rate limiting.
+    /// @param newDurationSec    New epoch duration in seconds (0 = disabled).
+    function updateOutboundEpochDuration(
+        uint256 newDurationSec
+    ) external;
+
+    /// @notice                  Set the outbound rate limit for a token in basis points
+    ///                          of totalSupply per epoch.
+    /// @param token             Token address.
+    /// @param bps               Basis points (0 = no limit, max 10_000 = 100%).
+    function updateOutboundLimitBps(
+        address token,
+        uint256 bps
+    ) external;
+
+    /// @notice                  Returns the current epoch usage for a token.
+    /// @param token             Token address.
+    /// @return epoch            Current epoch index.
+    /// @return used             Amount consumed in the current epoch.
+    function getOutboundEpochUsage(
+        address token
+    ) external view returns (uint64 epoch, uint192 used);
+
+    /// @notice                  Returns the outbound epoch duration in seconds.
+    function outboundEpochDurationSec() external view returns (uint256);
+
+    /// @notice                  Returns the outbound rate limit bps for a token.
+    function outboundLimitBps(address token) external view returns (uint256);
 }
