@@ -28,7 +28,7 @@ import { IVaultPC } from "./interfaces/IVaultPC.sol";
 import { IVaultPC20 } from "./interfaces/IVaultPC20.sol";
 import { IUniversalCore } from "./interfaces/IUniversalCore.sol";
 import { IUniversalGatewayPC } from "./interfaces/IUniversalGatewayPC.sol";
-import { TX_TYPE } from "./libraries/Types.sol";
+import { TX_TYPE, EpochUsage } from "./libraries/Types.sol";
 import { UniversalOutboundTxRequest, PC_20_SELECTOR } from "./libraries/TypesUGPC.sol";
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -58,6 +58,17 @@ contract UniversalGatewayPC is
     uint256 public nonce;
     /// @notice MUTABLE — admin-updatable via updateVaultPC20.
     IVaultPC20 public vaultPC20;
+
+    // ==============================
+    //  UGPC: OUTBOUND RATE LIMITING
+    // ==============================
+
+    /// @notice Duration of each rate-limit epoch in seconds.
+    uint256 public outboundEpochDurationSec;
+    /// @notice Per-token outbound rate limit in basis points of totalSupply.
+    mapping(address => uint256) public outboundLimitBps;
+    /// @notice Per-token epoch usage tracker.
+    mapping(address => EpochUsage) private _outboundUsage;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -169,6 +180,8 @@ contract UniversalGatewayPC is
             chainNamespace = destChainNamespace;
             txType = TX_TYPE.FUNDS_AND_PAYLOAD;
 
+            _consumeOutboundRateLimit(req.token, req.amount);
+
             IERC20(req.token).safeTransferFrom(msg.sender, address(vaultPC20), req.amount);
             vaultPC20.recordLock(req.token, req.amount);
         } else {
@@ -184,6 +197,7 @@ contract UniversalGatewayPC is
             }
 
             if (req.amount > 0) {
+                _consumeOutboundRateLimit(req.token, req.amount);
                 _burnPRC20(msg.sender, req.token, req.amount);
             }
         }
@@ -389,5 +403,67 @@ contract UniversalGatewayPC is
         if (!transferred) revert Errors.TokenTransferFailed(token, amount);
         bool ok = IPRC20(token).burn(amount);
         if (!ok) revert Errors.TokenBurnFailed(token, amount);
+    }
+
+    /// @dev Enforces per-token outbound rate limit based on
+    ///      a percentage (bps) of the token's totalSupply per epoch.
+    ///      Tokens without a configured limit (bps == 0) are uncapped.
+    function _consumeOutboundRateLimit(
+        address token,
+        uint256 amount
+    ) internal {
+        uint256 bps = outboundLimitBps[token];
+        if (bps == 0) return;
+
+        uint256 _epochDuration = outboundEpochDurationSec;
+        if (_epochDuration == 0) revert Errors.InvalidData();
+
+        uint256 supply = IERC20(token).totalSupply();
+        uint256 threshold = (supply * bps) / 10_000;
+
+        uint64 current = uint64(block.timestamp / _epochDuration);
+        EpochUsage storage e = _outboundUsage[token];
+
+        if (e.epoch != current) {
+            e.epoch = current;
+            e.used = 0;
+        }
+
+        uint256 newUsed = uint256(e.used) + amount;
+        if (newUsed > threshold) {
+            revert Errors.OutboundRateLimitExceeded();
+        }
+        e.used = uint192(newUsed);
+    }
+
+    // ==============================
+    //  UGPC_4: OUTBOUND RATE LIMIT ADMIN
+    // ==============================
+
+    /// @inheritdoc IUniversalGatewayPC
+    function updateOutboundEpochDuration(
+        uint256 newDurationSec
+    ) external onlyRole(OPERATOR_ROLE) {
+        uint256 old = outboundEpochDurationSec;
+        outboundEpochDurationSec = newDurationSec;
+        emit OutboundEpochDurationUpdated(old, newDurationSec);
+    }
+
+    /// @inheritdoc IUniversalGatewayPC
+    function updateOutboundLimitBps(
+        address token,
+        uint256 bps
+    ) external onlyRole(OPERATOR_ROLE) {
+        if (bps > 10_000) revert Errors.InvalidBps();
+        outboundLimitBps[token] = bps;
+        emit OutboundLimitBpsUpdated(token, bps);
+    }
+
+    /// @inheritdoc IUniversalGatewayPC
+    function getOutboundEpochUsage(
+        address token
+    ) external view returns (uint64 epoch, uint192 used) {
+        EpochUsage storage e = _outboundUsage[token];
+        return (e.epoch, e.used);
     }
 }
