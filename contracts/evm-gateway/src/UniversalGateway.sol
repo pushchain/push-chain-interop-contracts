@@ -434,9 +434,8 @@ contract UniversalGateway is
 
         pc20Factory.burnFrom(sourceAsset, caller, req.amount);
 
-        bytes memory metaData = abi.encode(sourceAsset);
         bytes memory prefixedPayload = abi.encodePacked(
-            PC_20_SELECTOR, metaData, req.payload
+            PC_20_SELECTOR, req.payload
         );
 
         _emitUniversalTx(

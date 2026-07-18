@@ -161,12 +161,12 @@ contract PC20Factory is
 
     /// @inheritdoc IPC20Factory
     function revertMint(
-        address sourceAsset,
+        address wrapper,
         address to,
         uint256 amount
-    ) external onlyRole(GATEWAY_ROLE) whenNotPaused {
-        address wrapper = sourceToWrapper[sourceAsset];
-        if (wrapper == address(0)) revert WrapperNotDeployed(sourceAsset);
+    ) external onlyRole(VAULT_ROLE) whenNotPaused {
+        address sourceAsset = wrapperToSource[wrapper];
+        if (sourceAsset == address(0)) revert WrapperNotDeployed(wrapper);
         PC20Wrapper(wrapper).mint(to, amount);
     }
 

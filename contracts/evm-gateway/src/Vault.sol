@@ -180,7 +180,7 @@ contract Vault is
 
         _finalizeUniversalTxPRC20(subTxId, universalTxId, pushAccount, recipient, token, amount, data, cea);
 
-        emit UniversalTxFinalized(subTxId, universalTxId, pushAccount, recipient, token, amount, data);
+        emit UniversalTxFinalized(subTxId, universalTxId, address(0), pushAccount, recipient, token, amount, data);
     }
 
     /// @inheritdoc IVault
@@ -196,6 +196,14 @@ contract Vault is
         if (token == address(0)) {
             if (msg.value != amount) revert Errors.InvalidAmount();
             gateway.revertUniversalTx{ value: amount }(
+                subTxId, universalTxId, token, amount, revertInstruction
+            );
+        } else if (_isPC20Wrapper(token)) {
+            if (msg.value != 0) revert Errors.InvalidAmount();
+            pc20Factory.revertMint(
+                token, address(gateway), amount
+            );
+            gateway.revertUniversalTx(
                 subTxId, universalTxId, token, amount, revertInstruction
             );
         } else {
@@ -227,6 +235,14 @@ contract Vault is
         if (token == address(0)) {
             if (msg.value != amount) revert Errors.InvalidAmount();
             gateway.rescueFunds{ value: amount }(
+                subTxId, universalTxId, token, amount, revertInstruction
+            );
+        } else if (_isPC20Wrapper(token)) {
+            if (msg.value != 0) revert Errors.InvalidAmount();
+            pc20Factory.revertMint(
+                token, address(gateway), amount
+            );
+            gateway.rescueFunds(
                 subTxId, universalTxId, token, amount, revertInstruction
             );
         } else {
@@ -298,6 +314,12 @@ contract Vault is
     function _validateRevertParams(uint256 amount, address revertRecipient) private pure {
         if (amount == 0) revert Errors.InvalidAmount();
         if (revertRecipient == address(0)) revert Errors.InvalidRecipient();
+    }
+
+    /// @dev Returns true when token is a PC20 wrapper deployed by the factory.
+    function _isPC20Wrapper(address token) private view returns (bool) {
+        if (address(pc20Factory) == address(0)) return false;
+        return pc20Factory.isPC20Wrapper(token);
     }
 
     /// @dev                   Validates push account and token/value invariants.

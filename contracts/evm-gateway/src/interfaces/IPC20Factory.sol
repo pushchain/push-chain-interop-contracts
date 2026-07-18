@@ -40,7 +40,7 @@ interface IPC20Factory {
     ) external;
 
     function revertMint(
-        address sourceAsset,
+        address wrapper,
         address to,
         uint256 amount
     ) external;
