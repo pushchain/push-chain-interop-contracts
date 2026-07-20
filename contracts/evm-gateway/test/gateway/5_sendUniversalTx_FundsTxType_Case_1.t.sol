@@ -163,7 +163,7 @@ contract GatewaySendUniversalTxWithFundsTest is BaseTest {
             recipient: address(0), // FUNDS always has recipient == address(0)
             token: address(0),
             amount: fundsAmount,
-            payload: bytes(""),
+            payload: _pp(bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -387,7 +387,7 @@ contract GatewaySendUniversalTxWithFundsTest is BaseTest {
             recipient: address(0), // FUNDS always has recipient == address(0)
             token: address(tokenA),
             amount: fundsAmount,
-            payload: bytes(""),
+            payload: _pp(bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -664,7 +664,7 @@ contract GatewaySendUniversalTxWithFundsTest is BaseTest {
             recipient: address(0), // FUNDS always has recipient == address(0)
             token: address(0),
             amount: fundsAmount,
-            payload: bytes(""),
+            payload: _pp(bytes("")),
             revertRecipient: revertInst.revertRecipient, // Full struct with revertMsg
             signatureData: bytes(""),
             fromCEA: false

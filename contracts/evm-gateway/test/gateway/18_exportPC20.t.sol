@@ -198,6 +198,10 @@ contract ExportPC20Test is Test {
         return DEFAULT_GAS_PRICE * limit;
     }
 
+    function _dummyWrapper() internal pure returns (bytes32) {
+        return bytes32(uint256(uint160(address(0xCAFE))));
+    }
+
     function _expectedSubTxId(
         address sender,
         bytes memory recipient,
@@ -1076,7 +1080,7 @@ contract ExportPC20Test is Test {
         universalCore.setPC20DeploymentGasOverhead(DEST_CHAIN, overhead);
 
         vm.prank(uem);
-        universalCore.setWrapperDeployed(address(pc20Token), DEST_CHAIN);
+        universalCore.setWrapperDeployed(address(pc20Token), DEST_CHAIN, _dummyWrapper());
 
         (,,,,, uint256 gasLimitUsed, bool isFirst) =
             universalCore.getPC20ExportGasAndFees(DEST_CHAIN, 0, address(pc20Token));
@@ -1090,7 +1094,7 @@ contract ExportPC20Test is Test {
         universalCore.setPC20DeploymentGasOverhead(DEST_CHAIN, overhead);
 
         vm.prank(uem);
-        universalCore.setWrapperDeployed(address(pc20Token), DEST_CHAIN);
+        universalCore.setWrapperDeployed(address(pc20Token), DEST_CHAIN, _dummyWrapper());
 
         (,,,,, uint256 limitA, bool isFirstA) = universalCore.getPC20ExportGasAndFees(DEST_CHAIN, 0, address(pc20Token));
         assertEq(limitA, BASE_GAS_LIMIT);
@@ -1114,7 +1118,7 @@ contract ExportPC20Test is Test {
         universalCore.setPC20DeploymentGasOverhead(DEST_CHAIN_B, overhead);
 
         vm.prank(uem);
-        universalCore.setWrapperDeployed(address(pc20Token), DEST_CHAIN);
+        universalCore.setWrapperDeployed(address(pc20Token), DEST_CHAIN, _dummyWrapper());
 
         (,,,,, uint256 limitA, bool isFirstA) = universalCore.getPC20ExportGasAndFees(DEST_CHAIN, 0, address(pc20Token));
         assertEq(limitA, BASE_GAS_LIMIT);
@@ -1137,9 +1141,9 @@ contract ExportPC20Test is Test {
         universalCore.setBaseGasLimitByChain(DEST_CHAIN_B, BASE_GAS_LIMIT);
 
         vm.prank(uem);
-        universalCore.setWrapperDeployed(address(pc20Token), DEST_CHAIN);
+        universalCore.setWrapperDeployed(address(pc20Token), DEST_CHAIN, _dummyWrapper());
         vm.prank(uem);
-        universalCore.setWrapperDeployed(address(pc20Token), DEST_CHAIN_B);
+        universalCore.setWrapperDeployed(address(pc20Token), DEST_CHAIN_B, _dummyWrapper());
 
         (,,,,, uint256 limitA, bool isFirstA) = universalCore.getPC20ExportGasAndFees(DEST_CHAIN, 0, address(pc20Token));
         assertEq(limitA, BASE_GAS_LIMIT);
@@ -1154,6 +1158,6 @@ contract ExportPC20Test is Test {
     function test_SetWrapperDeployed_MockOnlyUEModule() public {
         vm.expectRevert("MockUniversalCore: caller is not UEM");
         vm.prank(makeAddr("notUem"));
-        universalCore.setWrapperDeployed(address(pc20Token), DEST_CHAIN);
+        universalCore.setWrapperDeployed(address(pc20Token), DEST_CHAIN, _dummyWrapper());
     }
 }

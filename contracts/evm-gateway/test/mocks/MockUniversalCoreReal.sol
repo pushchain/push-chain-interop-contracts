@@ -55,11 +55,14 @@ contract MockUniversalCoreReal is IUniversalCore {
     /// @notice PC20 deployment gas overhead per chain namespace
     mapping(string => uint256) public pc20DeploymentGasOverhead;
 
-    /// @notice PC20 deploy flag per (token, chain)
-    mapping(address => mapping(string => bool)) public pc20Deployed;
+    /// @notice PC20 wrapper identity per (sourceAsset, destChain) — bytes32 for chain-agnostic support
+    mapping(address => mapping(string => bytes32)) public pc20WrapperBySource;
 
-    /// @notice PC20Factory address per chain namespace
-    mapping(string => address) public pc20FactoryByChain;
+    /// @notice Reverse mapping: (destChain, wrapper) → sourceAsset
+    mapping(string => mapping(bytes32 => address)) public pc20SourceByWrapper;
+
+    /// @notice PC20Factory identity per chain namespace — bytes32 for chain-agnostic support
+    mapping(string => bytes32) public pc20FactoryByChain;
 
     /// @notice Role for managing gas-related configurations
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
@@ -351,7 +354,7 @@ contract MockUniversalCoreReal is IUniversalCore {
         }
 
         uint256 deployOverhead = pc20DeploymentGasOverhead[destChainNamespace];
-        if (!pc20Deployed[pc20Token][destChainNamespace] && deployOverhead > 0) {
+        if (pc20WrapperBySource[pc20Token][destChainNamespace] == bytes32(0) && deployOverhead > 0) {
             isFirstExport = true;
             gasLimitUsed += deployOverhead;
         }
@@ -368,11 +371,36 @@ contract MockUniversalCoreReal is IUniversalCore {
         pc20DeploymentGasOverhead[chainNamespace] = overhead;
     }
 
-    function setWrapperDeployed(address sourceAsset, string calldata destChain) external onlyUEModule {
-        pc20Deployed[sourceAsset][destChain] = true;
+    function pc20Deployed(address sourceAsset, string memory destChain) external view returns (bool) {
+        return pc20WrapperBySource[sourceAsset][destChain] != bytes32(0);
     }
 
-    function setPC20FactoryByChain(string memory chainNamespace, address factory)
+    function getPC20Wrapper(
+        address sourceAsset,
+        string memory destChain
+    ) external view returns (bytes32 wrapper, bool deployed) {
+        wrapper = pc20WrapperBySource[sourceAsset][destChain];
+        deployed = wrapper != bytes32(0);
+    }
+
+    function getPC20Source(
+        bytes32 wrapper,
+        string memory destChain
+    ) external view returns (address sourceAsset, bool known) {
+        sourceAsset = pc20SourceByWrapper[destChain][wrapper];
+        known = sourceAsset != address(0);
+    }
+
+    function setWrapperDeployed(address sourceAsset, string calldata destChain, bytes32 wrapper)
+        external
+        onlyUEModule
+    {
+        if (pc20WrapperBySource[sourceAsset][destChain] != bytes32(0)) return;
+        pc20WrapperBySource[sourceAsset][destChain] = wrapper;
+        pc20SourceByWrapper[destChain][wrapper] = sourceAsset;
+    }
+
+    function setPC20FactoryByChain(string memory chainNamespace, bytes32 factory)
         external
         onlyRole(DEFAULT_ADMIN_ROLE)
     {

@@ -193,7 +193,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA), // ERC20 token for funds
             amount: erc20Amount,
-            payload: encodedPayload, // Funds event has full payload
+            payload: _pp(encodedPayload), // Funds event has full payload
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -262,7 +262,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA),
             amount: erc20Amount,
-            payload: encodedPayload, // Full payload preserved
+            payload: _pp(encodedPayload), // Full payload preserved
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -436,7 +436,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
             recipient: address(0), // Gas routes always credit UEA
             token: address(0),
             amount: msgValue,
-            payload: encodedPayload,
+            payload: _pp(encodedPayload),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -880,7 +880,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA),
             amount: erc20Amount,
-            payload: encodedPayload,
+            payload: _pp(encodedPayload),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -963,7 +963,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA),
             amount: erc20Amount,
-            payload: encodedPayload,
+            payload: _pp(encodedPayload),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -1011,7 +1011,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA), // ERC20 token
             amount: erc20Amount,
-            payload: encodedPayload,
+            payload: _pp(encodedPayload),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false

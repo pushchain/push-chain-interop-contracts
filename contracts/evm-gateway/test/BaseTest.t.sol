@@ -10,7 +10,7 @@ import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/trans
 
 import { UniversalGateway } from "../src/UniversalGateway.sol";
 import { IUniversalGateway } from "../src/interfaces/IUniversalGateway.sol";
-import { TX_TYPE, RevertInstructions, VerificationType } from "../src/libraries/Types.sol";
+import { TX_TYPE, RevertInstructions, VerificationType, PRC_20_SELECTOR } from "../src/libraries/Types.sol";
 import { UniversalPayload, UniversalTxRequest } from "../src/libraries/TypesUG.sol";
 import { Errors } from "../src/libraries/Errors.sol";
 import { MockERC20 } from "./mocks/MockERC20.sol";
@@ -532,6 +532,12 @@ abstract contract BaseTest is Test {
     // =========================
     //      HELPER FUNCTIONS
     // =========================
+
+    /// @notice Prefix a payload with PRC_20_SELECTOR to match _routeUniversalTx processing
+    /// @dev PRC20 payloads are prefixed with PRC_20_SELECTOR in _routeUniversalTx
+    function _pp(bytes memory p) internal pure returns (bytes memory) {
+        return abi.encodePacked(PRC_20_SELECTOR, p);
+    }
 
     /// @notice Build a UniversalPayload for testing
     /// @param to Target address

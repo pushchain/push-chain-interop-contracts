@@ -35,7 +35,7 @@ import { Errors } from "./libraries/Errors.sol";
 import { ICEAFactory } from "./interfaces/ICEAFactory.sol";
 import { IUniversalGateway } from "./interfaces/IUniversalGateway.sol";
 import { IWETH } from "./interfaces/IWETH.sol";
-import { RevertInstructions, TX_TYPE, EpochUsage, PC_20_SELECTOR } from "./libraries/Types.sol";
+import { RevertInstructions, TX_TYPE, EpochUsage, PC_20_SELECTOR, PRC_20_SELECTOR } from "./libraries/Types.sol";
 import { UniversalTxRequest, UniversalTokenTxRequest } from "./libraries/TypesUG.sol";
 import { IPC20Factory } from "./interfaces/IPC20Factory.sol";
 import { PC20Wrapper } from "./PC20Wrapper.sol";
@@ -1135,6 +1135,10 @@ contract UniversalGateway is
             _routePC20Tx(req, caller, nativeValue, fromCEA);
             return;
         }
+
+        // Prefix payload with PRC_20_SELECTOR so Push Chain can distinguish
+        // PRC20 transactions from PC20 transactions (PC20 path returns above).
+        req.payload = abi.encodePacked(PRC_20_SELECTOR, req.payload);
 
         // Route 1: GAS or GAS_AND_PAYLOAD → Instant route
         if (txType == TX_TYPE.GAS || txType == TX_TYPE.GAS_AND_PAYLOAD) {
