@@ -132,6 +132,7 @@ function decodeUniversalTxFinalizedEvent(e) {
         event: "UniversalTxFinalized",
         sub_tx_id: fmt32(e.sub_tx_id ?? e.subTxId),
         universal_tx_id: fmt32(e.universal_tx_id ?? e.universalTxId),
+        wrapper_address: (e.wrapper_address ?? e.wrapperAddress)?.toString(),
         gas_fee: Number(e.gas_fee ?? e.gasFee ?? 0),
         gas_used: Number(e.gas_used ?? e.gasUsed ?? 0),
         gas_to_refund: Number(e.gas_to_refund ?? e.gasToRefund ?? 0),
@@ -208,6 +209,7 @@ function printUniversalTxFinalized(d, idx, total) {
     console.log(`  ┌─ Event ${idx} / ${total}  [UniversalTxFinalized]`);
     console.log(`  │  sub_tx_id:       ${d.sub_tx_id}`);
     console.log(`  │  universal_tx_id: ${d.universal_tx_id}`);
+    console.log(`  │  wrapper_address: ${d.wrapper_address}`);
     console.log(`  │  gas_fee:         ${d.gas_fee} (${lamportsToSol(d.gas_fee)})`);
     console.log(`  │  gas_used:        ${d.gas_used} (${lamportsToSol(d.gas_used)})`);
     console.log(`  │  gas_to_refund:   ${d.gas_to_refund} (${lamportsToSol(d.gas_to_refund)})`);

@@ -4,6 +4,8 @@ import { UniversalGateway } from "../target/types/universal_gateway";
 import { TestCounter } from "../target/types/test_counter";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
+  createTransferInstruction,
   getAccount,
   getAssociatedTokenAddressSync,
   getMint,
@@ -12,6 +14,7 @@ import {
 } from "@solana/spl-token";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
+import { AbiCoder } from "ethers";
 import { randomBytes } from "crypto";
 import pkg from "js-sha3";
 import * as secp from "@noble/secp256k1";
@@ -48,6 +51,7 @@ import {
 const { keccak_256 } = pkg;
 
 const COMPUTE_BUFFER = BigInt(100_000);
+const REF_FINALIZE_STORE_UPLOAD_FEE = SIGNATURE_FEE_LAMPORTS;
 
 type BurnAccountMeta = {
   pubkey: PublicKey;
@@ -66,12 +70,6 @@ const generate20Bytes = (): number[] => {
 
 const generate32Bytes = (): number[] => Array.from(randomBytes(32));
 
-const encodeU64Le = (value: bigint): Buffer => {
-  const out = Buffer.alloc(8);
-  out.writeBigUInt64LE(value);
-  return out;
-};
-
 const encodeVec = (value: Buffer | Uint8Array): Buffer => {
   const bytes = Buffer.from(value);
   const len = Buffer.alloc(4);
@@ -79,22 +77,18 @@ const encodeVec = (value: Buffer | Uint8Array): Buffer => {
   return Buffer.concat([len, bytes]);
 };
 
-const encodeString = (value: string): Buffer =>
-  encodeVec(Buffer.from(value, "utf8"));
+const encodePc20EventPayload = (payload: Buffer | Uint8Array): Buffer =>
+  Buffer.concat([Buffer.from("PC20", "ascii"), Buffer.from(payload)]);
 
-const encodePc20EventPayload = (
-  sourceAsset: number[] | Uint8Array,
-  payload: Buffer | Uint8Array
-): Buffer =>
-  Buffer.concat([
-    Buffer.from("PC20", "ascii"),
-    Buffer.alloc(12),
-    Buffer.from(sourceAsset),
-    Buffer.from(payload),
-  ]);
+const evmAddressAsPubkey = (address: Uint8Array | number[]): PublicKey =>
+  new PublicKey(Buffer.concat([Buffer.alloc(12), Buffer.from(address)]));
+
+const abiCoder = AbiCoder.defaultAbiCoder();
+const PC20_DEST_CHAIN_NAMESPACE = "solana:localnet";
 
 const encodePc20ExportIxData = (params: {
   sourceAsset: number[] | Uint8Array;
+  destChainNamespace?: string;
   name: string;
   symbol: string;
   decimals: number;
@@ -103,29 +97,44 @@ const encodePc20ExportIxData = (params: {
   Buffer.concat([
     Buffer.from("PC20", "ascii"),
     Buffer.from(params.sourceAsset),
-    encodeString(params.name),
-    encodeString(params.symbol),
-    Buffer.from([params.decimals]),
-    encodeVec(params.userData ?? Buffer.alloc(0)),
+    Buffer.from(
+      abiCoder
+        .encode(
+          ["string", "string", "string", "uint8"],
+          [
+            params.destChainNamespace ?? PC20_DEST_CHAIN_NAMESPACE,
+            params.name,
+            params.symbol,
+            params.decimals,
+          ]
+        )
+        .slice(2),
+      "hex"
+    ),
+    Buffer.from(params.userData ?? Buffer.alloc(0)),
   ]);
 
-const encodePc20BurnIxData = (params: {
-  subTxId: number[] | Uint8Array;
-  sourceAsset: number[] | Uint8Array;
-  amount: bigint;
-  recipient: number[] | Uint8Array;
-  payload: Buffer | Uint8Array;
-  revertRecipient: PublicKey;
-}): Buffer =>
-  Buffer.concat([
-    computeDiscriminator("global:send_pc20_universal_tx"),
-    Buffer.from(params.subTxId),
-    Buffer.from(params.sourceAsset),
-    encodeU64Le(params.amount),
-    Buffer.from(params.recipient),
-    encodeVec(params.payload),
-    params.revertRecipient.toBuffer(),
-  ]);
+const hashIxData = (ixData: Buffer): Uint8Array =>
+  new Uint8Array(keccak_256.arrayBuffer(ixData));
+
+const asIxDataHashArg = (ixDataHash: Uint8Array): number[] =>
+  Buffer.from(ixDataHash) as unknown as number[];
+
+const deriveStoredIxDataPda = (
+  subTxId: number[] | Uint8Array,
+  ixDataHash: Uint8Array,
+  programId: PublicKey
+): PublicKey => {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("stored_ix_data"),
+      Buffer.from(subTxId),
+      Buffer.from(ixDataHash),
+    ],
+    programId
+  );
+  return pda;
+};
 
 const makeEvmSigner = () => {
   const privateKey = randomBytes(32);
@@ -353,37 +362,80 @@ describe("Universal Gateway - PC20", () => {
     signature: number[],
     recoveryId: number,
     messageHash: number[]
-  ) =>
-    gatewayProgram.methods.finalizeUniversalTx(
-      5,
-      Array.from(subTxId),
-      Array.from(universalTxId),
-      amount,
-      Array.from(exportPushAccount),
-      Buffer.alloc(0),
-      encodePc20ExportIxData({
+  ) => {
+    const ixData = encodePc20ExportIxData({
         sourceAsset: exportSourceAsset,
         name: exportName,
         symbol: exportSymbol,
         decimals: exportDecimals,
         userData,
-      }),
-      gasFee,
-      deadline,
-      signature,
-      recoveryId,
-      messageHash
+      });
+    const ixDataHash = hashIxData(ixData);
+    const storedIxData = deriveStoredIxDataPda(
+      subTxId,
+      ixDataHash,
+      gatewayProgram.programId
     );
 
+    return {
+      accountsPartial: (accounts: any) => ({
+        remainingAccounts: (remainingAccounts: anchor.web3.AccountMeta[]) => ({
+          signers: (signers: Keypair[]) => ({
+            rpc: async () => {
+              const storeSigner =
+                signers.find((signer) => signer.publicKey.equals(accounts.caller)) ??
+                relayer;
+
+              await gatewayProgram.methods
+                .storeExecuteIxData(
+                  Array.from(subTxId),
+                  asIxDataHashArg(ixDataHash),
+                  ixData
+                )
+                .accountsPartial({
+                  caller: accounts.caller,
+                  storedIxData,
+                  systemProgram: SystemProgram.programId,
+                })
+                .signers([storeSigner])
+                .rpc();
+
+              return gatewayProgram.methods
+                .finalizeUniversalTxWithIxDataRef(
+                  5,
+                  Array.from(subTxId),
+                  Array.from(universalTxId),
+                  amount,
+                  Array.from(exportPushAccount),
+                  asIxDataHashArg(ixDataHash),
+                  Buffer.alloc(0),
+                  gasFee,
+                  deadline,
+                  signature,
+                  recoveryId,
+                  messageHash
+                )
+                .accountsPartial({
+                  ...accounts,
+                  storedIxData,
+                  storeRefundRecipient: accounts.caller,
+                })
+                .remainingAccounts(remainingAccounts)
+                .signers(signers)
+                .rpc();
+            },
+          }),
+        }),
+      }),
+    };
+  };
+
   const pc20ExportRemaining = (
-    recipientAta: PublicKey | null,
+    _recipientAta: PublicKey | null,
     payloadAccounts: anchor.web3.AccountMeta[] = []
   ) => [
     { pubkey: pc20State, isWritable: true, isSigner: false },
     { pubkey: wrappedMint, isWritable: true, isSigner: false },
-    ...(recipientAta
-      ? [{ pubkey: recipientAta, isWritable: true, isSigner: false }]
-      : []),
     ...payloadAccounts.map((account) => ({
       pubkey: account.pubkey,
       isWritable: account.isWritable,
@@ -563,6 +615,30 @@ describe("Universal Gateway - PC20", () => {
     expect(rejected, "Expected promise to reject").to.equal(true);
   };
 
+  const ensureAta = async (
+    ata: PublicKey,
+    mint: PublicKey,
+    owner: PublicKey,
+    payer: Keypair = directRecipient
+  ) => {
+    if (await provider.connection.getAccountInfo(ata)) {
+      return;
+    }
+    await provider.sendAndConfirm(
+      new anchor.web3.Transaction().add(
+        createAssociatedTokenAccountInstruction(
+          payer.publicKey,
+          ata,
+          owner,
+          mint,
+          TOKEN_PROGRAM_ID,
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        )
+      ),
+      [payer]
+    );
+  };
+
   const mintWrappedPc20ToCea = async (amount: number) => {
     const mintSubTxId = generate32Bytes();
     const universalTxId = generateUniversalTxId();
@@ -582,10 +658,14 @@ describe("Universal Gateway - PC20", () => {
       instructionId: 2,
     });
     const noopUserData = encodeExecutePayload(noopFields);
+    const ceaAtaInfo = await provider.connection.getAccountInfo(ceaAta);
     const gasUsed =
       SIGNATURE_FEE_LAMPORTS +
-      BigInt(await provider.connection.getMinimumBalanceForRentExemption(8));
-    const gasFee = gasUsed + COMPUTE_BUFFER;
+      BigInt(await provider.connection.getMinimumBalanceForRentExemption(8)) +
+      (ceaAtaInfo
+        ? BigInt(0)
+        : BigInt(await getTokenAccountRent(provider.connection)));
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
     const sig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
       amount: BigInt(amount),
@@ -657,6 +737,123 @@ describe("Universal Gateway - PC20", () => {
     return ceaAta;
   };
 
+  const mintWrappedPc20ToUser = async (amount: number) => {
+    const mintSubTxId = generate32Bytes();
+    const universalTxId = generateUniversalTxId();
+    const ceaAta = await getCeaAta(
+      pushAccount,
+      wrappedMint,
+      gatewayProgram.programId
+    );
+    const recipientAta = getAssociatedTokenAddressSync(
+      wrappedMint,
+      directRecipient.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+    await ensureAta(
+      recipientAta,
+      wrappedMint,
+      directRecipient.publicKey,
+      directRecipient
+    );
+
+    const transferIx = createTransferInstruction(
+      ceaAta,
+      recipientAta,
+      ceaAuthority,
+      amount,
+      [],
+      TOKEN_PROGRAM_ID
+    );
+    const userData = encodeExecutePayload(
+      instructionToPayloadFields({
+        instruction: transferIx,
+        targetProgram: TOKEN_PROGRAM_ID,
+        instructionId: 2,
+      })
+    );
+
+    const ceaAtaInfo = await provider.connection.getAccountInfo(ceaAta);
+    const gasUsed =
+      SIGNATURE_FEE_LAMPORTS +
+      BigInt(await provider.connection.getMinimumBalanceForRentExemption(8)) +
+      (ceaAtaInfo
+        ? BigInt(0)
+        : BigInt(await getTokenAccountRent(provider.connection)));
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
+    const sig = await signWithCurrentTss({
+      instruction: TssInstruction.Pc20Finalize,
+      amount: BigInt(amount),
+      additional: buildPc20FinalizeAdditionalData({
+        universalTxId,
+        subTxId: mintSubTxId,
+        sourceAsset,
+        pushAccount,
+        recipient: directRecipient.publicKey,
+        name,
+        symbol,
+        decimals,
+        gasFee,
+        userData,
+      }),
+    });
+
+    await pc20ExportViaFinalizeUniversalTx(
+        Array.from(mintSubTxId),
+        Array.from(universalTxId),
+        Array.from(sourceAsset),
+        new anchor.BN(amount),
+        Array.from(pushAccount),
+        directRecipient.publicKey,
+        name,
+        symbol,
+        decimals,
+        userData,
+        new anchor.BN(gasFee.toString()),
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
+        Array.from(sig.signature),
+        sig.recoveryId,
+        Array.from(sig.messageHash)
+      )
+      .accountsPartial({
+        caller: relayer.publicKey,
+        config: configPda,
+        vaultSol: vaultPda,
+        recipient: directRecipient.publicKey,
+        recipientAta: null,
+        ceaAuthority,
+        ceaAta,
+        tssPda,
+        executedSubTx: getExecutedTxPda(mintSubTxId, gatewayProgram.programId),
+        destinationProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        vaultAta: null,
+        mint: null,
+        rateLimitConfig: null,
+        tokenRateLimit: null,
+        storedIxData: null,
+        storeRefundRecipient: null,
+      })
+      .remainingAccounts([
+        { pubkey: pc20State, isWritable: true, isSigner: false },
+        { pubkey: wrappedMint, isWritable: true, isSigner: false },
+        ...transferIx.keys.map((key) => ({
+          pubkey: key.pubkey,
+          isWritable: key.isWritable,
+          isSigner: false,
+        })),
+      ])
+      .signers([relayer])
+      .rpc();
+
+    return recipientAta;
+  };
+
   const finalizeRoutedCeaPc20Burn = async (params: {
     burnSubTxId: number[];
     amount: number;
@@ -670,20 +867,26 @@ describe("Universal Gateway - PC20", () => {
     const payload = params.payload ?? Buffer.from("cea-burn", "utf8");
     const revertRecipientKey =
       params.revertRecipient ?? revertRecipient.publicKey;
-    const burnIxData = encodePc20BurnIxData({
-      subTxId: params.burnSubTxId,
-      sourceAsset,
-      amount: BigInt(params.amount),
-      recipient,
-      payload,
-      revertRecipient: revertRecipientKey,
-    });
     const ceaAta = await getCeaAta(
       pushAccount,
       wrappedMint,
       gatewayProgram.programId
     );
+    const burnIxData = Buffer.from(
+      gatewayProgram.coder.instruction.encode("sendUniversalTx", {
+        req: {
+          recipient,
+          token: wrappedMint,
+          amount: new anchor.BN(params.amount),
+          payload,
+          revertRecipient: revertRecipientKey,
+          signatureData: Buffer.from(params.burnSubTxId),
+        },
+        nativeAmount: new anchor.BN(0),
+      })
+    );
     const accounts = params.accounts ?? [
+      { pubkey: pc20State, isWritable: false },
       { pubkey: wrappedMint, isWritable: true },
       { pubkey: ceaAta, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isWritable: false },
@@ -779,16 +982,14 @@ describe("Universal Gateway - PC20", () => {
       .signers([operator])
       .rpc();
 
-  it("creates the canonical wrapped mint and mints to the direct recipient", async () => {
+  it("creates the canonical wrapped mint and mints to the CEA", async () => {
     const subTxId = generate32Bytes();
     const universalTxId = generateUniversalTxId();
     const amount = 125_000_000;
-    const recipientAta = getAssociatedTokenAddressSync(
+    const ceaAta = await getCeaAta(
+      pushAccount,
       wrappedMint,
-      directRecipient.publicKey,
-      false,
-      TOKEN_PROGRAM_ID,
-      ASSOCIATED_TOKEN_PROGRAM_ID
+      gatewayProgram.programId
     );
 
     const executedTxRent =
@@ -804,7 +1005,7 @@ describe("Universal Gateway - PC20", () => {
       BigInt(mintRent) +
       BigInt(ataRent) +
       pc20StateRent;
-    const gasFee = gasUsed + COMPUTE_BUFFER;
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
 
     const sig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
@@ -865,7 +1066,7 @@ describe("Universal Gateway - PC20", () => {
         storedIxData: null,
         storeRefundRecipient: null,
       })
-      .remainingAccounts(pc20ExportRemaining(recipientAta))
+      .remainingAccounts(pc20ExportRemaining(null))
       .signers([relayer])
       .rpc();
 
@@ -873,20 +1074,32 @@ describe("Universal Gateway - PC20", () => {
     expect(Number(mintInfo.supply)).to.equal(amount);
     expect(mintInfo.decimals).to.equal(decimals);
 
-    const recipientAccount = await getAccount(
-      provider.connection,
-      recipientAta
-    );
-    expect(Number(recipientAccount.amount)).to.equal(amount);
+    const ceaAccount = await getAccount(provider.connection, ceaAta);
+    expect(Number(ceaAccount.amount)).to.equal(amount);
 
     const events = await decodeEvents(provider, gatewayProgram, txSig);
-    const finalized = events.find(
+    const pc20Export = events.find(
       (event) => event.name === "universalTxFinalized"
     );
-    expect(finalized, "UniversalTxFinalized event missing").to.exist;
-    expect(Number(finalized!.data.amount)).to.equal(amount);
-    expect(finalized!.data.token.toBase58()).to.equal(wrappedMint.toBase58());
-    expect(Buffer.from(finalized!.data.payload).slice(0, 4).toString("ascii")).to.equal("PC20");
+    expect(pc20Export, "UniversalTxFinalized event missing").to.exist;
+    expect(Number(pc20Export!.data.amount)).to.equal(amount);
+    expect(pc20Export!.data.target.toBase58()).to.equal(
+      directRecipient.publicKey.toBase58()
+    );
+    expect(pc20Export!.data.wrapperAddress.toBase58()).to.equal(
+      wrappedMint.toBase58()
+    );
+    expect(pc20Export!.data.token.toBase58()).to.equal(
+      evmAddressAsPubkey(sourceAsset).toBase58()
+    );
+    expect(Buffer.from(pc20Export!.data.payload)).to.deep.equal(Buffer.alloc(0));
+    expect(BigInt(pc20Export!.data.gasFee.toString())).to.equal(gasFee);
+    expect(BigInt(pc20Export!.data.gasUsed.toString())).to.equal(
+      gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE
+    );
+    expect(BigInt(pc20Export!.data.gasToRefund.toString())).to.equal(
+      COMPUTE_BUFFER
+    );
   });
 
   it("reuses the existing wrapped mint on later direct exports", async () => {
@@ -905,7 +1118,7 @@ describe("Universal Gateway - PC20", () => {
     const gasUsed =
       SIGNATURE_FEE_LAMPORTS +
       BigInt(await provider.connection.getMinimumBalanceForRentExemption(8));
-    const gasFee = gasUsed + COMPUTE_BUFFER;
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
 
     const sig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
@@ -997,7 +1210,7 @@ describe("Universal Gateway - PC20", () => {
       (mismatchedAtaExists
         ? BigInt(0)
         : BigInt(await getTokenAccountRent(provider.connection)));
-    const gasFee = gasUsed + COMPUTE_BUFFER;
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
 
     const sig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
@@ -1095,7 +1308,7 @@ describe("Universal Gateway - PC20", () => {
     const gasUsed =
       SIGNATURE_FEE_LAMPORTS +
       BigInt(await provider.connection.getMinimumBalanceForRentExemption(8));
-    const gasFee = gasUsed + COMPUTE_BUFFER;
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
 
     const sig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
@@ -1211,7 +1424,7 @@ describe("Universal Gateway - PC20", () => {
       SIGNATURE_FEE_LAMPORTS +
       BigInt(await provider.connection.getMinimumBalanceForRentExemption(8)) +
       BigInt(await getTokenAccountRent(provider.connection));
-    const gasFee = gasUsed + COMPUTE_BUFFER;
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
 
     const sig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
@@ -1301,6 +1514,7 @@ describe("Universal Gateway - PC20", () => {
   it("burns wrapped supply from a user wallet and emits the outbound PC20 event", async () => {
     const burnSubTxId = generate32Bytes();
     const burnAmount = 40_000_000;
+    await mintWrappedPc20ToUser(burnAmount);
     const recipientAta = getAssociatedTokenAddressSync(
       wrappedMint,
       directRecipient.publicKey,
@@ -1351,12 +1565,13 @@ describe("Universal Gateway - PC20", () => {
     expect(Number(burnEvent!.data.amount)).to.equal(burnAmount);
     expect(burnEvent!.data.txType.fundsAndPayload !== undefined).to.equal(true);
     expect(Buffer.from(burnEvent!.data.payload)).to.deep.equal(
-      encodePc20EventPayload(sourceAsset, pushPayload)
+      encodePc20EventPayload(pushPayload)
     );
   });
 
   it("rejects generic PC20 burns with malformed remaining accounts before debiting user", async () => {
     const burnAmount = 1_000_000;
+    await mintWrappedPc20ToUser(burnAmount);
     const recipientAta = getAssociatedTokenAddressSync(
       wrappedMint,
       directRecipient.publicKey,
@@ -1418,6 +1633,7 @@ describe("Universal Gateway - PC20", () => {
     const burnAmount = 1_000_000;
     const inboundFee = 10;
     const nativeTopUp = 1_000_000;
+    await mintWrappedPc20ToUser(burnAmount);
     const recipientAta = getAssociatedTokenAddressSync(
       wrappedMint,
       directRecipient.publicKey,
@@ -1505,7 +1721,8 @@ describe("Universal Gateway - PC20", () => {
     const finalizeGasUsed =
       SIGNATURE_FEE_LAMPORTS +
       BigInt(await provider.connection.getMinimumBalanceForRentExemption(8));
-    const finalizeGasFee = finalizeGasUsed + COMPUTE_BUFFER;
+    const finalizeGasFee =
+      finalizeGasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
     const finalizeSig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
       amount: BigInt(amount),
@@ -1581,15 +1798,21 @@ describe("Universal Gateway - PC20", () => {
 
     const pushPayload = Buffer.from("cea-burn", "utf8");
     const burnUniversalTxId = generateUniversalTxId();
-    const burnIxData = encodePc20BurnIxData({
-      subTxId: burnSubTxId,
-      sourceAsset,
-      amount: BigInt(amount),
-      recipient: Array.from(pushAccount),
-      payload: pushPayload,
-      revertRecipient: revertRecipient.publicKey,
-    });
+    const burnIxData = Buffer.from(
+      gatewayProgram.coder.instruction.encode("sendUniversalTx", {
+        req: {
+          recipient: Array.from(pushAccount),
+          token: wrappedMint,
+          amount: new anchor.BN(amount),
+          payload: pushPayload,
+          revertRecipient: revertRecipient.publicKey,
+          signatureData: Buffer.from(burnSubTxId),
+        },
+        nativeAmount: new anchor.BN(0),
+      })
+    );
     const burnAccounts = [
+      { pubkey: pc20State, isWritable: false },
       { pubkey: wrappedMint, isWritable: true },
       { pubkey: ceaAta, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isWritable: false },
@@ -1669,11 +1892,47 @@ describe("Universal Gateway - PC20", () => {
     const burnEvent = burnEvents.find(
       (event) => event.name === "universalTx"
     );
+    expect(
+      burnEvents.some((event) => event.name === "universalTxFinalized")
+    ).to.equal(false);
     expect(burnEvent!.data.fromCea).to.equal(true);
     expect(Number(burnEvent!.data.amount)).to.equal(amount);
     expect(burnEvent!.data.txType.fundsAndPayload !== undefined).to.equal(true);
     expect(Buffer.from(burnEvent!.data.payload)).to.deep.equal(
-      encodePc20EventPayload(sourceAsset, pushPayload)
+      encodePc20EventPayload(pushPayload)
+    );
+  });
+
+  it("burns wrapped supply from the CEA through the generic inner send_universal_tx route", async () => {
+    const amount = 3_000_000;
+    const burnSubTxId = generate32Bytes();
+    const ceaAta = await mintWrappedPc20ToCea(amount);
+    const ceaBefore = Number(
+      (await getAccount(provider.connection, ceaAta)).amount
+    );
+    const payload = Buffer.from("generic-cea-burn", "utf8");
+
+    const { txSig } = await finalizeRoutedCeaPc20Burn({
+      burnSubTxId,
+      amount,
+      payload,
+    });
+
+    const ceaAfter = Number(
+      (await getAccount(provider.connection, ceaAta)).amount
+    );
+    expect(ceaAfter).to.equal(ceaBefore - amount);
+
+    const events = await decodeEvents(provider, gatewayProgram, txSig);
+    const burnEvent = events.find((event) => event.name === "universalTx");
+    expect(burnEvent, "UniversalTx event missing").to.exist;
+    expect(
+      events.some((event) => event.name === "universalTxFinalized")
+    ).to.equal(false);
+    expect(burnEvent!.data.fromCea).to.equal(true);
+    expect(Number(burnEvent!.data.amount)).to.equal(amount);
+    expect(Buffer.from(burnEvent!.data.payload)).to.deep.equal(
+      encodePc20EventPayload(payload)
     );
   });
 
@@ -1834,6 +2093,7 @@ describe("Universal Gateway - PC20", () => {
     );
     const pushRecipient = generate20Bytes();
 
+    await mintWrappedPc20ToUser(burnAmount);
     await sendPc20Tx({
       subTxId: burnSubTxId,
       amount: burnAmount,
@@ -2022,6 +2282,7 @@ describe("Universal Gateway - PC20", () => {
     );
     const pushRecipient = generate20Bytes();
 
+    await mintWrappedPc20ToUser(burnAmount);
     await sendPc20Tx({
       subTxId: burnSubTxId,
       amount: burnAmount,
@@ -2149,7 +2410,7 @@ describe("Universal Gateway - PC20", () => {
       BigInt(mintRent) +
       BigInt(ataRent) +
       pc20StateRent;
-    const gasFee = gasUsed + COMPUTE_BUFFER;
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
 
     const sig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
@@ -2174,13 +2435,6 @@ describe("Universal Gateway - PC20", () => {
       gatewayProgram.programId
     );
 
-    const recipientAta = getAssociatedTokenAddressSync(
-      exportMint,
-      directRecipient.publicKey,
-      false,
-      TOKEN_PROGRAM_ID,
-      ASSOCIATED_TOKEN_PROGRAM_ID
-    );
     const ceaAta = await getCeaAta(
       exportPushAccount,
       exportMint,
@@ -2229,19 +2483,15 @@ describe("Universal Gateway - PC20", () => {
       .remainingAccounts([
         { pubkey: exportState, isWritable: true, isSigner: false },
         { pubkey: exportMint, isWritable: true, isSigner: false },
-        { pubkey: recipientAta, isWritable: true, isSigner: false },
       ])
       .signers([relayer])
       .rpc();
 
     const mintInfo = await getMint(provider.connection, exportMint);
-    const recipientAccount = await getAccount(
-      provider.connection,
-      recipientAta
-    );
+    const ceaAccount = await getAccount(provider.connection, ceaAta);
     expect(mintInfo.decimals).to.equal(exportDecimals);
     expect(Number(mintInfo.supply)).to.equal(amount);
-    expect(Number(recipientAccount.amount)).to.equal(amount);
+    expect(Number(ceaAccount.amount)).to.equal(amount);
   });
 
   it("creates the wrapped mint successfully even if the mint PDA was prefunded before first export", async () => {
@@ -2267,7 +2517,7 @@ describe("Universal Gateway - PC20", () => {
       BigInt(mintRent) +
       BigInt(ataRent) +
       pc20StateRent;
-    const gasFee = gasUsed + COMPUTE_BUFFER;
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
 
     const sig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
@@ -2306,13 +2556,6 @@ describe("Universal Gateway - PC20", () => {
       [relayer]
     );
 
-    const recipientAta = getAssociatedTokenAddressSync(
-      exportMint,
-      directRecipient.publicKey,
-      false,
-      TOKEN_PROGRAM_ID,
-      ASSOCIATED_TOKEN_PROGRAM_ID
-    );
     const ceaAta = await getCeaAta(
       exportPushAccount,
       exportMint,
@@ -2361,41 +2604,33 @@ describe("Universal Gateway - PC20", () => {
       .remainingAccounts([
         { pubkey: exportState, isWritable: true, isSigner: false },
         { pubkey: exportMint, isWritable: true, isSigner: false },
-        { pubkey: recipientAta, isWritable: true, isSigner: false },
       ])
       .signers([relayer])
       .rpc();
 
     const mintInfo = await getMint(provider.connection, exportMint);
-    const recipientAccount = await getAccount(
-      provider.connection,
-      recipientAta
-    );
+    const ceaAccount = await getAccount(provider.connection, ceaAta);
     expect(mintInfo.decimals).to.equal(exportDecimals);
     expect(Number(mintInfo.supply)).to.equal(amount);
-    expect(Number(recipientAccount.amount)).to.equal(amount);
+    expect(Number(ceaAccount.amount)).to.equal(amount);
   });
 
   it("ignores later metadata drift after the canonical wrapped mint exists", async () => {
     const subTxId = generate32Bytes();
     const universalTxId = generateUniversalTxId();
     const amount = 1_000_000;
-    const recipientAta = getAssociatedTokenAddressSync(
+    const ceaAta = await getCeaAta(
+      pushAccount,
       wrappedMint,
-      directRecipient.publicKey,
-      false,
-      TOKEN_PROGRAM_ID,
-      ASSOCIATED_TOKEN_PROGRAM_ID
+      gatewayProgram.programId
     );
     const gasUsed =
       SIGNATURE_FEE_LAMPORTS +
       BigInt(await provider.connection.getMinimumBalanceForRentExemption(8));
-    const gasFee = gasUsed + COMPUTE_BUFFER;
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
     const mismatchedName = `${name} v2`;
     const mismatchedDecimals = decimals + 1;
-    const before = Number(
-      (await getAccount(provider.connection, recipientAta)).amount
-    );
+    const before = Number((await getAccount(provider.connection, ceaAta)).amount);
     const supplyBefore = Number(
       (await getMint(provider.connection, wrappedMint)).supply
     );
@@ -2459,15 +2694,13 @@ describe("Universal Gateway - PC20", () => {
         storedIxData: null,
         storeRefundRecipient: null,
       })
-      .remainingAccounts(pc20ExportRemaining(recipientAta))
+      .remainingAccounts(pc20ExportRemaining(null))
       .signers([relayer])
       .rpc();
 
-    const recipientAfter = Number(
-      (await getAccount(provider.connection, recipientAta)).amount
-    );
+    const ceaAfter = Number((await getAccount(provider.connection, ceaAta)).amount);
     const mintAfter = await getMint(provider.connection, wrappedMint);
-    expect(recipientAfter).to.equal(before + amount);
+    expect(ceaAfter).to.equal(before + amount);
     expect(Number(mintAfter.supply)).to.equal(supplyBefore + amount);
     expect(mintAfter.decimals).to.equal(decimals);
   });
@@ -2486,7 +2719,7 @@ describe("Universal Gateway - PC20", () => {
     const gasUsed =
       SIGNATURE_FEE_LAMPORTS +
       BigInt(await provider.connection.getMinimumBalanceForRentExemption(8));
-    const gasFee = gasUsed + COMPUTE_BUFFER;
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
 
     const sig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
@@ -2648,7 +2881,7 @@ describe("Universal Gateway - PC20", () => {
       (ceaAtaInfo
         ? BigInt(0)
         : BigInt(await getTokenAccountRent(provider.connection)));
-    const gasFee = gasUsed + COMPUTE_BUFFER;
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
 
     const sig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
@@ -2793,6 +3026,7 @@ describe("Universal Gateway - PC20", () => {
   it("keeps direct PC20 burns event-only without SVM-only sub_tx_id replay state", async () => {
     const burnSubTxId = generate32Bytes();
     const burnAmount = 1_000_000;
+    await mintWrappedPc20ToUser(burnAmount * 2);
     const recipientAta = getAssociatedTokenAddressSync(
       wrappedMint,
       directRecipient.publicKey,
@@ -2831,11 +3065,11 @@ describe("Universal Gateway - PC20", () => {
     const burnEvent = events.find((event) => event.name === "universalTx");
     expect(burnEvent!.data.txType.fundsAndPayload !== undefined).to.equal(true);
     expect(Buffer.from(burnEvent!.data.payload)).to.deep.equal(
-      encodePc20EventPayload(sourceAsset, Buffer.from([]))
+      encodePc20EventPayload(Buffer.from([]))
     );
   });
 
-  it("rejects finalize-routed CEA PC20 burns with a non-canonical mint account", async () => {
+  it("rejects finalize-routed CEA PC20 burns with a mismatched mint account", async () => {
     const mintSubTxId = generate32Bytes();
     const burnSubTxId = generate32Bytes();
     const universalTxId = generateUniversalTxId();
@@ -2868,7 +3102,8 @@ describe("Universal Gateway - PC20", () => {
     const finalizeGasUsed =
       SIGNATURE_FEE_LAMPORTS +
       BigInt(await provider.connection.getMinimumBalanceForRentExemption(8));
-    const finalizeGasFee = finalizeGasUsed + COMPUTE_BUFFER;
+    const finalizeGasFee =
+      finalizeGasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
     const finalizeSig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
       amount: BigInt(amount),
@@ -2939,15 +3174,21 @@ describe("Universal Gateway - PC20", () => {
 
     const pushPayload = Buffer.from("bad-cea-burn", "utf8");
     const burnUniversalTxId = generateUniversalTxId();
-    const burnIxData = encodePc20BurnIxData({
-      subTxId: burnSubTxId,
-      sourceAsset,
-      amount: BigInt(amount),
-      recipient: Array.from(pushAccount),
-      payload: pushPayload,
-      revertRecipient: revertRecipient.publicKey,
-    });
+    const burnIxData = Buffer.from(
+      gatewayProgram.coder.instruction.encode("sendUniversalTx", {
+        req: {
+          recipient: Array.from(pushAccount),
+          token: wrappedMint,
+          amount: new anchor.BN(amount),
+          payload: pushPayload,
+          revertRecipient: revertRecipient.publicKey,
+          signatureData: Buffer.from(burnSubTxId),
+        },
+        nativeAmount: new anchor.BN(0),
+      })
+    );
     const badBurnAccounts = [
+      { pubkey: pc20State, isWritable: false },
       { pubkey: directRecipient.publicKey, isWritable: true },
       { pubkey: ceaAta, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isWritable: false },
@@ -3023,7 +3264,7 @@ describe("Universal Gateway - PC20", () => {
         )
         .signers([relayer])
         .rpc(),
-      "InvalidPc20Mint"
+      "InvalidMint"
     );
 
     const ceaAfter = Number(
@@ -3043,6 +3284,7 @@ describe("Universal Gateway - PC20", () => {
       ASSOCIATED_TOKEN_PROGRAM_ID
     );
     const makeCanonicalAccounts = (): BurnAccountMeta[] => [
+      { pubkey: pc20State, isWritable: false },
       { pubkey: wrappedMint, isWritable: true },
       { pubkey: ceaAta, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isWritable: false },
@@ -3061,7 +3303,7 @@ describe("Universal Gateway - PC20", () => {
         subTxId: wrongCeaAtaSubTxId,
         accounts: (() => {
           const accounts = makeCanonicalAccounts();
-          accounts[1] = { pubkey: directRecipientAta, isWritable: true };
+          accounts[2] = { pubkey: directRecipientAta, isWritable: true };
           return accounts;
         })(),
         expectedError: "InvalidAccount",
@@ -3071,7 +3313,7 @@ describe("Universal Gateway - PC20", () => {
         subTxId: wrongTokenProgramSubTxId,
         accounts: (() => {
           const accounts = makeCanonicalAccounts();
-          accounts[2] = { pubkey: SystemProgram.programId, isWritable: false };
+          accounts[3] = { pubkey: SystemProgram.programId, isWritable: false };
           return accounts;
         })(),
         expectedError: "InvalidAccount",
@@ -3080,7 +3322,7 @@ describe("Universal Gateway - PC20", () => {
         label: "missing token program",
         subTxId: missingTokenProgramSubTxId,
         accounts: (() => {
-          return makeCanonicalAccounts().slice(0, 2);
+          return makeCanonicalAccounts().slice(0, 3);
         })(),
         expectedError: "AccountListLengthMismatch",
       },
@@ -3122,7 +3364,7 @@ describe("Universal Gateway - PC20", () => {
     const gasUsed =
       SIGNATURE_FEE_LAMPORTS +
       BigInt(await provider.connection.getMinimumBalanceForRentExemption(8));
-    const gasFee = gasUsed + COMPUTE_BUFFER;
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE + COMPUTE_BUFFER;
     const finalizeSig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
       amount: BigInt(amount),
@@ -3230,7 +3472,7 @@ describe("Universal Gateway - PC20", () => {
       BigInt(mintRent) +
       BigInt(ataRent) +
       pc20StateRent;
-    const gasFee = gasUsed - BigInt(1);
+    const gasFee = gasUsed + REF_FINALIZE_STORE_UPLOAD_FEE - BigInt(1);
 
     const sig = await signWithCurrentTss({
       instruction: TssInstruction.Pc20Finalize,
@@ -3255,13 +3497,6 @@ describe("Universal Gateway - PC20", () => {
       gatewayProgram.programId
     );
 
-    const recipientAta = getAssociatedTokenAddressSync(
-      badMint,
-      directRecipient.publicKey,
-      false,
-      TOKEN_PROGRAM_ID,
-      ASSOCIATED_TOKEN_PROGRAM_ID
-    );
     const ceaAta = await getCeaAta(
       badPushAccount,
       badMint,
@@ -3311,7 +3546,6 @@ describe("Universal Gateway - PC20", () => {
         .remainingAccounts([
           { pubkey: badState, isWritable: true, isSigner: false },
           { pubkey: badMint, isWritable: true, isSigner: false },
-          { pubkey: recipientAta, isWritable: true, isSigner: false },
         ])
         .signers([relayer])
         .rpc(),

@@ -13,6 +13,7 @@ pub const CEA_SEED: &[u8] = b"push_identity";
 pub const PC20_MINT_SEED: &[u8] = b"pc20_mint";
 pub const PC20_STATE_SEED: &[u8] = b"pc20_state";
 pub const PC20_SELECTOR: [u8; 4] = *b"PC20";
+pub const PRC20_SELECTOR: [u8; 4] = *b"PRC2";
 pub const MAX_INBOUND_FEE_LAMPORTS: u64 = 2_000_000;
 /// Base Solana transaction fee per signature (protocol constant, unchanged since genesis).
 ///
@@ -226,6 +227,7 @@ pub struct GatewayAccountMeta {
 pub struct UniversalTxFinalized {
     pub sub_tx_id: [u8; 32],
     pub universal_tx_id: [u8; 32], // Universal transaction ID from source chain
+    pub wrapper_address: Pubkey,   // PC20 wrapped mint; Pubkey::default() for non-PC20 paths
     pub gas_fee: u64,              // Signed gas budget (lamports) — what TSS authorized
     pub gas_used: u64,             // Actual relayer reimbursement (lamports)
     pub gas_to_refund: u64,        // Unused gas returned to user on Push Chain

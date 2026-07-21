@@ -1,7 +1,7 @@
 use crate::errors::GatewayError;
 use crate::instructions::pc20::{
     handle_pc20_export_from_universal, is_pc20_burn_ix, parse_pc20_export_ix_data,
-    send_pc20_universal_tx_from_finalize_cea, PC20_FINALIZE_INSTRUCTION_ID,
+    route_pc20_burn_from_finalize_cea, PC20_FINALIZE_INSTRUCTION_ID,
 };
 use crate::instructions::tss::validate_message;
 use crate::instructions::withdraw::{internal_withdraw, send_universal_tx_to_uea};
@@ -333,30 +333,32 @@ pub fn finalize_universal_tx_common<'a, 'b, 'c, 'info>(
         store_refund_recipient,
     )?;
 
-    dispatch_finalize_action(
+    let dispatched_pc20_cea_burn = dispatch_finalize_action(
         ctx,
         &request,
         execute_accounts,
         amount,
-        sub_tx_id,
         push_account,
         &ix_data,
         &cea_seeds,
     )?;
 
-    emit!(UniversalTxFinalized {
-        sub_tx_id,
-        universal_tx_id,
-        gas_fee,
-        gas_used,
-        gas_to_refund,
-        ata_created,
-        push_account,
-        target: request.target,
-        token: request.token,
-        amount,
-        payload: ix_data,
-    });
+    if !dispatched_pc20_cea_burn {
+        emit!(UniversalTxFinalized {
+            sub_tx_id,
+            universal_tx_id,
+            wrapper_address: Pubkey::default(),
+            gas_fee,
+            gas_used,
+            gas_to_refund,
+            ata_created,
+            push_account,
+            target: request.target,
+            token: request.token,
+            amount,
+            payload: ix_data,
+        });
+    }
 
     Ok(())
 }
@@ -438,6 +440,7 @@ fn validate_account_presence(ctx: &Context<FinalizeUniversalTx>, is_native: bool
 }
 
 /// Validate the finalize request and return the normalized mode context.
+#[inline(never)]
 fn validate_finalize_request(
     ctx: &Context<FinalizeUniversalTx>,
     instruction_id: u8,
@@ -524,6 +527,7 @@ fn validate_finalize_request(
 //    TSS VALIDATION HELPERS (PHASE 2)
 // ============================================
 
+#[inline(never)]
 fn verify_finalize_tss(
     ctx: &mut Context<FinalizeUniversalTx>,
     request: &FinalizeRequestContext,
@@ -587,6 +591,7 @@ fn verify_finalize_tss(
 /// the CEA ATA had to be created (SPL path only; always false for native SOL).
 /// Gas transfer to caller is intentionally NOT performed here — it is computed and
 /// paid separately after this call, once actual gas_used is known.
+#[inline(never)]
 fn stage_assets_to_cea(
     ctx: &Context<FinalizeUniversalTx>,
     request: &FinalizeRequestContext,
@@ -607,36 +612,35 @@ fn stage_assets_to_cea(
     }
 }
 
+#[inline(never)]
 fn dispatch_finalize_action<'a, 'b, 'c, 'info>(
     ctx: &mut Context<'a, 'b, 'c, 'info, FinalizeUniversalTx<'info>>,
     request: &FinalizeRequestContext,
     execute_accounts: Option<Vec<GatewayAccountMeta>>,
     amount: u64,
-    sub_tx_id: [u8; 32],
     push_account: [u8; 20],
     ix_data: &[u8],
     cea_seeds: &[&[u8]],
-) -> Result<()> {
+) -> Result<bool> {
     if request.is_withdraw {
         internal_withdraw(ctx, amount, request.token, cea_seeds)?;
-        return Ok(());
+        return Ok(false);
     }
 
     if request.target == *ctx.program_id {
         if request.is_pc20_cea_burn {
-            send_pc20_universal_tx_from_finalize_cea(
+            route_pc20_burn_from_finalize_cea(
                 ctx.program_id,
                 &ctx.accounts.cea_authority.to_account_info(),
                 ctx.remaining_accounts,
-                sub_tx_id,
                 push_account,
                 ix_data,
                 cea_seeds,
             )?;
-            return Ok(());
+            return Ok(true);
         }
         send_universal_tx_to_uea(ctx, push_account, ix_data, cea_seeds)?;
-        return Ok(());
+        return Ok(false);
     }
 
     let cea_key = ctx.accounts.cea_authority.key();
@@ -660,7 +664,7 @@ fn dispatch_finalize_action<'a, 'b, 'c, 'info>(
     };
 
     invoke_signed(&cpi_ix, ctx.remaining_accounts, &[cea_seeds])?;
-    Ok(())
+    Ok(false)
 }
 
 fn reconstruct_accounts_from_flags<'info>(

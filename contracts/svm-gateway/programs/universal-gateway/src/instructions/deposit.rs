@@ -38,7 +38,9 @@ pub fn send_universal_tx<'info>(
     }
 
     let tx_type = fetch_tx_type(&req, adjusted_native_amount)?;
-    route_universal_tx(&mut ctx, req, adjusted_native_amount, tx_type)
+    let mut prc20_req = req;
+    prc20_req.payload = prc20_prefixed_payload(&prc20_req.payload);
+    route_universal_tx(&mut ctx, prc20_req, adjusted_native_amount, tx_type)
 }
 
 fn collect_inbound_fee(ctx: &mut Context<SendUniversalTx>, native_amount: u64) -> Result<u64> {
@@ -139,7 +141,7 @@ fn route_pc20_universal_tx<'info>(
     );
 
     let state = Pc20State::try_deserialize(&mut &pc20_state.try_borrow_data()?[..])?;
-    let source_asset =
+    let _source_asset =
         validate_pc20_state_fields(ctx.program_id, pc20_state.key, &state, req.token)?;
     validate_pc20_mint_authority(&pc20_mint, req.token)?;
 
@@ -162,7 +164,7 @@ fn route_pc20_universal_tx<'info>(
         req.amount,
     )?;
 
-    let prefixed_payload = pc20_prefixed_payload(source_asset, &req.payload);
+    let prefixed_payload = pc20_prefixed_payload(&req.payload);
     emit!(UniversalTx {
         sender: ctx.accounts.user.key(),
         recipient: req.recipient,
@@ -188,6 +190,13 @@ fn route_pc20_universal_tx<'info>(
     }
 
     Ok(())
+}
+
+fn prc20_prefixed_payload(payload: &[u8]) -> Vec<u8> {
+    let mut prefixed = Vec::with_capacity(PRC20_SELECTOR.len() + payload.len());
+    prefixed.extend_from_slice(&PRC20_SELECTOR);
+    prefixed.extend_from_slice(payload);
+    prefixed
 }
 
 fn fetch_tx_type(req: &UniversalTxRequest, native_amount: u64) -> Result<TxType> {

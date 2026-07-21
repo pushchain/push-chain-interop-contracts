@@ -8,14 +8,75 @@ see `docs/7-PC20-SOLANA.md`.
 | Name | Value |
 | --- | --- |
 | PC20 selector | ASCII `PC20`, bytes `0x50433230` |
+| PRC20 selector | ASCII `PRC2`, bytes `0x50524332` |
 | PC20 mint PDA | `["pc20_mint", source_asset_20]` |
 | PC20 state PDA | `["pc20_state", pc20_mint]` |
 | CEA PDA | `["push_identity", push_account_20]` |
 | TSS PDA | `["final_tss_pda"]` |
 
-For burn events, `abi_encode_address(source_asset)` means Solidity-compatible
-`abi.encode(address)`: 12 leading zero bytes followed by the 20-byte source
-asset. Do not encode the raw 20-byte source asset directly in event payloads.
+Burn events use the same payload shape as current EVM PC20:
+
+```text
+"PC20" || user_payload
+```
+
+## Cross-Chain SDK Model
+
+SDKs should expose PC20 through the same universal transaction surface as EVM.
+The Solana program keeps the existing generic gateway instructions and selects
+PC20 by signed instruction id, selector bytes, and `remaining_accounts`.
+
+### Push -> Solana export
+
+The Push-side UGPC/Core flow initiates the export. For a Solana destination, the
+validator translates the Push-side PC20 export data into the existing finalize
+surface:
+
+```text
+instruction_id = 5
+ix_data = "PC20" || source_asset_20 || abi.encode(dest_chain_namespace, name, symbol, decimals) || raw_user_data
+remaining_accounts = [pc20_state, pc20_mint, ...payload_accounts]
+```
+
+Submit this through `finalize_universal_tx_with_ix_data_ref` when the ABI
+metadata payload makes the direct transaction exceed Solana's transaction-size
+limit. This is the existing audit-main-fixes large-payload route, not a PC20
+entrypoint. It adds `SIGNATURE_FEE_LAMPORTS` to measured `gas_used`.
+
+Encoding rules:
+
+- `source_asset` is the 20-byte Push/EVM-side source asset identifier.
+- `dest_chain_namespace` is decoded and discarded, matching EVM Vault behavior.
+- `recipient` is the Solana recipient wallet in the typed account list.
+- `push_account` is the 20-byte Push account used to derive the Solana CEA PDA.
+- `raw_user_data` is empty for export-only minting, or a Solana instruction payload
+  executed by the CEA after the wrapped amount is minted to the CEA ATA.
+- `pc20_mint = PDA("pc20_mint", source_asset)` and
+  `pc20_state = PDA("pc20_state", pc20_mint)`.
+
+EVM carries PC20 `sourceAsset` in the existing `Vault.finalizeUniversalTx`
+`token` argument. SVM has no equivalent 20-byte token argument in its existing
+`finalize_universal_tx` interface, so `source_asset_20` is intentionally carried
+inside PC20 `ix_data` rather than adding a new instruction argument.
+
+The TSS signed message is not reused from a normal finalize route. PC20 export
+uses the existing `finalize_universal_tx` function with instruction id `5` and
+the PC20 additional-data layout listed below.
+
+### Solana -> Push burn
+
+For a direct user burn, the SDK calls the existing `send_universal_tx` method.
+It must pass `req.token = pc20_mint`, the caller's PC20 ATA as
+`user_token_account`, `gateway_token_account = null`, and positional
+`remaining_accounts = [pc20_state, pc20_mint]`.
+
+For CEA-held PC20, validators use the existing Push-routed
+`finalize_universal_tx` self-route. The inner payload is the generic
+`send_universal_tx(req, 0)` discriminator plus accounts listed in the CEA burn
+section below.
+
+Off-chain decoders identify PC20 burns the same way as EVM: read the generic
+`UniversalTx` event and check `payload` starts with `PC20`.
 
 ## Direct Burn: `send_universal_tx`
 
@@ -55,7 +116,7 @@ Request requirements:
 The event surface is generic `UniversalTx` with:
 
 ```text
-payload = "PC20" || abi_encode_address(source_asset) || req.payload
+payload = "PC20" || req.payload
 tx_type = FundsAndPayload
 from_cea = false
 signature_data = req.signature_data
@@ -88,25 +149,18 @@ Outer `finalize_universal_tx` requirements:
 | `recipient` / `recipient_ata` | `null` |
 | `ix_data` | encoded inner `send_universal_tx(req, 0)` |
 
-Remaining accounts for the canonical generic inner payload:
+Remaining accounts:
 
 ```text
 [pc20_state, pc20_mint, cea_ata, token_program]
-```
-
-The old inner `send_pc20_universal_tx` payload discriminator is accepted only
-inside the CEA self-route for compatibility. If used there, its remaining
-accounts are:
-
-```text
-[pc20_mint, cea_ata, token_program]
 ```
 
 CEA burn does not pay the inbound fee. It is paid through the outer
 `finalize_universal_tx` gas model. The inner request must set
 `req.recipient == push_account` from the outer finalize call. The canonical event
 is generic `UniversalTx` with
-`payload = "PC20" || abi_encode_address(source_asset) || req.payload`.
+`payload = "PC20" || req.payload`; this PC20 self-route does not emit
+`UniversalTxFinalized`.
 
 ## Push -> Solana Export: `finalize_universal_tx`
 
@@ -120,11 +174,44 @@ Instruction arguments:
 | `amount` | wrapped amount to mint |
 | `push_account` | Push account bytes |
 | `writable_flags` | empty bytes |
-| `ix_data` | `"PC20" || borsh(source_asset, name, symbol, decimals, user_data)` |
+| `ix_data` | `"PC20" || source_asset_20 || abi.encode(dest_chain_namespace, name, symbol, decimals) || raw_user_data` |
 | `gas_fee` / `deadline` / signature fields | same TSS fields as other finalize routes |
 
-Successful export emits the existing generic `UniversalTxFinalized`; there is no
-PC20-specific export event.
+For production validators, prefer `finalize_universal_tx_with_ix_data_ref` for
+PC20 exports unless the fully serialized direct transaction has been measured
+under Solana's size limit. The signed fields are the same; the ref route stores
+the exact `ix_data`, passes its hash to finalize, and reimburses the existing
+5,000 lamport store upload fee through SVM gas accounting.
+
+Successful export emits the generic `UniversalTxFinalized` event, matching the
+latest EVM PC20 export route.
+
+Common EVM/SVM fields:
+
+```text
+sub_tx_id
+universal_tx_id
+push_account
+wrapper_address / wrapperAddress
+recipient (EVM) / target (SVM)
+token
+amount
+payload / data
+```
+
+For PC20 export, EVM sets `wrapperAddress = wrapper`, `token = sourceAsset`,
+and `data = userData`. SVM sets `wrapper_address = wrapped_mint`,
+`token = 12 zero bytes || source_asset`, `target = recipient`, and
+`payload = user_data`.
+
+SVM-only finalize accounting fields:
+
+```text
+gas_fee
+gas_used
+gas_to_refund
+ata_created
+```
 
 Typed accounts (`.accountsPartial({...})`):
 
@@ -145,7 +232,7 @@ Typed accounts (`.accountsPartial({...})`):
 | `token_program` | SPL Token program |
 | `associated_token_program` | Associated Token program |
 | `rent` | Rent sysvar |
-| `cea_ata` | CEA ATA for payload export; `null` for direct export |
+| `cea_ata` | CEA ATA for the wrapped PC20 mint |
 
 Positional remaining accounts (`.remainingAccounts([...])`):
 
@@ -153,8 +240,7 @@ Positional remaining accounts (`.remainingAccounts([...])`):
 | --- | --- | --- |
 | `0` | `pc20_state` | `["pc20_state", pc20_mint]` |
 | `1` | `pc20_mint` | `["pc20_mint", source_asset]` |
-| `2` | `pc20_recipient_ata` | recipient ATA for direct export; omit for payload export |
-| `2+` | payload accounts | only for payload export; must match signed payload account order |
+| `2+` | payload accounts | only when `user_data` is non-empty; must match signed payload account order |
 
 TSS additional data:
 
@@ -171,9 +257,14 @@ sub_tx_id
 [|| len(user_data) || user_data]
 ```
 
-The relayer gas budget must cover signature fee, `ExecutedSubTx` rent, and any
-missing mint/state/ATA lamports that the relayer actually pays. Prefunded
+The relayer gas budget must cover signature fee, `ExecutedSubTx` rent, any
+missing mint/state/CEA ATA lamports that the relayer actually pays, and the
+5,000 lamport store upload fee when using finalize-by-reference. Prefunded
 accounts reduce reimbursed rent.
+
+TSS/validator note: PC20 export uses the existing `finalize_universal_tx`
+function, but it is signed with instruction id `5`. Normal finalize routes keep
+their existing instruction ids and signed-data layouts.
 
 ## Burn Revert: `revert_universal_tx`
 
@@ -268,6 +359,16 @@ For normal SOL/SPL/PRC20 callers:
 
 This is a fail-closed client behavior change: clients that previously appended
 unused extra accounts to generic calls must stop doing that.
+
+PC20 burn detection in `send_universal_tx` is based on the two PC20 remaining
+accounts, not on `instruction_id` because direct burns do not pass an
+instruction id. SDKs/relayers must include `[pc20_state, pc20_mint]` for PC20
+burns. Do not configure canonical PC20 mints as normal SPL outbound assets
+unless routing them through the legacy SPL path is explicitly intended.
+
+Push Core note: current PC20 Core tracks destination wrappers as `bytes32`.
+Register Solana wrapped mints as raw 32-byte mint PDA values; do not coerce them
+into 20-byte EVM addresses.
 
 ## Devnet Dummy Program
 
