@@ -204,12 +204,15 @@ contract VaultPC20ExportTest is Test {
     }
 
     function test_PathA_EmitsEvent() public {
-        vm.expectEmit(true, true, true, true);
-        emit PC20ExportFinalized(
-            _tx(1), _tx(999), pushAccount,
-            recipient, sourceA, 1000e18, ""
-        );
         _finalize(_tx(1), sourceA, 1000e18, "");
+        address wrapper = factory.getWrapper(sourceA);
+
+        vm.expectEmit(true, true, true, true);
+        emit UniversalTxFinalized(
+            _tx(2), _tx(999), wrapper, pushAccount,
+            recipient, sourceA, 500e18, ""
+        );
+        _finalize(_tx(2), sourceA, 500e18, "");
     }
 
     // =========================================================
@@ -242,12 +245,15 @@ contract VaultPC20ExportTest is Test {
 
     function test_PathB_EmitsEventWithUserData() public {
         bytes memory ud = _emptyMulticall();
+        _finalize(_tx(1), sourceA, 100e18, "");
+        address wrapper = factory.getWrapper(sourceA);
+
         vm.expectEmit(true, true, true, true);
-        emit PC20ExportFinalized(
-            _tx(1), _tx(999), pushAccount,
-            recipient, sourceA, 100e18, ud
+        emit UniversalTxFinalized(
+            _tx(2), _tx(999), wrapper, pushAccount,
+            recipient, sourceA, 200e18, ud
         );
-        _finalize(_tx(1), sourceA, 100e18, ud);
+        _finalize(_tx(2), sourceA, 200e18, ud);
     }
 
     // =========================================================
@@ -510,14 +516,15 @@ contract VaultPC20ExportTest is Test {
     //  Event declarations
     // =========================================================
 
-    event PC20ExportFinalized(
+    event UniversalTxFinalized(
         bytes32 indexed subTxId,
         bytes32 indexed universalTxId,
-        address indexed pushAccount,
+        address indexed wrapperAddress,
+        address pushAccount,
         address recipient,
-        address sourceAsset,
+        address token,
         uint256 amount,
-        bytes userData
+        bytes data
     );
 
     event PC20FactoryUpdated(

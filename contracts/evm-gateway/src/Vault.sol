@@ -180,7 +180,7 @@ contract Vault is
 
         _finalizeUniversalTxPRC20(subTxId, universalTxId, pushAccount, recipient, token, amount, data, cea);
 
-        emit UniversalTxFinalized(subTxId, universalTxId, address(0), pushAccount, recipient, token, amount, data);
+        _emitUniversalTxFinalized(subTxId, universalTxId, address(0), pushAccount, recipient, token, amount, data);
     }
 
     /// @inheritdoc IVault
@@ -293,6 +293,8 @@ contract Vault is
             pc20Factory.deployWrapper(sourceAsset, name, symbol, decimals);
         }
 
+        address wrapper = pc20Factory.getWrapper(sourceAsset);
+
         (address cea, bool isDeployed) = CEAFactory.getCEAForPushAccount(pushAccount);
         if (!isDeployed) {
             cea = CEAFactory.deployCEA(pushAccount);
@@ -303,12 +305,25 @@ contract Vault is
             ICEA(cea).executeUniversalTx(subTxId, universalTxId, pushAccount, recipient, userData);
         }
 
-        emit PC20ExportFinalized(subTxId, universalTxId, pushAccount, recipient, sourceAsset, amount, userData);
+        _emitUniversalTxFinalized(subTxId, universalTxId, wrapper, pushAccount, recipient, sourceAsset, amount, userData);
     }
 
     // ==============================
     //    Vault_3: INTERNAL HELPERS
     // ==============================
+
+    function _emitUniversalTxFinalized(
+        bytes32 subTxId,
+        bytes32 universalTxId,
+        address wrapperAddress,
+        address pushAccount,
+        address recipient,
+        address token,
+        uint256 amount,
+        bytes memory data
+    ) private {
+        emit UniversalTxFinalized(subTxId, universalTxId, wrapperAddress, pushAccount, recipient, token, amount, data);
+    }
 
     /// @dev Validates common revert/rescue parameters.
     function _validateRevertParams(uint256 amount, address revertRecipient) private pure {
