@@ -117,6 +117,8 @@ contract VaultPC20ExportTest is Test {
         return abi.encode(calls);
     }
 
+    string constant DEST_CHAIN = "eip155:1";
+
     function _buildPC20Data(
         string memory name,
         string memory symbol,
@@ -124,7 +126,9 @@ contract VaultPC20ExportTest is Test {
         bytes memory userData
     ) internal pure returns (bytes memory) {
         return abi.encodePacked(
-            PC_20_SEL, abi.encode(name, symbol, decimals, userData)
+            PC_20_SEL,
+            abi.encode(DEST_CHAIN, name, symbol, decimals),
+            userData
         );
     }
 

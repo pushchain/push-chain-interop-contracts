@@ -62,7 +62,7 @@ contract SendPC20UniversalTxTest is BaseTest {
         // Deploy a wrapper via Vault's unified finalizeUniversalTx (PC20 path)
         // Tokens are minted to CEA; transfer to users afterwards
         bytes memory pc20Data1 =
-            abi.encodePacked(bytes4(0x50433230), abi.encode("Push Token", "pTKN", uint8(18), bytes("")));
+            abi.encodePacked(bytes4(0x50433230), abi.encode("eip155:1", "Push Token", "pTKN", uint8(18)));
         vm.prank(tss);
         vaultContract.finalizeUniversalTx(
             bytes32(uint256(9999)),
@@ -75,7 +75,7 @@ contract SendPC20UniversalTxTest is BaseTest {
         );
 
         bytes memory pc20Data2 =
-            abi.encodePacked(bytes4(0x50433230), abi.encode("Push Token", "pTKN", uint8(18), bytes("")));
+            abi.encodePacked(bytes4(0x50433230), abi.encode("eip155:1", "Push Token", "pTKN", uint8(18)));
         vm.prank(tss);
         vaultContract.finalizeUniversalTx(
             bytes32(uint256(9998)),

@@ -267,7 +267,9 @@ contract Vault is
 
     /// @dev PC20 export finalization. Called internally when data starts with PC_20_SELECTOR.
     ///      `token` carries the Push Chain sourceAsset address used as the wrapper key.
-    ///      `data` layout: [PC_20_SELECTOR (4 B)][abi.encode(name, symbol, decimals, userData)]
+    ///      `data` layout: [PC_20_SELECTOR (4 B)][abi.encode(destChainNamespace, name, symbol, decimals)][raw userData]
+    ///      destChainNamespace is discarded (Vault already lives on that chain).
+    ///      userData is the raw tail bytes after the ABI-encoded tuple (may be empty).
     function _finalizePC20Export(
         bytes32 subTxId,
         bytes32 universalTxId,
@@ -286,8 +288,15 @@ contract Vault is
         if (amount == 0) revert Errors.ZeroAmount();
         if (recipient == address(0)) revert Errors.ZeroAddress();
 
-        (string memory name, string memory symbol, uint8 decimals, bytes memory userData) =
-            abi.decode(data[4:], (string, string, uint8, bytes));
+        (string memory destChain, string memory name, string memory symbol, uint8 decimals) =
+            abi.decode(data[4:], (string, string, string, uint8));
+
+        bytes memory userData;
+        uint256 tupleLen = abi.encode(destChain, name, symbol, decimals).length;
+        uint256 userDataStart = 4 + tupleLen;
+        if (data.length > userDataStart) {
+            userData = data[userDataStart:];
+        }
 
         if (pc20Factory.getWrapper(sourceAsset) == address(0)) {
             pc20Factory.deployWrapper(sourceAsset, name, symbol, decimals);
