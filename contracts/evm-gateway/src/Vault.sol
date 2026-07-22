@@ -181,7 +181,7 @@ contract Vault is
 
         _finalizeUniversalTxPRC20(subTxId, universalTxId, pushAccount, recipient, token, amount, data, cea);
 
-        emit UniversalTxFinalized(subTxId, universalTxId, pushAccount, recipient, token, amount, data);
+        _emitUniversalTxFinalized(subTxId, universalTxId, address(0), pushAccount, recipient, token, amount, data);
     }
 
     /// @inheritdoc IVault
@@ -212,7 +212,12 @@ contract Vault is
             gateway.revertUniversalTx{ value: amount }(
                 subTxId, universalTxId, token, amount, revertInstruction
             );
-            emit UniversalTxReverted(
+        } else if (_isPC20Wrapper(token)) {
+            if (msg.value != 0) revert Errors.InvalidAmount();
+            pc20Factory.revertMint(
+                token, address(gateway), amount
+            );
+            gateway.revertUniversalTx(
                 subTxId, universalTxId, token, amount, revertInstruction
             );
         } else {
@@ -258,7 +263,12 @@ contract Vault is
             gateway.rescueFunds{ value: amount }(
                 subTxId, universalTxId, token, amount, revertInstruction
             );
-            emit FundsRescued(
+        } else if (_isPC20Wrapper(token)) {
+            if (msg.value != 0) revert Errors.InvalidAmount();
+            pc20Factory.revertMint(
+                token, address(gateway), amount
+            );
+            gateway.rescueFunds(
                 subTxId, universalTxId, token, amount, revertInstruction
             );
         } else {
@@ -282,7 +292,9 @@ contract Vault is
 
     /// @dev PC20 export finalization. Called internally when data starts with PC_20_SELECTOR.
     ///      `token` carries the Push Chain sourceAsset address used as the wrapper key.
-    ///      `data` layout: [PC_20_SELECTOR (4 B)][abi.encode(name, symbol, decimals, userData)]
+    ///      `data` layout: [PC_20_SELECTOR (4 B)][abi.encode(destChainNamespace, name, symbol, decimals)][raw userData]
+    ///      destChainNamespace is discarded (Vault already lives on that chain).
+    ///      userData is the raw tail bytes after the ABI-encoded tuple (may be empty).
     function _finalizePC20Export(
         bytes32 subTxId,
         bytes32 universalTxId,
@@ -301,35 +313,62 @@ contract Vault is
         if (amount == 0) revert Errors.ZeroAmount();
         if (recipient == address(0)) revert Errors.ZeroAddress();
 
-        (string memory name, string memory symbol, uint8 decimals, bytes memory userData) =
-            abi.decode(data[4:], (string, string, uint8, bytes));
+        (string memory destChain, string memory name, string memory symbol, uint8 decimals) =
+            abi.decode(data[4:], (string, string, string, uint8));
+
+        bytes memory userData;
+        uint256 tupleLen = abi.encode(destChain, name, symbol, decimals).length;
+        uint256 userDataStart = 4 + tupleLen;
+        if (data.length > userDataStart) {
+            userData = data[userDataStart:];
+        }
 
         if (pc20Factory.getWrapper(sourceAsset) == address(0)) {
             pc20Factory.deployWrapper(sourceAsset, name, symbol, decimals);
         }
 
-        if (userData.length == 0) {
-            pc20Factory.mintFor(sourceAsset, recipient, amount);
-        } else {
-            (address cea, bool isDeployed) = CEAFactory.getCEAForPushAccount(pushAccount);
-            if (!isDeployed) {
-                cea = CEAFactory.deployCEA(pushAccount);
-            }
-            pc20Factory.mintFor(sourceAsset, cea, amount);
+        address wrapper = pc20Factory.getWrapper(sourceAsset);
+
+        (address cea, bool isDeployed) = CEAFactory.getCEAForPushAccount(pushAccount);
+        if (!isDeployed) {
+            cea = CEAFactory.deployCEA(pushAccount);
+        }
+        pc20Factory.mintFor(sourceAsset, cea, amount);
+
+        if (userData.length > 0) {
             ICEA(cea).executeUniversalTx(subTxId, universalTxId, pushAccount, recipient, userData);
         }
 
-        emit UniversalTxFinalized(subTxId, universalTxId, pushAccount, recipient, sourceAsset, amount, userData);
+        _emitUniversalTxFinalized(subTxId, universalTxId, wrapper, pushAccount, recipient, sourceAsset, amount, userData);
     }
 
     // ==============================
     //    Vault_3: INTERNAL HELPERS
     // ==============================
 
+    function _emitUniversalTxFinalized(
+        bytes32 subTxId,
+        bytes32 universalTxId,
+        address wrapperAddress,
+        address pushAccount,
+        address recipient,
+        address token,
+        uint256 amount,
+        bytes memory data
+    ) private {
+        emit UniversalTxFinalized(subTxId, universalTxId, wrapperAddress, pushAccount, recipient, token, amount, data);
+    }
+
     /// @dev Validates common revert/rescue parameters.
     function _validateRevertParams(uint256 amount, address revertRecipient) private pure {
         if (amount == 0) revert Errors.InvalidAmount();
         if (revertRecipient == address(0)) revert Errors.InvalidRecipient();
+    }
+
+    /// @dev Returns true when token is a PC20 wrapper deployed by the factory.
+    function _isPC20Wrapper(address token) private view returns (bool) {
+        if (address(pc20Factory) == address(0)) return false;
+        return pc20Factory.isPC20Wrapper(token);
     }
 
     /// @dev                   Validates push account and token/value invariants.

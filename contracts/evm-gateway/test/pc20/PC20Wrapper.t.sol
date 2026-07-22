@@ -22,13 +22,9 @@ contract PC20WrapperTest is Test {
         newFactory = makeAddr("newFactory");
         thirdFactory = makeAddr("thirdFactory");
 
-        wrapper = new PC20Wrapper(
-            "Push Token",
-            "pTKN",
-            18,
-            sourceAsset,
-            factoryAddr
-        );
+        wrapper = new PC20Wrapper(sourceAsset, factoryAddr);
+        vm.prank(factoryAddr);
+        wrapper.initialize("Push Token", "pTKN", 18);
     }
 
     // =========================================================
@@ -42,16 +38,16 @@ contract PC20WrapperTest is Test {
     }
 
     function test_Constructor_Decimals6() public {
-        PC20Wrapper w = new PC20Wrapper(
-            "Push USDC", "pUSDC", 6, sourceAsset, factoryAddr
-        );
+        PC20Wrapper w = new PC20Wrapper(sourceAsset, factoryAddr);
+        vm.prank(factoryAddr);
+        w.initialize("Push USDC", "pUSDC", 6);
         assertEq(w.decimals(), 6);
     }
 
     function test_Constructor_Decimals0() public {
-        PC20Wrapper w = new PC20Wrapper(
-            "Push NFT", "pNFT", 0, sourceAsset, factoryAddr
-        );
+        PC20Wrapper w = new PC20Wrapper(sourceAsset, factoryAddr);
+        vm.prank(factoryAddr);
+        w.initialize("Push NFT", "pNFT", 0);
         assertEq(w.decimals(), 0);
     }
 
@@ -73,12 +69,48 @@ contract PC20WrapperTest is Test {
 
     function test_Constructor_RevertsOnZeroSourceAsset() public {
         vm.expectRevert(PC20Wrapper.ZeroAddress.selector);
-        new PC20Wrapper("X", "X", 18, address(0), factoryAddr);
+        new PC20Wrapper(address(0), factoryAddr);
     }
 
     function test_Constructor_RevertsOnZeroFactory() public {
         vm.expectRevert(PC20Wrapper.ZeroAddress.selector);
-        new PC20Wrapper("X", "X", 18, sourceAsset, address(0));
+        new PC20Wrapper(sourceAsset, address(0));
+    }
+
+    // =========================================================
+    //  11.1b initialize
+    // =========================================================
+
+    function test_Initialize_SetsMetadata() public {
+        PC20Wrapper w = new PC20Wrapper(sourceAsset, factoryAddr);
+        vm.prank(factoryAddr);
+        w.initialize("Test Token", "TST", 8);
+        assertEq(w.name(), "Test Token");
+        assertEq(w.symbol(), "TST");
+        assertEq(w.decimals(), 8);
+    }
+
+    function test_Initialize_DefaultsBeforeInit() public {
+        PC20Wrapper w = new PC20Wrapper(sourceAsset, factoryAddr);
+        assertEq(w.name(), "");
+        assertEq(w.symbol(), "");
+        assertEq(w.decimals(), 0);
+    }
+
+    function test_Initialize_RevertsIfCalledTwice() public {
+        PC20Wrapper w = new PC20Wrapper(sourceAsset, factoryAddr);
+        vm.startPrank(factoryAddr);
+        w.initialize("A", "B", 18);
+        vm.expectRevert(PC20Wrapper.AlreadyInitialized.selector);
+        w.initialize("C", "D", 6);
+        vm.stopPrank();
+    }
+
+    function test_Initialize_RevertsFromNonFactory() public {
+        PC20Wrapper w = new PC20Wrapper(sourceAsset, factoryAddr);
+        vm.prank(userA);
+        vm.expectRevert(PC20Wrapper.OnlyFactory.selector);
+        w.initialize("A", "B", 18);
     }
 
     // =========================================================
@@ -472,9 +504,9 @@ contract PC20WrapperTest is Test {
 
     function test_MultipleWrappersIndependent() public {
         address source2 = makeAddr("sourceAsset2");
-        PC20Wrapper wrapper2 = new PC20Wrapper(
-            "Push USDC", "pUSDC", 6, source2, factoryAddr
-        );
+        PC20Wrapper wrapper2 = new PC20Wrapper(source2, factoryAddr);
+        vm.prank(factoryAddr);
+        wrapper2.initialize("Push USDC", "pUSDC", 6);
 
         vm.startPrank(factoryAddr);
         wrapper.mint(userA, 1000e18);

@@ -227,7 +227,7 @@ contract ProtocolFeeTest is BaseTest {
 
         vm.expectEmit(true, true, false, true);
         emit UniversalTx(
-            user1, address(0), address(0), GAS_AMOUNT, bytes(""), address(0x456), TX_TYPE.GAS, bytes(""), false
+            user1, address(0), address(0), GAS_AMOUNT, _pp(bytes("")), address(0x456), TX_TYPE.GAS, bytes(""), false
         );
 
         UniversalTxRequest memory req = _buildReq(address(0), 0, bytes(""));
@@ -273,7 +273,7 @@ contract ProtocolFeeTest is BaseTest {
 
         vm.expectEmit(true, true, false, true);
         emit UniversalTx(
-            user1, address(0), address(0), 0, payload, address(0x456), TX_TYPE.GAS_AND_PAYLOAD, bytes(""), false
+            user1, address(0), address(0), 0, _pp(payload), address(0x456), TX_TYPE.GAS_AND_PAYLOAD, bytes(""), false
         );
 
         UniversalTxRequest memory req = _buildReq(address(0), 0, payload);
@@ -294,7 +294,7 @@ contract ProtocolFeeTest is BaseTest {
 
         vm.expectEmit(true, true, false, true);
         emit UniversalTx(
-            user1, address(0), address(0), FUNDS_AMOUNT, bytes(""), address(0x456), TX_TYPE.FUNDS, bytes(""), false
+            user1, address(0), address(0), FUNDS_AMOUNT, _pp(bytes("")), address(0x456), TX_TYPE.FUNDS, bytes(""), false
         );
 
         UniversalTxRequest memory req = _buildReq(address(0), FUNDS_AMOUNT, bytes(""));

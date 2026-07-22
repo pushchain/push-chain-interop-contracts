@@ -121,10 +121,9 @@ contract PC20Factory is
 
         bytes32 salt = keccak256(abi.encode(sourceAsset));
         wrapper = address(
-            new PC20Wrapper{salt: salt}(
-                name, symbol, decimals, sourceAsset, address(this)
-            )
+            new PC20Wrapper{salt: salt}(sourceAsset, address(this))
         );
+        PC20Wrapper(wrapper).initialize(name, symbol, decimals);
 
         sourceToWrapper[sourceAsset] = wrapper;
         wrapperToSource[wrapper] = sourceAsset;
@@ -191,15 +190,12 @@ contract PC20Factory is
 
     /// @inheritdoc IPC20Factory
     function computeWrapperAddress(
-        address sourceAsset,
-        string calldata name,
-        string calldata symbol,
-        uint8 decimals
+        address sourceAsset
     ) external view returns (address predicted) {
         bytes32 salt = keccak256(abi.encode(sourceAsset));
         bytes memory creationCode = abi.encodePacked(
             type(PC20Wrapper).creationCode,
-            abi.encode(name, symbol, decimals, sourceAsset, address(this))
+            abi.encode(sourceAsset, address(this))
         );
         predicted = address(
             uint160(

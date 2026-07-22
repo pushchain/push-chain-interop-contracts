@@ -138,7 +138,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: nativeValue,
-            payload: bytes(""),
+            payload: _pp(bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -160,7 +160,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: nativeValue,
-            payload: bytes(""),
+            payload: _pp(bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -182,7 +182,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: amount,
-            payload: bytes(""),
+            payload: _pp(bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -204,7 +204,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: nativeValue,
-            payload: nonEmptyPayload(),
+            payload: _pp(nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -239,7 +239,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: nativeValue,
-            payload: nonEmptyPayload(),
+            payload: _pp(nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -261,7 +261,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: nativeValue,
-            payload: nonEmptyPayload(),
+            payload: _pp(nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -283,7 +283,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0), // Always address(0) for UEA credit
             token: address(0),
             amount: amount,
-            payload: nonEmptyPayload(),
+            payload: _pp(nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -306,7 +306,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: 0,
-            payload: nonEmptyPayload(),
+            payload: _pp(nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -334,7 +334,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: amount,
-            payload: bytes(""),
+            payload: _pp(bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -369,7 +369,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: erc20A,
             amount: amount,
-            payload: bytes(""),
+            payload: _pp(bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -416,7 +416,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: req.recipient,
             token: erc20A,
             amount: amount,
-            payload: nonEmptyPayload(),
+            payload: _pp(nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -473,7 +473,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0), // Always address(0) for UEA credit
             token: address(0),
             amount: amount,
-            payload: nonEmptyPayload(),
+            payload: _pp(nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false

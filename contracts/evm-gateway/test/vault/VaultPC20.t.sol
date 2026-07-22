@@ -17,11 +17,12 @@ contract VaultPC20Test is Test {
 
     address public admin;
     address public pauser;
-    address public tss;
     address public gatewayPC;
     address public user1;
     address public user2;
     address public attacker;
+
+    address constant UE_MODULE = 0x14191Ea54B4c176fCf86f51b0FAc7CB1E71Df7d7;
 
     event TokensLocked(
         address indexed token,
@@ -57,7 +58,6 @@ contract VaultPC20Test is Test {
     function setUp() public {
         admin = makeAddr("admin");
         pauser = makeAddr("pauser");
-        tss = makeAddr("tss");
         gatewayPC = makeAddr("gatewayPC");
         user1 = makeAddr("user1");
         user2 = makeAddr("user2");
@@ -71,7 +71,6 @@ contract VaultPC20Test is Test {
             VaultPC20.initialize.selector,
             admin,
             pauser,
-            tss,
             gatewayPC
         );
         ERC1967Proxy proxy = new ERC1967Proxy(
@@ -90,7 +89,6 @@ contract VaultPC20Test is Test {
         assertTrue(vault.hasRole(vault.ROLE_MANAGER_ROLE(), admin));
         assertTrue(vault.hasRole(vault.OPERATOR_ROLE(), admin));
         assertTrue(vault.hasRole(vault.PAUSER_ROLE(), pauser));
-        assertTrue(vault.hasRole(vault.TSS_ROLE(), tss));
         assertTrue(vault.hasRole(vault.GATEWAY_ROLE(), gatewayPC));
     }
 
@@ -106,7 +104,7 @@ contract VaultPC20Test is Test {
         VaultPC20 impl = new VaultPC20();
         bytes memory data = abi.encodeWithSelector(
             VaultPC20.initialize.selector,
-            address(0), pauser, tss, gatewayPC
+            address(0), pauser, gatewayPC
         );
         vm.expectRevert(Errors.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), data);
@@ -116,17 +114,7 @@ contract VaultPC20Test is Test {
         VaultPC20 impl = new VaultPC20();
         bytes memory data = abi.encodeWithSelector(
             VaultPC20.initialize.selector,
-            admin, address(0), tss, gatewayPC
-        );
-        vm.expectRevert(Errors.ZeroAddress.selector);
-        new ERC1967Proxy(address(impl), data);
-    }
-
-    function test_Initialize_RevertsOnZeroTss() public {
-        VaultPC20 impl = new VaultPC20();
-        bytes memory data = abi.encodeWithSelector(
-            VaultPC20.initialize.selector,
-            admin, pauser, address(0), gatewayPC
+            admin, address(0), gatewayPC
         );
         vm.expectRevert(Errors.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), data);
@@ -136,7 +124,7 @@ contract VaultPC20Test is Test {
         VaultPC20 impl = new VaultPC20();
         bytes memory data = abi.encodeWithSelector(
             VaultPC20.initialize.selector,
-            admin, pauser, tss, address(0)
+            admin, pauser, address(0)
         );
         vm.expectRevert(Errors.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), data);
@@ -144,27 +132,26 @@ contract VaultPC20Test is Test {
 
     function test_Initialize_CannotInitializeTwice() public {
         vm.expectRevert();
-        vault.initialize(admin, pauser, tss, gatewayPC);
+        vault.initialize(admin, pauser, gatewayPC);
     }
 
     function test_Initialize_RoleAdminHierarchy() public view {
         bytes32 roleMgr = vault.ROLE_MANAGER_ROLE();
-        assertEq(vault.getRoleAdmin(vault.TSS_ROLE()), roleMgr);
         assertEq(vault.getRoleAdmin(vault.OPERATOR_ROLE()), roleMgr);
         assertEq(vault.getRoleAdmin(vault.PAUSER_ROLE()), roleMgr);
         assertEq(vault.getRoleAdmin(vault.GATEWAY_ROLE()), roleMgr);
     }
 
-    function test_Initialize_PauserCannotUnlock() public {
+    function test_Initialize_NonUEModuleCannotUnlock() public {
         _lockTokens(address(tokenA), 100e18);
 
         vm.prank(pauser);
-        vm.expectRevert();
+        vm.expectRevert(Errors.CallerIsNotUEModule.selector);
         vault.unlock(keccak256("tx1"), address(tokenA), 50e18, user1);
     }
 
-    function test_Initialize_TssCannotRecordLock() public {
-        vm.prank(tss);
+    function test_Initialize_NonGatewayCannotRecordLock() public {
+        vm.prank(attacker);
         vm.expectRevert();
         vault.recordLock(address(tokenA), 100e18);
     }
@@ -267,7 +254,7 @@ contract VaultPC20Test is Test {
 
         bytes32 subTxId = keccak256("unlock1");
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectEmit(true, true, true, true);
         emit TokensUnlocked(subTxId, address(tokenA), 400e18, user1);
         vault.unlock(subTxId, address(tokenA), 400e18, user1);
@@ -279,7 +266,7 @@ contract VaultPC20Test is Test {
     function test_Unlock_Partial() public {
         _lockTokens(address(tokenA), 1000e18);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(
             keccak256("u1"),
             address(tokenA),
@@ -294,10 +281,10 @@ contract VaultPC20Test is Test {
     function test_Unlock_MultipleForSameToken() public {
         _lockTokens(address(tokenA), 1000e18);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(keccak256("u1"), address(tokenA), 300e18, user1);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(keccak256("u2"), address(tokenA), 200e18, user2);
 
         assertEq(vault.totalLocked(address(tokenA)), 500e18);
@@ -309,10 +296,10 @@ contract VaultPC20Test is Test {
         _lockTokens(address(tokenA), 500e18);
         _lockTokens(address(tokenB), 800e18);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(keccak256("uA"), address(tokenA), 200e18, user1);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(keccak256("uB"), address(tokenB), 300e18, user1);
 
         assertEq(vault.totalLocked(address(tokenA)), 300e18);
@@ -325,7 +312,7 @@ contract VaultPC20Test is Test {
 
         assertFalse(vault.isExecuted(subTxId));
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(subTxId, address(tokenA), 50e18, user1);
 
         assertTrue(vault.isExecuted(subTxId));
@@ -339,30 +326,30 @@ contract VaultPC20Test is Test {
         _lockTokens(address(tokenA), 200e18);
         bytes32 subTxId = keccak256("replay");
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(subTxId, address(tokenA), 100e18, user1);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert(Errors.PayloadExecuted.selector);
         vault.unlock(subTxId, address(tokenA), 100e18, user1);
     }
 
-    function test_Unlock_RevertsNonTss() public {
+    function test_Unlock_RevertsNonUEModule() public {
         _lockTokens(address(tokenA), 100e18);
 
         vm.prank(attacker);
-        vm.expectRevert();
+        vm.expectRevert(Errors.CallerIsNotUEModule.selector);
         vault.unlock(keccak256("x"), address(tokenA), 50e18, user1);
     }
 
     function test_Unlock_RevertsZeroToken() public {
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert(Errors.ZeroAddress.selector);
         vault.unlock(keccak256("x"), address(0), 50e18, user1);
     }
 
     function test_Unlock_RevertsZeroAmount() public {
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert(Errors.ZeroAmount.selector);
         vault.unlock(
             keccak256("x"),
@@ -375,7 +362,7 @@ contract VaultPC20Test is Test {
     function test_Unlock_RevertsZeroRecipient() public {
         _lockTokens(address(tokenA), 100e18);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert(Errors.InvalidRecipient.selector);
         vault.unlock(
             keccak256("x"),
@@ -388,7 +375,7 @@ contract VaultPC20Test is Test {
     function test_Unlock_RevertsInsufficientLocked() public {
         _lockTokens(address(tokenA), 100e18);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert(Errors.InsufficientBalance.selector);
         vault.unlock(
             keccak256("x"),
@@ -404,7 +391,7 @@ contract VaultPC20Test is Test {
         vm.prank(pauser);
         vault.pause();
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert();
         vault.unlock(keccak256("x"), address(tokenA), 50e18, user1);
     }
@@ -418,7 +405,7 @@ contract VaultPC20Test is Test {
 
         bytes32 subTxId = keccak256("revert1");
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectEmit(true, true, true, true);
         emit ExportReverted(
             subTxId,
@@ -436,7 +423,7 @@ contract VaultPC20Test is Test {
         _lockTokens(address(tokenA), 100e18);
         bytes32 subTxId = keccak256("rv1");
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.revertExport(subTxId, address(tokenA), 50e18, user1);
 
         assertTrue(vault.isExecuted(subTxId));
@@ -450,30 +437,30 @@ contract VaultPC20Test is Test {
         _lockTokens(address(tokenA), 200e18);
         bytes32 subTxId = keccak256("rvReplay");
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.revertExport(
             subTxId, address(tokenA), 100e18, user1
         );
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert(Errors.PayloadExecuted.selector);
         vault.revertExport(
             subTxId, address(tokenA), 100e18, user1
         );
     }
 
-    function test_RevertExport_RevertsNonTss() public {
+    function test_RevertExport_RevertsNonUEModule() public {
         _lockTokens(address(tokenA), 100e18);
 
         vm.prank(attacker);
-        vm.expectRevert();
+        vm.expectRevert(Errors.CallerIsNotUEModule.selector);
         vault.revertExport(
             keccak256("x"), address(tokenA), 50e18, user1
         );
     }
 
     function test_RevertExport_RevertsZeroToken() public {
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert(Errors.ZeroAddress.selector);
         vault.revertExport(
             keccak256("x"), address(0), 50e18, user1
@@ -481,7 +468,7 @@ contract VaultPC20Test is Test {
     }
 
     function test_RevertExport_RevertsZeroAmount() public {
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert(Errors.ZeroAmount.selector);
         vault.revertExport(
             keccak256("x"), address(tokenA), 0, user1
@@ -491,7 +478,7 @@ contract VaultPC20Test is Test {
     function test_RevertExport_RevertsZeroRecipient() public {
         _lockTokens(address(tokenA), 100e18);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert(Errors.InvalidRecipient.selector);
         vault.revertExport(
             keccak256("x"),
@@ -504,7 +491,7 @@ contract VaultPC20Test is Test {
     function test_RevertExport_RevertsInsufficientLocked() public {
         _lockTokens(address(tokenA), 100e18);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert(Errors.InsufficientBalance.selector);
         vault.revertExport(
             keccak256("x"),
@@ -520,7 +507,7 @@ contract VaultPC20Test is Test {
         vm.prank(pauser);
         vault.pause();
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert();
         vault.revertExport(
             keccak256("x"), address(tokenA), 50e18, user1
@@ -535,10 +522,10 @@ contract VaultPC20Test is Test {
         _lockTokens(address(tokenA), 200e18);
         bytes32 subTxId = keccak256("cross1");
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(subTxId, address(tokenA), 100e18, user1);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert(Errors.PayloadExecuted.selector);
         vault.revertExport(
             subTxId, address(tokenA), 100e18, user1
@@ -549,12 +536,12 @@ contract VaultPC20Test is Test {
         _lockTokens(address(tokenA), 200e18);
         bytes32 subTxId = keccak256("cross2");
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.revertExport(
             subTxId, address(tokenA), 100e18, user1
         );
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert(Errors.PayloadExecuted.selector);
         vault.unlock(subTxId, address(tokenA), 100e18, user2);
     }
@@ -562,7 +549,7 @@ contract VaultPC20Test is Test {
     function test_IsExecuted_DifferentIdsAreIndependent() public {
         _lockTokens(address(tokenA), 300e18);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(
             keccak256("idA"),
             address(tokenA),
@@ -570,7 +557,7 @@ contract VaultPC20Test is Test {
             user1
         );
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(
             keccak256("idB"),
             address(tokenA),
@@ -725,9 +712,11 @@ contract VaultPC20Test is Test {
         vm.prank(pauser);
         vault.pause();
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert();
-        vault.unlock(keccak256("x"), address(tokenA), 50e18, user1);
+        vault.unlock(
+            keccak256("x"), address(tokenA), 50e18, user1
+        );
     }
 
     function test_Pause_BlocksRevertExport() public {
@@ -736,7 +725,7 @@ contract VaultPC20Test is Test {
         vm.prank(pauser);
         vault.pause();
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vm.expectRevert();
         vault.revertExport(
             keccak256("x"), address(tokenA), 50e18, user1
@@ -763,8 +752,10 @@ contract VaultPC20Test is Test {
         vm.prank(admin);
         vault.unpause();
 
-        vm.prank(tss);
-        vault.unlock(keccak256("x"), address(tokenA), 50e18, user1);
+        vm.prank(UE_MODULE);
+        vault.unlock(
+            keccak256("x"), address(tokenA), 50e18, user1
+        );
 
         assertEq(tokenA.balanceOf(user1), 50e18);
     }
@@ -835,7 +826,7 @@ contract VaultPC20Test is Test {
     function test_Accounting_MixedOpsTracksCorrectly() public {
         _lockTokens(address(tokenA), 1000e18);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(
             keccak256("u1"), address(tokenA), 300e18, user1
         );
@@ -844,7 +835,7 @@ contract VaultPC20Test is Test {
         vm.prank(gatewayPC);
         vault.recordLock(address(tokenA), 500e18);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.revertExport(
             keccak256("rv1"), address(tokenA), 200e18, user2
         );
@@ -857,7 +848,7 @@ contract VaultPC20Test is Test {
         _lockTokens(address(tokenA), 500e18);
         _lockTokens(address(tokenB), 300e18);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(
             keccak256("uA"), address(tokenA), 200e18, user1
         );
@@ -871,12 +862,12 @@ contract VaultPC20Test is Test {
     {
         _lockTokens(address(tokenA), 1000e18);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(
             keccak256("u1"), address(tokenA), 400e18, user1
         );
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.revertExport(
             keccak256("rv1"), address(tokenA), 100e18, user2
         );
@@ -911,7 +902,7 @@ contract VaultPC20Test is Test {
     {
         _lockTokens(address(tokenA), 500e18);
 
-        vm.prank(tss);
+        vm.prank(UE_MODULE);
         vault.unlock(
             keccak256("full"),
             address(tokenA),

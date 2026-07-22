@@ -54,10 +54,7 @@ interface IPC20Factory {
     ) external view returns (bool);
 
     function computeWrapperAddress(
-        address sourceAsset,
-        string calldata name,
-        string calldata symbol,
-        uint8 decimals
+        address sourceAsset
     ) external view returns (address predicted);
 
     function updateVault(address newVault) external;

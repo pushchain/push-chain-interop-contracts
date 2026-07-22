@@ -26,18 +26,20 @@ interface IVault {
     /// @param newCEAFactory     New CEAFactory address
     event CEAFactoryUpdated(address indexed oldCEAFactory, address indexed newCEAFactory);
 
-    /// @notice                  Universal tx finalized event
+    /// @notice                  Universal tx finalized event (emitted for both PRC20 and PC20 paths)
     /// @param subTxId           Gateway transaction identifier
     /// @param universalTxId     Universal transaction identifier
+    /// @param wrapperAddress    PC20 wrapper address on this chain; address(0) for PRC20 path
     /// @param pushAccount       Push Chain account (UEA) this transaction is attributed to
     /// @param recipient         Destination address on the external chain; address(0) means park in CEA
-    /// @param token             Token address being sent
-    /// @param amount            Amount of token being sent
-    /// @param data              Calldata to be executed on target contract on external chain
+    /// @param token             PRC20: token address (address(0) for native). PC20: sourceAsset address.
+    /// @param amount            PRC20: amount unlocked. PC20: amount minted.
+    /// @param data              PRC20: Multicall calldata. PC20: userData (empty if none).
     event UniversalTxFinalized(
         bytes32 indexed subTxId,
         bytes32 indexed universalTxId,
-        address indexed pushAccount,
+        address indexed wrapperAddress,
+        address pushAccount,
         address recipient,
         address token,
         uint256 amount,

@@ -27,15 +27,6 @@ struct UniversalTxRequest {
     bytes   signatureData;           // signature data for further verification
 }
 
-/// @notice PC20 burn request for inbound path (burn wrapper on ext chain, unlock on Push Chain).
-struct PC20BurnRequest {
-    address wrapper;          // PC20Wrapper address on this chain
-    uint256 amount;           // Amount of wrapped tokens to burn
-    bytes   recipient;        // Push Chain recipient (bytes for cross-VM compat)
-    bytes   payload;          // Optional execution payload on Push Chain
-    address revertRecipient;  // Receives re-minted wrapper tokens if Push-side unlock fails
-}
-
 /// @notice Universal transaction request for ERC20 token as gas.
 struct UniversalTokenTxRequest {
     address recipient;               // address(0) => credit to UEA on Push

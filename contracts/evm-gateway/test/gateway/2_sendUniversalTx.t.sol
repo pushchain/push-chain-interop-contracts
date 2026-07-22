@@ -155,7 +155,7 @@ contract GatewaySendUniversalTxTest is BaseTest {
             recipient: address(0), // Gas always credits UEA (address(0))
             token: address(0), // Native token
             amount: gasAmount,
-            payload: bytes(""),
+            payload: _pp(bytes("")),
             revertRecipient: req.revertRecipient,
             txType: TX_TYPE.GAS,
             signatureData: bytes(""),
@@ -197,7 +197,7 @@ contract GatewaySendUniversalTxTest is BaseTest {
             recipient: address(0), // Gas always credits UEA (address(0))
             token: address(0), // Native token
             amount: gasAmount,
-            payload: encodedPayload,
+            payload: _pp(encodedPayload),
             revertRecipient: req.revertRecipient,
             txType: TX_TYPE.GAS_AND_PAYLOAD,
             signatureData: bytes(""),
@@ -240,7 +240,7 @@ contract GatewaySendUniversalTxTest is BaseTest {
             recipient: address(0), // FUNDS credits caller's UEA
             token: address(0), // Native token
             amount: fundsAmount,
-            payload: bytes(""),
+            payload: _pp(bytes("")),
             revertRecipient: req.revertRecipient,
             txType: TX_TYPE.FUNDS,
             signatureData: bytes(""),
