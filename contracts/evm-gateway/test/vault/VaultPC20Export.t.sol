@@ -8,6 +8,7 @@ import {TransparentUpgradeableProxy} from
     "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 import {Vault} from "../../src/Vault.sol";
+import {IVault} from "../../src/interfaces/IVault.sol";
 import {PC20Factory} from "../../src/PC20Factory.sol";
 import {PC20Wrapper} from "../../src/PC20Wrapper.sol";
 import {UniversalGateway} from "../../src/UniversalGateway.sol";

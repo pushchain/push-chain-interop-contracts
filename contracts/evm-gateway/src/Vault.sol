@@ -44,6 +44,7 @@ contract Vault is
     ICEAFactory public CEAFactory;
     IPC20Factory public pc20Factory;
     mapping(bytes32 => bool) public isPC20Executed;
+    mapping(bytes32 => bool) public isPC20RevertExecuted;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -193,7 +194,20 @@ contract Vault is
     ) external payable nonReentrant whenNotPaused onlyRole(TSS_ROLE) {
         _validateRevertParams(amount, revertInstruction.revertRecipient);
 
-        if (token == address(0)) {
+        if (_isPC20Wrapper(token)) {
+            if (msg.value != 0) revert Errors.InvalidAmount();
+            if (isPC20RevertExecuted[subTxId]) {
+                revert Errors.PayloadExecuted();
+            }
+            isPC20RevertExecuted[subTxId] = true;
+            pc20Factory.revertMint(
+                token, revertInstruction.revertRecipient, amount
+            );
+            emit UniversalTxReverted(
+                subTxId, universalTxId, token, amount,
+                revertInstruction
+            );
+        } else if (token == address(0)) {
             if (msg.value != amount) revert Errors.InvalidAmount();
             gateway.revertUniversalTx{ value: amount }(
                 subTxId, universalTxId, token, amount, revertInstruction
@@ -215,11 +229,10 @@ contract Vault is
             gateway.revertUniversalTx(
                 subTxId, universalTxId, token, amount, revertInstruction
             );
+            emit UniversalTxReverted(
+                subTxId, universalTxId, token, amount, revertInstruction
+            );
         }
-
-        emit UniversalTxReverted(
-            subTxId, universalTxId, token, amount, revertInstruction
-        );
     }
 
     /// @inheritdoc IVault
@@ -232,7 +245,20 @@ contract Vault is
     ) external payable nonReentrant whenNotPaused onlyRole(TSS_ROLE) {
         _validateRevertParams(amount, revertInstruction.revertRecipient);
 
-        if (token == address(0)) {
+        if (_isPC20Wrapper(token)) {
+            if (msg.value != 0) revert Errors.InvalidAmount();
+            if (isPC20RevertExecuted[subTxId]) {
+                revert Errors.PayloadExecuted();
+            }
+            isPC20RevertExecuted[subTxId] = true;
+            pc20Factory.revertMint(
+                token, revertInstruction.revertRecipient, amount
+            );
+            emit FundsRescued(
+                subTxId, universalTxId, token, amount,
+                revertInstruction
+            );
+        } else if (token == address(0)) {
             if (msg.value != amount) revert Errors.InvalidAmount();
             gateway.rescueFunds{ value: amount }(
                 subTxId, universalTxId, token, amount, revertInstruction
@@ -254,11 +280,10 @@ contract Vault is
             gateway.rescueFunds(
                 subTxId, universalTxId, token, amount, revertInstruction
             );
+            emit FundsRescued(
+                subTxId, universalTxId, token, amount, revertInstruction
+            );
         }
-
-        emit FundsRescued(
-            subTxId, universalTxId, token, amount, revertInstruction
-        );
     }
 
     // ==============================
@@ -358,6 +383,12 @@ contract Vault is
         } else {
             if (msg.value != 0) revert Errors.InvalidAmount();
         }
+    }
+
+    /// @dev Returns true when token is a PC20 wrapper deployed by the factory.
+    function _isPC20Wrapper(address token) private view returns (bool) {
+        if (address(pc20Factory) == address(0)) return false;
+        return pc20Factory.isPC20Wrapper(token);
     }
 
     /// @dev Returns true when data starts with PC_20_SELECTOR (PC20 export path).
