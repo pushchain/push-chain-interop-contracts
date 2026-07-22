@@ -2265,6 +2265,7 @@ describe("Universal Gateway - PC20", () => {
     expect(rescueEvent).to.not.equal(undefined);
     expect(Number(rescueEvent!.data.amount)).to.equal(rescueAmount);
     expect(rescueEvent!.data.token.toBase58()).to.equal(wrappedMint.toBase58());
+    expect(BigInt(rescueEvent!.data.gasUsed.toString())).to.equal(gasUsed);
   });
 
   it("allows a second TSS-signed revert for the same burn with a fresh revert sub_tx_id", async () => {

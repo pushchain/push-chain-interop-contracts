@@ -4,7 +4,7 @@ use crate::instructions::pc20::{
 use crate::instructions::tss::validate_message;
 use crate::utils::{
     encode_u64_be, ensure_associated_token_account, parse_token_account, pda_mint_to,
-    pda_spl_transfer, pda_system_transfer, reimburse_relayer_from_fee_vault,
+    pda_spl_transfer, pda_system_transfer, transfer_gas_fee_to_caller,
 };
 use crate::{errors::*, state::*};
 use anchor_lang::prelude::*;
@@ -21,7 +21,12 @@ const SPL_TOKEN_ACCOUNT_LEN: usize = 165;
 //
 // SVM deviations from EVM (intentional):
 //   1. Auth: ECDSA TSS signature verification instead of onlyRole(TSS_ROLE).
-//   2. gas_fee: relayer reimbursement from fee_vault (EVM rescue has no equivalent).
+//   2. Gas: EVM rescue has no relayer reimbursement (TSS EOA pays its own gas). On SVM a
+//      permissionless validator submits the tx, so it is reimbursed the MEASURED gas cost from
+//      the bridge `vault` — NOT fee_vault. Rescue is Push-initiated: Push burns the destination
+//      gas token via UniversalCore.swapAndBurnGas, so the matching backing must be released from
+//      `vault` to stay 1:1. The signed gas_fee is a cap; Push refunds (gas_fee - gas_used).
+//      (Contrast: revert is SVM-inbound-fee funded and reimburses from fee_vault.)
 //
 // TSS message format (instruction_id = 4 for both modes):
 //   SOL: amount || [sub_tx_id, universal_tx_id, recipient, gas_fee]
@@ -261,6 +266,22 @@ pub fn rescue_funds<'info>(
         0
     };
 
+    // Rescue is Push-initiated: UniversalGatewayPC.rescueFundsOnSourceChain burns the destination
+    // gas token on Push via swapAndBurnGas, so the matching gas backing must be released from the
+    // bridge `vault` — NOT fee_vault, which holds SVM-originated inbound fees. Reimbursing from
+    // fee_vault would double-charge (Push already burned) and strand vault backing. Reimburse only
+    // the measured cost; the signed gas_fee is a cap and Push refunds (gas_fee - gas_used).
+    //
+    // Measured cost is uniform across token types: signature fee + executed-marker rent, plus
+    // recipient-ATA rent only when the PC20 remint path had to create the ATA
+    // (pc20_recipient_ata_lamports_paid is 0 for native and legacy SPL, whose recipient token
+    // account must already exist).
+    let gas_used = SIGNATURE_FEE_LAMPORTS
+        .checked_add(Rent::get()?.minimum_balance(ExecutedSubTx::LEN))
+        .and_then(|n| n.checked_add(pc20_recipient_ata_lamports_paid))
+        .ok_or(error!(GatewayError::InvalidAmount))?;
+    require!(gas_fee >= gas_used, GatewayError::InsufficientGasBudget);
+
     emit!(crate::state::FundsRescued {
         sub_tx_id,
         universal_tx_id,
@@ -270,31 +291,19 @@ pub fn rescue_funds<'info>(
             .as_ref()
             .map_or(Pubkey::default(), |m| m.key()),
         amount,
+        gas_used,
         revert_instruction: RevertInstructions {
             revert_recipient: recipient,
             revert_msg: vec![],
         },
     });
 
-    let reimbursement = if is_pc20 {
-        let measured_gas_used = SIGNATURE_FEE_LAMPORTS
-            .checked_add(Rent::get()?.minimum_balance(ExecutedSubTx::LEN))
-            .and_then(|n| n.checked_add(pc20_recipient_ata_lamports_paid))
-            .ok_or(error!(GatewayError::InvalidAmount))?;
-        require!(
-            gas_fee >= measured_gas_used,
-            GatewayError::InsufficientGasBudget
-        );
-        measured_gas_used
-    } else {
-        gas_fee
-    };
-
-    reimburse_relayer_from_fee_vault(
-        &ctx.accounts.fee_vault,
+    transfer_gas_fee_to_caller(
+        &ctx.accounts.vault.to_account_info(),
         &ctx.accounts.caller.to_account_info(),
-        sub_tx_id,
-        reimbursement,
+        &ctx.accounts.system_program.to_account_info(),
+        gas_used,
+        ctx.accounts.config.vault_bump,
     )?;
 
     Ok(())

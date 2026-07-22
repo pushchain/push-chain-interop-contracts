@@ -13,12 +13,14 @@ Returns deposited funds to the user when a Push Chain transaction fails.
 1. Verify TSS signature
 2. Create `ExecutedSubTx` PDA (replay protection)
 3. `Vault → Recipient` (amount)
-4. Emit `RevertUniversalTx`
-5. `FeeVault → Caller` (gas_fee, UV reimbursement)
+4. Emit `RevertUniversalTx` (now includes `gas_used` = the amount actually reimbursed)
+5. `FeeVault → Caller` (UV reimbursement)
 
-The funds transfer comes from the bridge `Vault`. The UV reimbursement comes from `FeeVault` — not from `Vault`. This preserves the 1:1 bridge invariant. If `FeeVault` has insufficient balance, the reimbursement fails with `InsufficientFeePool`.
+The funds transfer comes from the bridge `Vault`. The UV reimbursement comes from `FeeVault` — not from `Vault`. Revert is SVM-inbound-fee funded (the user paid the inbound fee into `FeeVault` when depositing), so this is the correct source and is **unchanged** from audit-main-fixes: the reimbursed amount is the full signed `gas_fee` for the legacy native/SPL/PRC20 paths, and the measured cost for the PC20 remint path. If `FeeVault` has insufficient balance, the reimbursement fails with `InsufficientFeePool`.
 
-Event is emitted after the funds transfer but before the UV reimbursement.
+> Contrast with `rescue_funds`, which is Push-initiated (gas burned on Push via `swapAndBurnGas`) and therefore reimburses from `Vault`, not `FeeVault`. See `5-RESCUE.md`.
+
+The event now carries `gas_used` (the reimbursed amount) — an IDL-breaking layout addition; regenerate types. It is emitted after the funds transfer but before the UV reimbursement.
 
 ---
 

@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Token, TokenAccount};
 
-declare_id!("4mpHkerNsaJPp35fyT5bkoXxuEBczGq6HUKTtrzFcptx");
+declare_id!("6Hqn3x7nih8SsReHTfDeZzkQDTBXUhp43NZhbQeL3iG1");
 
 #[program]
 pub mod test_counter {

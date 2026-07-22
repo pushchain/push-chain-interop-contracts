@@ -43,6 +43,8 @@ const KNOWN_PROGRAMS: Record<string, string> = {
   main:  "CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS",
   dummy: "DJoFYDpgbTfxbXBv1QYhYGc9FK4J5FUKpYXAfSkHryXp",
 };
+const DEFAULT_DEVNET_COUNTER_PROGRAM_ID =
+  "4mpHkerNsaJPp35fyT5bkoXxuEBczGq6HUKTtrzFcptx";
 
 const programArg = process.argv[2]; // "main", "dummy", or undefined
 if (programArg && !(programArg in KNOWN_PROGRAMS)) {
@@ -409,6 +411,8 @@ async function requireEvent(signature: string, name: string) {
 const counterIdl = JSON.parse(
   fs.readFileSync("./target/idl/test_counter.json", "utf8")
 );
+counterIdl.address =
+  process.env.COUNTER_PROGRAM_ID ?? DEFAULT_DEVNET_COUNTER_PROGRAM_ID;
 const counterProgram: any = new Program(counterIdl as any, adminProvider);
 
 // Helper: Get dynamic gas amount based on current SOL price
@@ -4957,7 +4961,8 @@ async function run() {
   // 17.6 TSS rescue remints PC20 through generic rescueFunds.
   const pc20RescueSubTxId = anchor.web3.Keypair.generate().publicKey.toBytes();
   const pc20RescueUniversalTxId = generateUniversalTxId();
-  const pc20RescueGasFee = SIGNATURE_FEE_LAMPORTS + pc20ExecutedRent + COMPUTE_BUFFER;
+  const pc20RescueGasUsed = SIGNATURE_FEE_LAMPORTS + pc20ExecutedRent;
+  const pc20RescueGasFee = pc20RescueGasUsed + COMPUTE_BUFFER;
   const pc20RescueSig = await signTssMessage({
     instruction: TssInstruction.Rescue,
     amount: pc20RescueAmount,
@@ -5031,6 +5036,11 @@ async function run() {
     pc20RescueEvent.data.amount.toString(),
     pc20RescueAmount.toString(),
     "PC20 rescue event amount mismatch"
+  );
+  assert.equal(
+    pc20RescueEvent.data.gasUsed.toString(),
+    pc20RescueGasUsed.toString(),
+    "PC20 rescue event gasUsed mismatch"
   );
   console.log(`  ✅ 17.6 PC20 rescue reminted: ${pc20RescueTx}`);
 

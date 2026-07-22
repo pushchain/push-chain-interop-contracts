@@ -6,7 +6,7 @@
  *
  * SVM deviations from EVM (intentional):
  *   - Auth: ECDSA TSS signature verification (not onlyRole)
- *   - gas_fee: relayer reimbursement from fee_vault
+ *   - gas_fee: relayer reimbursement from vault because rescue is Push-paid
  *   - recipient derived from accounts, not a separate param
  *
  * Replay protection: ExecutedSubTx PDA (EVM parity: isExecuted[subTxId])
@@ -41,7 +41,16 @@ import {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DEFAULT_GAS_FEE = BigInt(5_000); // lamports
+const DEFAULT_GAS_FEE = BigInt(5_000); // lamports (used by rejection tests that fail before the gas-cap check)
+
+// Measured rescue reimbursement = signature fee + ExecutedSubTx PDA rent. rescue_funds now
+// reimburses this measured amount from the bridge `vault` (Push-paid gas via swapAndBurnGas),
+// with the signed gas_fee acting as a cap. Native/SPL rescue create no recipient ATA, so there
+// is no ATA-rent term (that only applies to the PC20 remint path).
+const SIGNATURE_FEE_LAMPORTS = 5_000;
+let executedSubTxRent = 0;
+let rescueGasUsed = 0;
+let rescueGasFee = BigInt(0); // signed cap = measured + buffer
 
 // ─── Suite ────────────────────────────────────────────────────────────────────
 
@@ -52,6 +61,9 @@ describe("Universal Gateway - Rescue Tests", () => {
 
     before(async () => {
         await ensureTestSetup();
+        executedSubTxRent = await provider.connection.getMinimumBalanceForRentExemption(8);
+        rescueGasUsed = SIGNATURE_FEE_LAMPORTS + executedSubTxRent;
+        rescueGasFee = BigInt(rescueGasUsed + 100_000);
     });
 
     let admin: Keypair;
@@ -292,11 +304,13 @@ describe("Universal Gateway - Rescue Tests", () => {
             const executedSubTxPda = getExecutedTxPda(subTxId);
             const universalTxId = generateUniversalTxId();
 
+            // Signed gas_fee must equal the RPC gas_fee arg (rescueGasFee), and must be >= the
+            // measured gas_used so the vault reimbursement cap check passes.
             const additional = buildRescueAdditionalData(
                 subTxId,
                 universalTxId,
                 recipient.publicKey,
-                DEFAULT_GAS_FEE
+                rescueGasFee
             );
             const sig = await signTssMessageWithChainId({
                 instruction: TssInstruction.Rescue,
@@ -305,6 +319,7 @@ describe("Universal Gateway - Rescue Tests", () => {
             });
 
             const vaultBefore = await provider.connection.getBalance(vaultPda);
+            const feeVaultBefore = await provider.connection.getBalance(feeVaultPda);
             const recipientBefore = await provider.connection.getBalance(recipient.publicKey);
             const callerBefore = await provider.connection.getBalance(relayer.publicKey);
 
@@ -313,7 +328,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     Array.from(subTxId),
                     Array.from(universalTxId),
                     new anchor.BN(rescueAmount),
-                    new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(Number(rescueGasFee)),
                     new anchor.BN(4102444800),
                     sig.signature,
                     sig.recoveryId,
@@ -337,15 +352,20 @@ describe("Universal Gateway - Rescue Tests", () => {
                 .rpc();
 
             const vaultAfter = await provider.connection.getBalance(vaultPda);
+            const feeVaultAfter = await provider.connection.getBalance(feeVaultPda);
             const recipientAfter = await provider.connection.getBalance(recipient.publicKey);
             const callerAfter = await provider.connection.getBalance(relayer.publicKey);
 
-            expect(vaultAfter).to.equal(vaultBefore - rescueAmount);
+            // Rescue reimbursement now comes from `vault` (Push-paid gas), measured cost only.
+            // Vault loses the rescued principal AND the measured gas_used.
+            expect(vaultAfter).to.equal(vaultBefore - rescueAmount - rescueGasUsed);
+            // fee_vault is no longer touched by rescue.
+            expect(feeVaultAfter).to.equal(feeVaultBefore);
             expect(recipientAfter).to.equal(recipientBefore + rescueAmount);
-            // Relayer receives gas_fee from fee_vault, pays ExecutedSubTx PDA rent
-            const actualRentForExecutedTx = 890880;
+            // Relayer is made whole: pays base tx fee + ExecutedSubTx rent, reimbursed exactly
+            // rescueGasUsed from vault -> net ~= 0.
             const callerDelta = callerAfter - callerBefore;
-            expect(callerDelta).to.be.closeTo(Number(DEFAULT_GAS_FEE) - actualRentForExecutedTx, 100_000);
+            expect(callerDelta).to.be.closeTo(0, 50_000);
         });
 
         it("rejects a tampered TSS signature", async () => {
@@ -512,10 +532,11 @@ describe("Universal Gateway - Rescue Tests", () => {
                 .rpc();
         });
 
-        it("rejects when fee_vault cannot cover gas_fee", async () => {
+        it("rejects when signed gas_fee is below the measured gas_used (InsufficientGasBudget)", async () => {
             const rescueAmount = 1;
-            // 100 SOL is guaranteed to exceed any fee_vault balance in test environments.
-            const tooLargeGasFee = BigInt(100 * anchor.web3.LAMPORTS_PER_SOL);
+            // rescue_funds reimburses the measured cost (signature fee + ExecutedSubTx rent) from
+            // `vault`, capped by the signed gas_fee. A gas_fee below the measured cost must reject.
+            const tooSmallGasFee = BigInt(SIGNATURE_FEE_LAMPORTS); // 5_000 < rescueGasUsed
             const subTxId = generateTxId();
             const executedSubTxPda = getExecutedTxPda(subTxId);
             const universalTxId = generateUniversalTxId();
@@ -524,7 +545,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                 subTxId,
                 universalTxId,
                 recipient.publicKey,
-                tooLargeGasFee
+                tooSmallGasFee
             );
             const sig = await signTssMessageWithChainId({
                 instruction: TssInstruction.Rescue,
@@ -538,7 +559,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(subTxId),
                         Array.from(universalTxId),
                         new anchor.BN(rescueAmount),
-                        new anchor.BN(Number(tooLargeGasFee)),
+                        new anchor.BN(Number(tooSmallGasFee)),
                         new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
@@ -560,7 +581,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     })
                     .signers([relayer])
                     .rpc(),
-                "InsufficientFeePool"
+                "InsufficientGasBudget"
             );
         });
 
@@ -570,11 +591,12 @@ describe("Universal Gateway - Rescue Tests", () => {
             const executedSubTxPda = getExecutedTxPda(subTxId);
             const universalTxId = generateUniversalTxId();
 
+            // First rescue must succeed, so gas_fee must cover the measured gas_used.
             const additional = buildRescueAdditionalData(
                 subTxId,
                 universalTxId,
                 recipient.publicKey,
-                DEFAULT_GAS_FEE
+                rescueGasFee
             );
             const sig = await signTssMessageWithChainId({
                 instruction: TssInstruction.Rescue,
@@ -588,7 +610,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     Array.from(subTxId),
                     Array.from(universalTxId),
                     new anchor.BN(rescueAmount),
-                    new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(Number(rescueGasFee)),
                     new anchor.BN(4102444800),
                     sig.signature,
                     sig.recoveryId,
@@ -618,7 +640,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(subTxId),
                         Array.from(universalTxId),
                         new anchor.BN(rescueAmount),
-                        new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(Number(rescueGasFee)),
                         new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,
@@ -668,7 +690,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                 subTxId,
                 universalTxId,
                 recipient.publicKey,
-                DEFAULT_GAS_FEE,
+                rescueGasFee,
                 mockUSDT.mint.publicKey
             );
             const sig = await signTssMessageWithChainId({
@@ -679,6 +701,8 @@ describe("Universal Gateway - Rescue Tests", () => {
 
             const vaultUsdtBefore = await mockUSDT.getBalance(vaultUsdtAccount);
             const recipientUsdtBefore = await mockUSDT.getBalance(recipientUsdtAccount);
+            const vaultSolBefore = await provider.connection.getBalance(vaultPda);
+            const feeVaultBefore = await provider.connection.getBalance(feeVaultPda);
             const callerBefore = await provider.connection.getBalance(relayer.publicKey);
 
             await program.methods
@@ -686,7 +710,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     Array.from(subTxId),
                     Array.from(universalTxId),
                     new anchor.BN(Number(rescueRaw)),
-                    new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(Number(rescueGasFee)),
                     new anchor.BN(4102444800),
                     sig.signature,
                     sig.recoveryId,
@@ -711,14 +735,19 @@ describe("Universal Gateway - Rescue Tests", () => {
 
             const vaultUsdtAfter = await mockUSDT.getBalance(vaultUsdtAccount);
             const recipientUsdtAfter = await mockUSDT.getBalance(recipientUsdtAccount);
+            const vaultSolAfter = await provider.connection.getBalance(vaultPda);
+            const feeVaultAfter = await provider.connection.getBalance(feeVaultPda);
             const callerAfter = await provider.connection.getBalance(relayer.publicKey);
 
             expect(vaultUsdtAfter).to.equal(vaultUsdtBefore - rescueTokens);
             expect(recipientUsdtAfter).to.equal(recipientUsdtBefore + rescueTokens);
-            // Relayer receives gas_fee from fee_vault, pays ExecutedSubTx PDA rent
-            const actualRentForExecutedTx = 890880;
+            // SPL rescue moves tokens from the vault ATA, but the measured gas reimbursement is
+            // SOL pulled from the SOL `vault` PDA (Push-paid gas), not fee_vault.
+            expect(vaultSolAfter).to.equal(vaultSolBefore - rescueGasUsed);
+            expect(feeVaultAfter).to.equal(feeVaultBefore);
+            // Relayer made whole: pays base tx fee + ExecutedSubTx rent, reimbursed rescueGasUsed.
             const callerDelta = callerAfter - callerBefore;
-            expect(callerDelta).to.be.closeTo(Number(DEFAULT_GAS_FEE) - actualRentForExecutedTx, 100_000);
+            expect(callerDelta).to.be.closeTo(0, 50_000);
         });
 
         it("rejects a tampered TSS signature", async () => {
@@ -893,11 +922,12 @@ describe("Universal Gateway - Rescue Tests", () => {
             const executedSubTxPda = getExecutedTxPda(subTxId);
             const universalTxId = generateUniversalTxId();
 
+            // First rescue must succeed, so gas_fee must cover the measured gas_used.
             const additional = buildRescueAdditionalData(
                 subTxId,
                 universalTxId,
                 recipient.publicKey,
-                DEFAULT_GAS_FEE,
+                rescueGasFee,
                 mockUSDT.mint.publicKey
             );
             const sig = await signTssMessageWithChainId({
@@ -912,7 +942,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     Array.from(subTxId),
                     Array.from(universalTxId),
                     new anchor.BN(Number(rescueRaw)),
-                    new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                    new anchor.BN(Number(rescueGasFee)),
                     new anchor.BN(4102444800),
                     sig.signature,
                     sig.recoveryId,
@@ -942,7 +972,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                         Array.from(subTxId),
                         Array.from(universalTxId),
                         new anchor.BN(Number(rescueRaw)),
-                        new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                        new anchor.BN(Number(rescueGasFee)),
                         new anchor.BN(4102444800),
                         sig.signature,
                         sig.recoveryId,

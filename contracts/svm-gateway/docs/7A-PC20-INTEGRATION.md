@@ -318,6 +318,17 @@ normal SPL rescue, it does not transfer from a pre-funded token vault. TSS and
 off-chain orchestration must only sign PC20 rescue after the matching Push-side
 ledger action is confirmed.
 
+**Reimbursement source (applies to ALL rescue token types, not just PC20):**
+`rescue_funds` reimburses the UV from the bridge `vault`, **not** `fee_vault`.
+Rescue is Push-initiated — `UniversalGatewayPC.rescueFundsOnSourceChain` burns the
+destination gas token on Push via `UniversalCore.swapAndBurnGas`, so the matching
+backing must be released from `vault` to stay 1:1. The UV is reimbursed the
+**measured** `gas_used` (signature fee + `ExecutedSubTx` rent, plus recipient-ATA
+rent only when the PC20 remint path creates it); the signed `gas_fee` is a **cap**.
+The `FundsRescued` event now carries `gas_used`, and the Push side refunds
+`gas_fee - gas_used`. The `fee_vault` account stays in the IDL account list for
+compatibility but is unused by rescue. (Revert is unchanged: `fee_vault`-funded.)
+
 Normal accounts match PC20 revert except there is no `revert_instruction`
 argument. The remaining accounts are the same:
 
@@ -325,7 +336,8 @@ argument. The remaining accounts are the same:
 [pc20_state, pc20_mint, recipient_ata, associated_token_program, rent]
 ```
 
-TSS additional data:
+TSS additional data (unchanged — `gas_fee` is still the only signed gas field, now
+interpreted as a cap):
 
 ```text
 sub_tx_id
@@ -338,7 +350,8 @@ sub_tx_id
 ```
 
 The `FundsRescued` event keeps `revert_msg = []` because the current SVM
-`rescue_funds` interface has no `RevertInstructions` argument.
+`rescue_funds` interface has no `RevertInstructions` argument. It adds a
+`gas_used` field (IDL-breaking layout change — regenerate types).
 
 ## Existing Route Compatibility
 

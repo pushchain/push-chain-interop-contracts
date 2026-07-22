@@ -67,7 +67,7 @@ SPL accounts without changing the public IDL account structs.
 | --- | --- | --- |
 | `Config` | `["config"]` | pause flag, vault bump, price feed, chain config |
 | `Vault` / `vault_sol` | `["vault"]` | lamport pool used for Push-routed destination reimbursement |
-| `FeeVault` | `["fee_vault"]` | inbound fee pool and revert/rescue reimbursement source |
+| `FeeVault` | `["fee_vault"]` | inbound fee pool and **revert** reimbursement source (rescue reimburses from `vault` — see fee/gas table) |
 | `TssPda` | `["final_tss_pda"]` | TSS Ethereum address and signature state |
 | `CEA` PDA | `["push_identity", push_account_20]` | Push-account execution identity on Solana |
 | `ExecutedSubTx` | `["executed_sub_tx", sub_tx_id]` | replay protection for TSS-routed instructions |
@@ -253,8 +253,8 @@ sub_tx_id || universal_tx_id || pc20_mint || recipient || gas_fee || "PC20" || s
 | Direct `send_universal_tx` PC20 burn | caller pays `inbound_fee_lamports` to `FeeVault` before burn |
 | CEA PC20 burn via `finalize_universal_tx` | no inbound fee; relayer reimbursement follows outer finalize gas model |
 | `finalize_universal_tx` PC20 export | relayer reimbursed from `vault_sol` for measured signature/rent components actually paid; ref-finalize additionally reimburses the existing 5,000 lamport stored-ix upload fee; `UniversalTxFinalized` carries SVM gas accounting fields |
-| generic PC20 `revert_universal_tx` | relayer reimbursed from `fee_vault` for measured signature/replay/ATA rent, capped by signed `gas_fee` |
-| generic PC20 `rescue_funds` | relayer reimbursed from `fee_vault` for measured signature/replay/ATA rent, capped by signed `gas_fee` |
+| generic PC20 `revert_universal_tx` | relayer reimbursed from `fee_vault` for measured signature/replay/ATA rent, capped by signed `gas_fee` (SVM-inbound-fee funded — same source as legacy SOL/SPL revert) |
+| generic PC20 `rescue_funds` | relayer reimbursed from `vault` (Push burns the gas token via `swapAndBurnGas`, so backing is released from `vault`, not `fee_vault`) for measured signature/replay/ATA rent, capped by signed `gas_fee`; Push refunds `gas_fee - gas_used`. Same source for legacy SOL/SPL rescue — direction-based, not token-based. |
 
 PC20 export still uses measured gas accounting:
 

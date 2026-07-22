@@ -271,19 +271,9 @@ pub fn revert_universal_tx<'info>(
         0
     };
 
-    emit!(crate::state::RevertUniversalTx {
-        sub_tx_id,
-        universal_tx_id,
-        revert_recipient: revert_instruction.revert_recipient,
-        token: ctx
-            .accounts
-            .token_mint
-            .as_ref()
-            .map_or(Pubkey::default(), |m| m.key()),
-        amount,
-        revert_instruction: revert_instruction.clone(),
-    });
-
+    // Reimbursement source stays fee_vault (SVM-originated inbound failure; the user already paid
+    // the inbound fee into fee_vault). Amount is unchanged from audit-main-fixes: full signed
+    // gas_fee for the legacy native/SPL/PRC20 paths, measured cost for the PC20 remint path.
     let reimbursement = if is_pc20 {
         let measured_gas_used = SIGNATURE_FEE_LAMPORTS
             .checked_add(Rent::get()?.minimum_balance(ExecutedSubTx::LEN))
@@ -297,6 +287,20 @@ pub fn revert_universal_tx<'info>(
     } else {
         gas_fee
     };
+
+    emit!(crate::state::RevertUniversalTx {
+        sub_tx_id,
+        universal_tx_id,
+        revert_recipient: revert_instruction.revert_recipient,
+        token: ctx
+            .accounts
+            .token_mint
+            .as_ref()
+            .map_or(Pubkey::default(), |m| m.key()),
+        amount,
+        gas_used: reimbursement,
+        revert_instruction: revert_instruction.clone(),
+    });
 
     reimburse_relayer_from_fee_vault(
         &ctx.accounts.fee_vault,
