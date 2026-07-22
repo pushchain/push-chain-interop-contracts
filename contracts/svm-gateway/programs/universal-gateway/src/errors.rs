@@ -105,4 +105,7 @@ pub enum GatewayError {
 
     #[msg("TSS signature has expired (current time is past deadline)")]
     SignatureExpired,
+
+    #[msg("Invalid PC20 mint")]
+    InvalidPc20Mint,
 }

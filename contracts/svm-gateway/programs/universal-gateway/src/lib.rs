@@ -1,6 +1,6 @@
+use crate::errors::GatewayError;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::keccak;
-use crate::errors::GatewayError;
 
 pub mod errors;
 pub mod instructions;
@@ -22,8 +22,8 @@ pub mod universal_gateway {
     /// @notice Universal transaction entrypoint with internal routing (EVM parity).
     /// @dev    Native amount parameter mirrors `msg.value` on EVM chains.
     ///         All routing (gas / funds / batching) is handled inside the deposit module.
-    pub fn send_universal_tx(
-        ctx: Context<SendUniversalTx>,
+    pub fn send_universal_tx<'info>(
+        ctx: Context<'_, '_, '_, 'info, SendUniversalTx<'info>>,
         req: UniversalTxRequest,
         native_amount: u64,
     ) -> Result<()> {
@@ -104,10 +104,7 @@ pub mod universal_gateway {
     /// @notice Withdraw accumulated inbound fee surplus from the fee vault to a recipient.
     /// Only lamports above rent-exemption are withdrawable.
     /// Admin-only — involves fund movement out of the fee vault.
-    pub fn withdraw_inbound_fees(
-        ctx: Context<WithdrawInboundFees>,
-        amount: u64,
-    ) -> Result<()> {
+    pub fn withdraw_inbound_fees(ctx: Context<WithdrawInboundFees>, amount: u64) -> Result<()> {
         instructions::admin::withdraw_inbound_fees(ctx, amount)
     }
 
@@ -183,12 +180,12 @@ pub mod universal_gateway {
     // =========================
     //    FINALIZE UNIVERSAL TX
     // =========================
-    /// @notice Unified outbound entrypoint: withdraw (mode 1) or execute (mode 2)
-    /// @param instruction_id 1=withdraw (vault→CEA→recipient), 2=execute (vault→CEA→CPI)
+    /// @notice Unified outbound entrypoint: withdraw (1), execute (2), or PC20 export (5).
+    /// @param instruction_id 1=withdraw (vault→CEA→recipient), 2=execute (vault→CEA→CPI), 5=PC20 export
     /// @param deadline Unix timestamp (seconds) after which TSS signature is invalid.
     ///        Prevents late first-execution on Solana after source-chain revert/refund.
-    pub fn finalize_universal_tx(
-        mut ctx: Context<FinalizeUniversalTx>,
+    pub fn finalize_universal_tx<'a, 'b, 'c, 'info>(
+        mut ctx: Context<'a, 'b, 'c, 'info, FinalizeUniversalTx<'info>>,
         instruction_id: u8,
         sub_tx_id: [u8; 32],
         universal_tx_id: [u8; 32],
@@ -233,8 +230,8 @@ pub mod universal_gateway {
 
     /// @notice Additive ref-finalize route. Executes the same finalize flow using ix_data loaded from PDA.
     /// @param deadline Unix timestamp (seconds) after which TSS signature is invalid.
-    pub fn finalize_universal_tx_with_ix_data_ref(
-        mut ctx: Context<FinalizeUniversalTx>,
+    pub fn finalize_universal_tx_with_ix_data_ref<'a, 'b, 'c, 'info>(
+        mut ctx: Context<'a, 'b, 'c, 'info, FinalizeUniversalTx<'info>>,
         instruction_id: u8,
         sub_tx_id: [u8; 32],
         universal_tx_id: [u8; 32],
@@ -272,7 +269,11 @@ pub mod universal_gateway {
         );
 
         let (expected_stored_ix_data, _) = Pubkey::find_program_address(
-            &[state::STORED_IX_DATA_SEED, sub_tx_id.as_ref(), computed.as_ref()],
+            &[
+                state::STORED_IX_DATA_SEED,
+                sub_tx_id.as_ref(),
+                computed.as_ref(),
+            ],
             ctx.program_id,
         );
         require!(
@@ -301,7 +302,11 @@ pub mod universal_gateway {
         )?;
 
         // Auto-close the StoredIxData PDA on finalize success — rent returns to store_refund_recipient.
-        ctx.accounts.stored_ix_data.as_ref().unwrap().close(store_refund_recipient_info)?;
+        ctx.accounts
+            .stored_ix_data
+            .as_ref()
+            .unwrap()
+            .close(store_refund_recipient_info)?;
 
         Ok(())
     }
@@ -318,8 +323,8 @@ pub mod universal_gateway {
     ///         SOL path: token_mint = None. SPL path: token_mint = Some.
     ///         Replay-protected via ExecutedSubTx PDA
     /// @param deadline Unix timestamp (seconds) after which TSS signature is invalid.
-    pub fn rescue_funds(
-        ctx: Context<RescueFunds>,
+    pub fn rescue_funds<'info>(
+        ctx: Context<'_, '_, '_, 'info, RescueFunds<'info>>,
         sub_tx_id: [u8; 32],
         universal_tx_id: [u8; 32],
         amount: u64,
@@ -348,8 +353,8 @@ pub mod universal_gateway {
     /// @notice TSS-verified unified revert (SOL and SPL) — EVM parity: `revertUniversalTx`.
     ///         SOL path: token_mint = None. SPL path: token_mint = Some.
     /// @param deadline Unix timestamp (seconds) after which TSS signature is invalid.
-    pub fn revert_universal_tx(
-        ctx: Context<RevertUniversalTx>,
+    pub fn revert_universal_tx<'info>(
+        ctx: Context<'_, '_, '_, 'info, RevertUniversalTx<'info>>,
         sub_tx_id: [u8; 32],
         universal_tx_id: [u8; 32],
         amount: u64,
@@ -414,6 +419,7 @@ pub use state::{
     InboundFeeUpdated,
     InboundFeesWithdrawn,
     RevertInstructions,
+    StoredIxData,
     TxType,
     UniversalTx,
     UniversalTxFinalized,
@@ -423,8 +429,7 @@ pub use state::{
     EXECUTED_SUB_TX_SEED,
     FEED_ID,
     FEE_VAULT_SEED,
+    PC20_MINT_SEED,
     STORED_IX_DATA_SEED,
-    StoredIxData,
     VAULT_SEED,
 };
-

@@ -746,7 +746,8 @@ describe("Universal Gateway - Withdraw Tests", () => {
 
         it("rejects revert when fee_vault cannot reimburse gas fee", async () => {
             const revertAmount = 1; // keep transfer leg minimal; only fee-pool check should fail
-            const tooLargeGasFee = BigInt(2 * anchor.web3.LAMPORTS_PER_SOL); // > seeded fee_vault in this suite
+            const feeVaultBalance = await provider.connection.getBalance(feeVaultPda);
+            const tooLargeGasFee = BigInt(feeVaultBalance + anchor.web3.LAMPORTS_PER_SOL);
 
             const subTxId = generateTxId();
             const universalTxId = generateUniversalTxId();

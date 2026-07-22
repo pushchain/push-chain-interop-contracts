@@ -1,4 +1,8 @@
 use crate::errors::GatewayError;
+use crate::instructions::pc20::{
+    handle_pc20_export_from_universal, is_pc20_burn_ix, parse_pc20_export_ix_data,
+    route_pc20_burn_from_finalize_cea, PC20_FINALIZE_INSTRUCTION_ID,
+};
 use crate::instructions::tss::validate_message;
 use crate::instructions::withdraw::{internal_withdraw, send_universal_tx_to_uea};
 use crate::state::{
@@ -176,6 +180,7 @@ pub struct CloseStoredIxData<'info> {
 struct FinalizeRequestContext {
     is_withdraw: bool,
     is_native: bool,
+    is_pc20_cea_burn: bool,
     token: Pubkey,
     target: Pubkey,
 }
@@ -245,8 +250,8 @@ pub fn close_stored_ix_data(ctx: Context<CloseStoredIxData>) -> Result<()> {
     Ok(())
 }
 
-pub fn finalize_universal_tx_common<'info>(
-    ctx: &mut Context<FinalizeUniversalTx<'info>>,
+pub fn finalize_universal_tx_common<'a, 'b, 'c, 'info>(
+    ctx: &mut Context<'a, 'b, 'c, 'info, FinalizeUniversalTx<'info>>,
     instruction_id: u8,
     sub_tx_id: [u8; 32],
     universal_tx_id: [u8; 32],
@@ -263,6 +268,29 @@ pub fn finalize_universal_tx_common<'info>(
     message_hash: [u8; 32],
 ) -> Result<()> {
     require!(!ctx.accounts.config.paused, GatewayError::Paused);
+
+    if instruction_id == PC20_FINALIZE_INSTRUCTION_ID {
+        let export_args =
+            parse_pc20_export_ix_data(&ix_data)?.ok_or(error!(GatewayError::InvalidInput))?;
+        return handle_pc20_export_from_universal(
+            ctx,
+            instruction_id,
+            sub_tx_id,
+            universal_tx_id,
+            amount,
+            push_account,
+            writable_flags,
+            ix_data,
+            export_args,
+            store_upload_fee_lamports,
+            store_refund_recipient,
+            gas_fee,
+            deadline,
+            signature,
+            recovery_id,
+            message_hash,
+        );
+    }
 
     let request = validate_finalize_request(
         ctx,
@@ -305,7 +333,7 @@ pub fn finalize_universal_tx_common<'info>(
         store_refund_recipient,
     )?;
 
-    dispatch_finalize_action(
+    let dispatched_pc20_cea_burn = dispatch_finalize_action(
         ctx,
         &request,
         execute_accounts,
@@ -315,19 +343,22 @@ pub fn finalize_universal_tx_common<'info>(
         &cea_seeds,
     )?;
 
-    emit!(UniversalTxFinalized {
-        sub_tx_id,
-        universal_tx_id,
-        gas_fee,
-        gas_used,
-        gas_to_refund,
-        ata_created,
-        push_account,
-        target: request.target,
-        token: request.token,
-        amount,
-        payload: ix_data,
-    });
+    if !dispatched_pc20_cea_burn {
+        emit!(UniversalTxFinalized {
+            sub_tx_id,
+            universal_tx_id,
+            wrapper_address: Pubkey::default(),
+            gas_fee,
+            gas_used,
+            gas_to_refund,
+            ata_created,
+            push_account,
+            target: request.target,
+            token: request.token,
+            amount,
+            payload: ix_data,
+        });
+    }
 
     Ok(())
 }
@@ -409,6 +440,7 @@ fn validate_account_presence(ctx: &Context<FinalizeUniversalTx>, is_native: bool
 }
 
 /// Validate the finalize request and return the normalized mode context.
+#[inline(never)]
 fn validate_finalize_request(
     ctx: &Context<FinalizeUniversalTx>,
     instruction_id: u8,
@@ -422,9 +454,12 @@ fn validate_finalize_request(
         2 => false,
         _ => return Err(error!(GatewayError::InvalidInstruction)),
     };
-
     let is_native = ctx.accounts.mint.is_none();
-    let token = ctx.accounts.mint.as_ref().map_or(Pubkey::default(), |m| m.key());
+    let token = ctx
+        .accounts
+        .mint
+        .as_ref()
+        .map_or(Pubkey::default(), |m| m.key());
     validate_account_presence(ctx, is_native)?;
     require!(push_account != [0u8; 20], GatewayError::InvalidInput);
 
@@ -436,7 +471,10 @@ fn validate_finalize_request(
             .ok_or(error!(GatewayError::InvalidAccount))?;
         recipient.key()
     } else {
-        require!(ctx.accounts.recipient.is_none(), GatewayError::InvalidAccount);
+        require!(
+            ctx.accounts.recipient.is_none(),
+            GatewayError::InvalidAccount
+        );
         ctx.accounts.destination_program.key()
     };
 
@@ -470,9 +508,16 @@ fn validate_finalize_request(
         );
     }
 
+    let is_pc20_cea_burn = !is_withdraw && target == *ctx.program_id && is_pc20_burn_ix(ix_data);
+    if is_pc20_cea_burn {
+        require!(is_native, GatewayError::InvalidAccount);
+        require!(amount == 0, GatewayError::InvalidAmount);
+    }
+
     Ok(FinalizeRequestContext {
         is_withdraw,
         is_native,
+        is_pc20_cea_burn,
         token,
         target,
     })
@@ -482,6 +527,7 @@ fn validate_finalize_request(
 //    TSS VALIDATION HELPERS (PHASE 2)
 // ============================================
 
+#[inline(never)]
 fn verify_finalize_tss(
     ctx: &mut Context<FinalizeUniversalTx>,
     request: &FinalizeRequestContext,
@@ -545,6 +591,7 @@ fn verify_finalize_tss(
 /// the CEA ATA had to be created (SPL path only; always false for native SOL).
 /// Gas transfer to caller is intentionally NOT performed here — it is computed and
 /// paid separately after this call, once actual gas_used is known.
+#[inline(never)]
 fn stage_assets_to_cea(
     ctx: &Context<FinalizeUniversalTx>,
     request: &FinalizeRequestContext,
@@ -565,23 +612,35 @@ fn stage_assets_to_cea(
     }
 }
 
-fn dispatch_finalize_action(
-    ctx: &mut Context<FinalizeUniversalTx>,
+#[inline(never)]
+fn dispatch_finalize_action<'a, 'b, 'c, 'info>(
+    ctx: &mut Context<'a, 'b, 'c, 'info, FinalizeUniversalTx<'info>>,
     request: &FinalizeRequestContext,
     execute_accounts: Option<Vec<GatewayAccountMeta>>,
     amount: u64,
     push_account: [u8; 20],
     ix_data: &[u8],
     cea_seeds: &[&[u8]],
-) -> Result<()> {
+) -> Result<bool> {
     if request.is_withdraw {
         internal_withdraw(ctx, amount, request.token, cea_seeds)?;
-        return Ok(());
+        return Ok(false);
     }
 
     if request.target == *ctx.program_id {
+        if request.is_pc20_cea_burn {
+            route_pc20_burn_from_finalize_cea(
+                ctx.program_id,
+                &ctx.accounts.cea_authority.to_account_info(),
+                ctx.remaining_accounts,
+                push_account,
+                ix_data,
+                cea_seeds,
+            )?;
+            return Ok(true);
+        }
         send_universal_tx_to_uea(ctx, push_account, ix_data, cea_seeds)?;
-        return Ok(());
+        return Ok(false);
     }
 
     let cea_key = ctx.accounts.cea_authority.key();
@@ -605,7 +664,7 @@ fn dispatch_finalize_action(
     };
 
     invoke_signed(&cpi_ix, ctx.remaining_accounts, &[cea_seeds])?;
-    Ok(())
+    Ok(false)
 }
 
 fn reconstruct_accounts_from_flags<'info>(
@@ -654,7 +713,16 @@ fn build_and_validate_tss_withdraw(
         &gas_fee_buf,
         &target.to_bytes(),
     ];
-    validate_message(tss_pda, 1, Some(amount), deadline, &additional, message_hash, signature, recovery_id)
+    validate_message(
+        tss_pda,
+        1,
+        Some(amount),
+        deadline,
+        &additional,
+        message_hash,
+        signature,
+        recovery_id,
+    )
 }
 
 /// Build and validate TSS signature for execute mode (instruction_id=2)
@@ -702,7 +770,16 @@ fn build_and_validate_tss_execute<'info>(
         &ix_data_buf,
     ];
 
-    validate_message(tss_pda, 2, Some(amount), deadline, &additional, message_hash, signature, recovery_id)?;
+    validate_message(
+        tss_pda,
+        2,
+        Some(amount),
+        deadline,
+        &additional,
+        message_hash,
+        signature,
+        recovery_id,
+    )?;
     Ok(accounts)
 }
 
@@ -718,12 +795,36 @@ fn process_spl_vault_to_cea_transfer<'info>(
     vault_seeds: &[&[u8]],
 ) -> Result<bool> {
     // Unpack SPL accounts (guaranteed Some by validate_account_presence)
-    let vault_ata = ctx.accounts.vault_ata.as_ref().ok_or(error!(GatewayError::InvalidAccount))?;
-    let cea_ata = ctx.accounts.cea_ata.as_ref().ok_or(error!(GatewayError::InvalidAccount))?;
-    let mint = ctx.accounts.mint.as_ref().ok_or(error!(GatewayError::InvalidAccount))?;
-    let token_program = ctx.accounts.token_program.as_ref().ok_or(error!(GatewayError::InvalidAccount))?;
-    let rent = ctx.accounts.rent.as_ref().ok_or(error!(GatewayError::InvalidAccount))?;
-    let ata_program = ctx.accounts.associated_token_program.as_ref().ok_or(error!(GatewayError::InvalidAccount))?;
+    let vault_ata = ctx
+        .accounts
+        .vault_ata
+        .as_ref()
+        .ok_or(error!(GatewayError::InvalidAccount))?;
+    let cea_ata = ctx
+        .accounts
+        .cea_ata
+        .as_ref()
+        .ok_or(error!(GatewayError::InvalidAccount))?;
+    let mint = ctx
+        .accounts
+        .mint
+        .as_ref()
+        .ok_or(error!(GatewayError::InvalidAccount))?;
+    let token_program = ctx
+        .accounts
+        .token_program
+        .as_ref()
+        .ok_or(error!(GatewayError::InvalidAccount))?;
+    let rent = ctx
+        .accounts
+        .rent
+        .as_ref()
+        .ok_or(error!(GatewayError::InvalidAccount))?;
+    let ata_program = ctx
+        .accounts
+        .associated_token_program
+        .as_ref()
+        .ok_or(error!(GatewayError::InvalidAccount))?;
 
     // Validate vault_ata mint matches the supplied mint account.
     // Ownership (vault_sol) is enforced by the Anchor token::authority constraint.

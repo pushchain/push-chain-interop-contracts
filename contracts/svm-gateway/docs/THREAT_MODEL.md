@@ -41,7 +41,7 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 **Boundary summary:**
 - UV cannot change signed outbound content without failing signature validation.
-- `Vault` stores bridge funds; `FeeVault` stores inbound fees and revert/rescue reimbursements.
+- `Vault` stores bridge funds and funds Push-paid finalize/rescue gas reimbursement; `FeeVault` stores inbound fees and funds SVM-originated revert reimbursement.
 - Replay protection is on-chain via `ExecutedSubTx` PDA (`sub_tx_id` uniqueness).
 
 ---
@@ -106,9 +106,9 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Risk: user supplies fake source/destination token accounts.  
    Control: `user_token_account` owner/mint checks plus canonical ATA enforcement on `gateway_token_account` for `(vault, token)`.
 
-9. **Fee vault depletion**  
-   Risk: revert/rescue fail due to reimbursement shortfall.  
-   Control: reimbursement checks available lamports above rent and fails safely (`InsufficientFeePool`).
+9. **Reimbursement pool depletion**
+   Risk: revert fails if `FeeVault` lacks inbound-fee surplus; rescue/finalize fail if `Vault` lacks lamports for measured gas reimbursement.
+   Control: `FeeVault` reimbursement checks available lamports above rent and fails safely (`InsufficientFeePool`); `Vault` reimbursement fails atomically if bridge lamports are insufficient.
 
 12. **Inbound fee misconfiguration**  
    Risk: admin sets an excessive inbound fee and griefs users.  
@@ -130,6 +130,14 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Risk: issuer retains `mint_authority` and/or `freeze_authority`, affecting collateral assumptions or freezing vault flows.  
    Control: `set_token_rate_limit` requires explicit acknowledgment flags for retained mint and freeze authorities before a non-zero threshold can be set.
 
+14. **PC20 emergency rescue minting**
+   Risk: PC20 rescue mints wrapped supply on Solana instead of transferring from a token vault. A bad TSS rescue signature can create uncollateralized wrapped supply unless the matching Push-side ledger action has already happened.
+   Control: PC20 rescue remains TSS-authorized, domain-separated with `"PC20" || source_asset`, and replay-protected by `ExecutedSubTx`; off-chain TSS policy must require Push-side confirmation before signing rescue.
+
+15. **PC20 CEA burn self-route interpretation**
+   Risk: `finalize_universal_tx` with `destination_program = gateway` can treat an inner generic `send_universal_tx` discriminator as a PC20 CEA burn when the signed remaining accounts match the PC20 account shape.
+   Control: TSS signs the destination program, inner instruction data, account list, and writable flags; signer policy must explicitly classify `target = gateway`, inner `send_universal_tx`, `outer amount = 0`, and PC20 remaining accounts as PC20 burn intent.
+
 ---
 
 ## 5. Cross-Program / Operational Risks
@@ -143,9 +151,9 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 3. **Upgradeable program operational risk**  
    Upgrade authority compromise or unsafe upgrade process can override all controls.
 
-4. **Fee model drift across paths**  
-   `finalize_universal_tx` gas reimbursement uses `Vault`; revert/rescue reimbursement uses `FeeVault`.  
-   This must stay intentional and explicitly monitored in ops/runbooks.
+4. **Fee model drift across paths**
+   `finalize_universal_tx` and `rescue_funds` gas reimbursement use `Vault` for Push-paid destination gas; `revert_universal_tx` uses `FeeVault` for SVM-originated inbound-fee-funded recovery.
+   This direction-aware split must stay intentional and explicitly monitored in ops/runbooks.
 
 ---
 

@@ -5,6 +5,7 @@ dotenv.config();
 import { createHash } from "crypto";
 
 import * as anchor from "@coral-xyz/anchor";
+import { AbiCoder } from "ethers";
 import {
   PublicKey,
   LAMPORTS_PER_SOL,
@@ -28,8 +29,10 @@ import {
 } from "./execute-payload";
 import {
   signTssMessage,
+  buildPc20FinalizeAdditionalData,
   buildExecuteAdditionalData,
   buildRevertAdditionalData,
+  buildRescueAdditionalData,
   buildWithdrawAdditionalData,
   TssInstruction,
   generateUniversalTxId,
@@ -40,6 +43,8 @@ const KNOWN_PROGRAMS: Record<string, string> = {
   main:  "CFVSincHYbETh2k7w6u1ENEkjbSLtveRCEBupKidw2VS",
   dummy: "DJoFYDpgbTfxbXBv1QYhYGc9FK4J5FUKpYXAfSkHryXp",
 };
+const DEFAULT_DEVNET_COUNTER_PROGRAM_ID =
+  "4mpHkerNsaJPp35fyT5bkoXxuEBczGq6HUKTtrzFcptx";
 
 const programArg = process.argv[2]; // "main", "dummy", or undefined
 if (programArg && !(programArg in KNOWN_PROGRAMS)) {
@@ -98,10 +103,29 @@ const userKeypair = Keypair.fromSecretKey(
 // Load relayer keypair (user will fund it externally)
 const relayerKeypair = loadOrCreateKeypair("./fresh-relayer-keypair.json");
 
+const RPC_URL = process.env.RPC_URL ?? "https://api.devnet.solana.com";
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const retryingFetch = async (input: any, init?: any): Promise<any> => {
+  let lastResponse: any;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    lastResponse = await fetch(input, init);
+    if (lastResponse.status !== 429) return lastResponse;
+    const retryAfter = Number(lastResponse.headers?.get?.("retry-after"));
+    const delayMs = Number.isFinite(retryAfter)
+      ? retryAfter * 1000
+      : Math.min(500 * 2 ** attempt, 8000);
+    console.log(`RPC 429 rate limited, retrying in ${delayMs}ms...`);
+    await sleep(delayMs);
+  }
+  return lastResponse;
+};
+
 // Set up connection and provider
 const connection = new anchor.web3.Connection(
-  "https://api.devnet.solana.com",
-  "confirmed"
+  RPC_URL,
+  { commitment: "confirmed", fetch: retryingFetch as any }
 );
 const adminProvider = new anchor.AnchorProvider(
   connection,
@@ -131,7 +155,7 @@ function loadOrCreateKeypair(filepath: string): Keypair {
   return kp;
 }
 
-function getExecutedTxPda(txIdBytes: Uint8Array): PublicKey {
+function getExecutedTxPda(txIdBytes: Uint8Array | number[]): PublicKey {
   return PublicKey.findProgramAddressSync(
     [Buffer.from(EXECUTED_SUB_TX_SEED), Buffer.from(txIdBytes)],
     PROGRAM_ID
@@ -141,6 +165,20 @@ function getExecutedTxPda(txIdBytes: Uint8Array): PublicKey {
 function getCeaAuthorityPda(pushAccount: Uint8Array | number[]): PublicKey {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("push_identity"), Buffer.from(pushAccount)],
+    PROGRAM_ID
+  )[0];
+}
+
+function getPc20MintPda(sourceAsset: Uint8Array | number[]): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("pc20_mint"), Buffer.from(sourceAsset)],
+    PROGRAM_ID
+  )[0];
+}
+
+function getPc20StatePda(wrappedMint: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("pc20_state"), wrappedMint.toBuffer()],
     PROGRAM_ID
   )[0];
 }
@@ -172,6 +210,7 @@ async function getCeaAta(
 // Fee calculation helpers (matching execute.test.ts / test-utils.ts)
 const COMPUTE_BUFFER = BigInt(100_000); // 0.0001 SOL buffer for compute + tx fees
 const SIGNATURE_FEE_LAMPORTS = BigInt(5_000); // Base Solana fee per signature — matches execute.rs
+const REF_FINALIZE_STORE_UPLOAD_FEE = SIGNATURE_FEE_LAMPORTS;
 
 const getExecutedTxRent = async (
   connection: anchor.web3.Connection
@@ -226,6 +265,93 @@ const calculateSplExecuteFees = async (
   return { gasFee: executedTxRent + ceaAtaRent + COMPUTE_BUFFER, gasUsed };
 };
 
+function generateNonZeroBytes(len: number): number[] {
+  const bytes = Buffer.from(Keypair.generate().publicKey.toBuffer()).slice(0, len);
+  if (bytes.every((byte) => byte === 0)) bytes[0] = 1;
+  return Array.from(bytes);
+}
+
+function encodeU64Le(value: bigint): Buffer {
+  const out = Buffer.alloc(8);
+  out.writeBigUInt64LE(value);
+  return out;
+}
+
+function encodeVec(value: Buffer | Uint8Array): Buffer {
+  const bytes = Buffer.from(value);
+  const len = Buffer.alloc(4);
+  len.writeUInt32LE(bytes.length, 0);
+  return Buffer.concat([len, bytes]);
+}
+
+const abiCoder = AbiCoder.defaultAbiCoder();
+const PC20_DEST_CHAIN_NAMESPACE = "solana:devnet";
+const PC20_SELECTOR = Buffer.from("PC20", "ascii");
+
+function encodePc20ExportIxData(params: {
+  sourceAsset: Uint8Array | number[];
+  destChainNamespace?: string;
+  name: string;
+  symbol: string;
+  decimals: number;
+  userData?: Buffer | Uint8Array;
+}): Buffer {
+  return Buffer.concat([
+    Buffer.from("PC20", "ascii"),
+    Buffer.from(params.sourceAsset),
+    Buffer.from(
+      abiCoder
+        .encode(
+          ["string", "string", "string", "uint8"],
+          [
+            params.destChainNamespace ?? PC20_DEST_CHAIN_NAMESPACE,
+            params.name,
+            params.symbol,
+            params.decimals,
+          ]
+        )
+        .slice(2),
+      "hex"
+    ),
+    Buffer.from(params.userData ?? Buffer.alloc(0)),
+  ]);
+}
+
+function encodePc20EventPayload(payload: Buffer | Uint8Array): Buffer {
+  return Buffer.concat([PC20_SELECTOR, Buffer.from(payload)]);
+}
+
+function sourceAssetAsPubkey(sourceAsset: Uint8Array | number[]): PublicKey {
+  const bytes = Buffer.alloc(32);
+  Buffer.from(sourceAsset).copy(bytes, 12);
+  return new PublicKey(bytes);
+}
+
+function encodeUniversalTxIxData(params: {
+  recipient: Uint8Array | number[];
+  token: PublicKey;
+  amount: bigint;
+  payload: Buffer | Uint8Array;
+  revertRecipient: PublicKey;
+  signatureData?: Buffer | Uint8Array;
+  nativeAmount?: bigint;
+}): Buffer {
+  const discriminator = createHash("sha256")
+    .update("global:send_universal_tx")
+    .digest()
+    .slice(0, 8);
+  return Buffer.concat([
+    discriminator,
+    Buffer.from(params.recipient),
+    params.token.toBuffer(),
+    encodeU64Le(params.amount),
+    encodeVec(params.payload),
+    params.revertRecipient.toBuffer(),
+    encodeVec(params.signatureData ?? Buffer.from([])),
+    encodeU64Le(params.nativeAmount ?? 0n),
+  ]);
+}
+
 // Load IDL and bind it to the explicit runtime target. The local IDL is baked
 // from the current build, but this script supports selecting the destination
 // program at runtime.
@@ -245,9 +371,48 @@ const relayerProvider = new anchor.AnchorProvider(
 );
 const relayerProgram = new Program(idl, relayerProvider);
 
+async function decodeEvents(signature: string) {
+  let txDetails: Awaited<ReturnType<typeof connection.getTransaction>> | null = null;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    txDetails = await connection.getTransaction(signature, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+    });
+    if (txDetails?.meta?.logMessages?.length) break;
+    await sleep(500);
+  }
+
+  if (!txDetails?.meta?.logMessages) {
+    throw new Error(`Missing transaction metadata for ${signature}`);
+  }
+
+  const eventCoder = new anchor.BorshEventCoder(program.idl);
+  return txDetails.meta.logMessages
+    .map((log) => {
+      if (!log.startsWith("Program data: ")) return null;
+      try {
+        return eventCoder.decode(log.slice("Program data: ".length));
+      } catch {
+        return null;
+      }
+    })
+    .filter((event): event is NonNullable<typeof event> => event !== null);
+}
+
+async function requireEvent(signature: string, name: string) {
+  const events = await decodeEvents(signature);
+  const event = events.find((entry) => entry.name === name);
+  if (!event) {
+    throw new Error(`Missing ${name} event in transaction ${signature}`);
+  }
+  return { event, events };
+}
+
 const counterIdl = JSON.parse(
   fs.readFileSync("./target/idl/test_counter.json", "utf8")
 );
+counterIdl.address =
+  process.env.COUNTER_PROGRAM_ID ?? DEFAULT_DEVNET_COUNTER_PROGRAM_ID;
 const counterProgram: any = new Program(counterIdl as any, adminProvider);
 
 // Helper: Get dynamic gas amount based on current SOL price
@@ -4096,6 +4261,797 @@ async function run() {
   }
 
   console.log("✅ All deadline enforcement checks passed on devnet!\n");
+
+  // ===========================================================================
+  // 17. PC20 end-to-end flows
+  // ===========================================================================
+  // PC20 devnet flows are dummy-program-only (mutating state on the DJoF slot).
+  // Against `main` (or any other program), skip cleanly so the harness completes.
+  if (PROGRAM_ID.toBase58() !== KNOWN_PROGRAMS.dummy) {
+    console.log(
+      `\n17. Skipping PC20 devnet flows (only supported on the dummy program; current PROGRAM_ID=${PROGRAM_ID.toBase58()}).`
+    );
+    console.log("All tests completed successfully!");
+    return;
+  }
+
+  console.log("\n17. Testing PC20 flows on devnet dummy...");
+
+  const pc20SourceAsset = generateNonZeroBytes(20);
+  const pc20PushAccount = generateNonZeroBytes(20);
+  const pc20Mint = getPc20MintPda(pc20SourceAsset);
+  const pc20State = getPc20StatePda(pc20Mint);
+  const pc20CeaAuthority = getCeaAuthorityPda(pc20PushAccount);
+  const pc20UserAta = spl.getAssociatedTokenAddressSync(
+    pc20Mint,
+    user,
+    false,
+    spl.TOKEN_PROGRAM_ID,
+    spl.ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  const pc20CeaAta = spl.getAssociatedTokenAddressSync(
+    pc20Mint,
+    pc20CeaAuthority,
+    true,
+    spl.TOKEN_PROGRAM_ID,
+    spl.ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  const pc20Name = `Devnet PC20 ${Date.now()}`;
+  const pc20Symbol = "dPC20";
+  const pc20Decimals = 6;
+  const pc20DirectMintAmount = 10_000_000n;
+  const pc20DirectBurnAmount = 2_000_000n;
+  const pc20CeaMintAmount = 4_000_000n;
+  const pc20CeaBurnAmount = 1_000_000n;
+  const pc20RescueAmount = 500_000n;
+  const pc20TssAccount: any = await (program.account as any).tssPda.fetch(tssPda);
+  const pc20ExecutedRent = BigInt(await getExecutedTxRent(connection));
+  const pc20MintRent = BigInt(
+    await connection.getMinimumBalanceForRentExemption(spl.MINT_SIZE)
+  );
+  const pc20StateRent = BigInt(
+    await connection.getMinimumBalanceForRentExemption(8 + 20 + 32 + 1 + 1)
+  );
+  const pc20TokenRent = BigInt(await getTokenAccountRent(connection));
+
+  console.log(`  PC20 mint PDA: ${pc20Mint.toBase58()}`);
+  console.log(`  PC20 state PDA: ${pc20State.toBase58()}`);
+  console.log(`  PC20 CEA PDA:  ${pc20CeaAuthority.toBase58()}`);
+
+  const finalizePc20ExportByRef = async (params: {
+    subTxId: Uint8Array | number[];
+    universalTxId: Uint8Array | number[];
+    amount: bigint;
+    sourceAsset: Uint8Array | number[];
+    pushAccount: Uint8Array | number[];
+    name: string;
+    symbol: string;
+    decimals: number;
+    userData?: Buffer;
+    gasFee: bigint;
+    signature: Uint8Array | number[];
+    recoveryId: number;
+    messageHash: Uint8Array | number[];
+    destinationProgram: PublicKey;
+    remainingAccounts: Array<{
+      pubkey: PublicKey;
+      isWritable: boolean;
+      isSigner: boolean;
+    }>;
+  }) => {
+    const ixData = encodePc20ExportIxData({
+      sourceAsset: params.sourceAsset,
+      name: params.name,
+      symbol: params.symbol,
+      decimals: params.decimals,
+      userData: params.userData,
+    });
+    const ixDataHash = Buffer.from(keccak_256(ixData), "hex");
+    const storedIxData = getStoredIxDataPda(params.subTxId, ixDataHash);
+
+    await relayerProgram.methods
+      .storeExecuteIxData(
+        Array.from(params.subTxId),
+        ixDataHash as unknown as number[],
+        ixData
+      )
+      .accountsPartial({
+        caller: relayer,
+        storedIxData,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    return relayerProgram.methods
+      .finalizeUniversalTxWithIxDataRef(
+        5,
+        Array.from(params.subTxId),
+        Array.from(params.universalTxId),
+        new anchor.BN(params.amount.toString()),
+        Array.from(params.pushAccount),
+        ixDataHash as unknown as number[],
+        Buffer.alloc(0),
+        new anchor.BN(params.gasFee.toString()),
+        new anchor.BN(DEFAULT_DEADLINE.toString()),
+        Array.from(params.signature),
+        params.recoveryId,
+        Array.from(params.messageHash)
+      )
+      .accountsPartial({
+        caller: relayer,
+        config: configPda,
+        vaultSol: vaultPda,
+        recipient: user,
+        ceaAuthority: pc20CeaAuthority,
+        ceaAta: pc20CeaAta,
+        tssPda,
+        executedSubTx: getExecutedTxPda(params.subTxId),
+        destinationProgram: params.destinationProgram,
+        storedIxData,
+        storeRefundRecipient: relayer,
+        vaultAta: null,
+        mint: null,
+        recipientAta: null,
+        rateLimitConfig: null,
+        tokenRateLimit: null,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: spl.TOKEN_PROGRAM_ID,
+        associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .remainingAccounts(params.remainingAccounts)
+      .signers([relayerKeypair])
+      .rpc();
+  };
+
+  // 17.1 Push -> Solana direct export: create wrapped mint, create CEA ATA, mint.
+  const pc20FinalizeSubTxId = anchor.web3.Keypair.generate().publicKey.toBytes();
+  const pc20FinalizeUniversalTxId = generateUniversalTxId();
+  const pc20FinalizeGasFee =
+    SIGNATURE_FEE_LAMPORTS +
+    pc20ExecutedRent +
+    pc20MintRent +
+    pc20StateRent +
+    pc20TokenRent +
+    REF_FINALIZE_STORE_UPLOAD_FEE +
+    COMPUTE_BUFFER;
+  const pc20FinalizeSig = await signTssMessage({
+    instruction: TssInstruction.Pc20Finalize,
+    amount: pc20DirectMintAmount,
+    chainId: pc20TssAccount.chainId,
+    additional: buildPc20FinalizeAdditionalData({
+      universalTxId: pc20FinalizeUniversalTxId,
+      subTxId: pc20FinalizeSubTxId,
+      sourceAsset: pc20SourceAsset,
+      pushAccount: pc20PushAccount,
+      recipient: user,
+      name: pc20Name,
+      symbol: pc20Symbol,
+      decimals: pc20Decimals,
+      gasFee: pc20FinalizeGasFee,
+    }),
+  });
+
+  const pc20FinalizeTx = await finalizePc20ExportByRef({
+    subTxId: pc20FinalizeSubTxId,
+    universalTxId: pc20FinalizeUniversalTxId,
+    amount: pc20DirectMintAmount,
+    sourceAsset: pc20SourceAsset,
+    pushAccount: pc20PushAccount,
+    name: pc20Name,
+    symbol: pc20Symbol,
+    decimals: pc20Decimals,
+    gasFee: pc20FinalizeGasFee,
+    signature: pc20FinalizeSig.signature,
+    recoveryId: pc20FinalizeSig.recoveryId,
+    messageHash: pc20FinalizeSig.messageHash,
+    destinationProgram: SystemProgram.programId,
+    remainingAccounts: [
+      { pubkey: pc20State, isWritable: true, isSigner: false },
+      { pubkey: pc20Mint, isWritable: true, isSigner: false },
+    ],
+  });
+
+  const pc20CeaAfterDirectExport = await spl.getAccount(connection as any, pc20CeaAta);
+  assert.equal(
+    pc20CeaAfterDirectExport.amount.toString(),
+    pc20DirectMintAmount.toString(),
+    "PC20 export should mint to CEA ATA"
+  );
+  const { event: pc20FinalizeEvent } = await requireEvent(
+    pc20FinalizeTx,
+    "universalTxFinalized"
+  );
+  assert.equal(
+    pc20FinalizeEvent.data.wrapperAddress.toBase58(),
+    pc20Mint.toBase58(),
+    "PC20 export event should carry wrapped mint as wrapper_address"
+  );
+  assert.equal(
+    pc20FinalizeEvent.data.token.toBase58(),
+    sourceAssetAsPubkey(pc20SourceAsset).toBase58(),
+    "PC20 export event should carry left-padded source asset as token"
+  );
+  assert.equal(
+    Buffer.from(pc20FinalizeEvent.data.payload).length,
+    0,
+    "PC20 export-only event payload should be empty user_data"
+  );
+  console.log(`  ✅ 17.1 PC20 direct export finalized: ${pc20FinalizeTx}`);
+
+  if (!(await connection.getAccountInfo(pc20UserAta))) {
+    await userProvider.sendAndConfirm(
+      new anchor.web3.Transaction().add(
+        spl.createAssociatedTokenAccountInstruction(
+          user,
+          pc20UserAta,
+          user,
+          pc20Mint,
+          spl.TOKEN_PROGRAM_ID,
+          spl.ASSOCIATED_TOKEN_PROGRAM_ID
+        )
+      ),
+      [userKeypair]
+    );
+  }
+
+  // 17.1b Existing CEA payload route transfers the exported PC20 from CEA to user.
+  const pc20TransferSubTxId = anchor.web3.Keypair.generate().publicKey.toBytes();
+  const pc20TransferUniversalTxId = generateUniversalTxId();
+  const pc20TransferIx = spl.createTransferInstruction(
+    pc20CeaAta,
+    pc20UserAta,
+    pc20CeaAuthority,
+    pc20DirectMintAmount,
+    [],
+    spl.TOKEN_PROGRAM_ID
+  );
+  const pc20TransferAccounts = pc20TransferIx.keys.map((key) => ({
+    pubkey: key.pubkey,
+    isWritable: key.isWritable,
+  }));
+  const pc20TransferGasFee =
+    SIGNATURE_FEE_LAMPORTS + pc20ExecutedRent + COMPUTE_BUFFER;
+  const pc20TransferSig = await signTssMessage({
+    instruction: TssInstruction.Execute,
+    amount: BigInt(0),
+    chainId: pc20TssAccount.chainId,
+    additional: buildExecuteAdditionalData(
+      new Uint8Array(pc20TransferUniversalTxId),
+      new Uint8Array(pc20TransferSubTxId),
+      spl.TOKEN_PROGRAM_ID,
+      new Uint8Array(pc20PushAccount),
+      pc20TransferAccounts,
+      pc20TransferIx.data,
+      pc20TransferGasFee
+    ),
+  });
+
+  const pc20TransferTx = await relayerProgram.methods
+    .finalizeUniversalTx(
+      2,
+      Array.from(pc20TransferSubTxId),
+      Array.from(pc20TransferUniversalTxId),
+      new anchor.BN(0),
+      pc20PushAccount,
+      accountsToWritableFlags(pc20TransferAccounts),
+      pc20TransferIx.data,
+      new anchor.BN(pc20TransferGasFee.toString()),
+      new anchor.BN(DEFAULT_DEADLINE.toString()),
+      Array.from(pc20TransferSig.signature),
+      pc20TransferSig.recoveryId,
+      Array.from(pc20TransferSig.messageHash)
+    )
+    .accountsPartial({
+      caller: relayer,
+      config: configPda,
+      vaultSol: vaultPda,
+      ceaAuthority: pc20CeaAuthority,
+      tssPda,
+      executedSubTx: getExecutedTxPda(pc20TransferSubTxId),
+      destinationProgram: spl.TOKEN_PROGRAM_ID,
+      recipient: null,
+      vaultAta: null,
+      ceaAta: null,
+      mint: null,
+      tokenProgram: null,
+      rent: null,
+      associatedTokenProgram: null,
+      recipientAta: null,
+      rateLimitConfig: null,
+      tokenRateLimit: null,
+      storedIxData: null,
+      storeRefundRecipient: null,
+      systemProgram: SystemProgram.programId,
+    })
+    .remainingAccounts(
+      pc20TransferAccounts.map((account) => ({
+        pubkey: account.pubkey,
+        isWritable: account.isWritable,
+        isSigner: false,
+      }))
+    )
+    .signers([relayerKeypair])
+    .rpc();
+
+  const pc20UserAfterTransfer = await spl.getAccount(connection as any, pc20UserAta);
+  assert.equal(
+    pc20UserAfterTransfer.amount.toString(),
+    pc20DirectMintAmount.toString(),
+    "Existing CEA payload route should transfer PC20 to user ATA"
+  );
+  console.log(`  ✅ 17.1b PC20 moved from CEA to user through payload: ${pc20TransferTx}`);
+
+  // 17.2 Solana -> Push direct burn from user wallet through generic sendUniversalTx.
+  const pc20FeeVaultAccount: any = await (program.account as any).feeVault.fetch(feeVaultPda);
+  const pc20InboundFee = BigInt(pc20FeeVaultAccount.inboundFeeLamports.toString());
+  const pc20DirectBurnPayload = Buffer.from("gateway-test-direct-pc20-burn");
+  const pc20DirectBurnReq = {
+    recipient: generateNonZeroBytes(20),
+    token: pc20Mint,
+    amount: new anchor.BN(pc20DirectBurnAmount.toString()),
+    payload: pc20DirectBurnPayload,
+    revertRecipient: user,
+    signatureData: Buffer.from([]),
+  };
+  const pc20DirectBurnTx = await userProgram.methods
+    .sendUniversalTx(pc20DirectBurnReq, new anchor.BN(pc20InboundFee.toString()))
+    .accountsPartial({
+      config: configPda,
+      vault: vaultPda,
+      feeVault: feeVaultPda,
+      userTokenAccount: pc20UserAta,
+      gatewayTokenAccount: null,
+      user,
+      priceUpdate: PRICE_ACCOUNT,
+      rateLimitConfig: rateLimitConfigPda,
+      tokenRateLimit: nativeSolTokenRateLimitPda,
+      systemProgram: SystemProgram.programId,
+      tokenProgram: spl.TOKEN_PROGRAM_ID,
+    })
+    .remainingAccounts([
+      { pubkey: pc20State, isWritable: false, isSigner: false },
+      { pubkey: pc20Mint, isWritable: true, isSigner: false },
+    ])
+    .signers([userKeypair])
+    .rpc();
+
+  const pc20UserAfterBurn = await spl.getAccount(connection as any, pc20UserAta);
+  assert.equal(
+    pc20UserAfterBurn.amount.toString(),
+    (pc20DirectMintAmount - pc20DirectBurnAmount).toString(),
+    "PC20 direct burn should debit user ATA"
+  );
+  const { event: pc20DirectBurnEvent } = await requireEvent(
+    pc20DirectBurnTx,
+    "universalTx"
+  );
+  assert.equal(
+    pc20DirectBurnEvent.data.fromCea,
+    false,
+    "PC20 direct burn event should not be from CEA"
+  );
+  assert.equal(
+    pc20DirectBurnEvent.data.token.toBase58(),
+    pc20Mint.toBase58(),
+    "PC20 direct burn event should carry wrapped mint token"
+  );
+  assert.equal(
+    pc20DirectBurnEvent.data.amount.toString(),
+    pc20DirectBurnAmount.toString(),
+    "PC20 direct burn event amount mismatch"
+  );
+  assert.deepEqual(
+    Buffer.from(pc20DirectBurnEvent.data.payload),
+    encodePc20EventPayload(pc20DirectBurnPayload),
+    "PC20 direct burn event payload should be selector-prefixed"
+  );
+  console.log(`  ✅ 17.2 PC20 direct burn emitted: ${pc20DirectBurnTx}`);
+
+  // 17.3 Push-side failure after direct burn: generic revert remints to recipient.
+  const pc20RevertSubTxId = anchor.web3.Keypair.generate().publicKey.toBytes();
+  const pc20RevertUniversalTxId = generateUniversalTxId();
+  const pc20RevertGasFee =
+    SIGNATURE_FEE_LAMPORTS + pc20ExecutedRent + COMPUTE_BUFFER;
+  const pc20RevertInstruction = {
+    revertRecipient: user,
+    revertMsg: Buffer.from([]),
+  };
+  const pc20RevertSig = await signTssMessage({
+    instruction: TssInstruction.Revert,
+    amount: pc20DirectBurnAmount,
+    chainId: pc20TssAccount.chainId,
+    additional: buildRevertAdditionalData(
+      pc20RevertSubTxId,
+      pc20RevertUniversalTxId,
+      user,
+      Buffer.from([]),
+      pc20RevertGasFee,
+      pc20Mint,
+      pc20SourceAsset
+    ),
+  });
+
+  const pc20RevertTx = await relayerProgram.methods
+    .revertUniversalTx(
+      Array.from(pc20RevertSubTxId),
+      Array.from(pc20RevertUniversalTxId),
+      new anchor.BN(pc20DirectBurnAmount.toString()),
+      pc20RevertInstruction,
+      new anchor.BN(pc20RevertGasFee.toString()),
+      new anchor.BN(DEFAULT_DEADLINE.toString()),
+      Array.from(pc20RevertSig.signature),
+      pc20RevertSig.recoveryId,
+      Array.from(pc20RevertSig.messageHash)
+    )
+    .accountsPartial({
+      config: configPda,
+      feeVault: feeVaultPda,
+      tssPda,
+      vault: vaultPda,
+      recipient: user,
+      tokenVault: null,
+      recipientTokenAccount: null,
+      tokenMint: pc20Mint,
+      tokenProgram: spl.TOKEN_PROGRAM_ID,
+      caller: relayer,
+      executedSubTx: getExecutedTxPda(pc20RevertSubTxId),
+      systemProgram: SystemProgram.programId,
+    })
+    .remainingAccounts([
+      { pubkey: pc20State, isWritable: false, isSigner: false },
+      { pubkey: pc20Mint, isWritable: true, isSigner: false },
+      { pubkey: pc20UserAta, isWritable: true, isSigner: false },
+      {
+        pubkey: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
+        isWritable: false,
+        isSigner: false,
+      },
+      {
+        pubkey: anchor.web3.SYSVAR_RENT_PUBKEY,
+        isWritable: false,
+        isSigner: false,
+      },
+    ])
+    .signers([relayerKeypair])
+    .rpc();
+
+  const pc20UserAfterRevert = await spl.getAccount(connection as any, pc20UserAta);
+  assert.equal(
+    pc20UserAfterRevert.amount.toString(),
+    pc20DirectMintAmount.toString(),
+    "PC20 burn revert should remint to user ATA"
+  );
+  const { event: pc20RevertEvent } = await requireEvent(
+    pc20RevertTx,
+    "revertUniversalTx"
+  );
+  assert.equal(
+    pc20RevertEvent.data.token.toBase58(),
+    pc20Mint.toBase58(),
+    "PC20 revert event should carry wrapped mint token"
+  );
+  assert.equal(
+    pc20RevertEvent.data.amount.toString(),
+    pc20DirectBurnAmount.toString(),
+    "PC20 revert event amount mismatch"
+  );
+  console.log(`  ✅ 17.3 PC20 burn revert reminted: ${pc20RevertTx}`);
+
+  // 17.4 Push -> Solana CEA export: mint to CEA ATA and execute payload.
+  const pc20CeaMinLamports = Math.max(
+    await connection.getMinimumBalanceForRentExemption(0),
+    1_000_000
+  );
+  const pc20CeaBalance = await connection.getBalance(pc20CeaAuthority);
+  if (pc20CeaBalance < pc20CeaMinLamports) {
+    const fundCeaTx = new anchor.web3.Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: admin,
+        toPubkey: pc20CeaAuthority,
+        lamports: pc20CeaMinLamports - pc20CeaBalance,
+      })
+    );
+    await adminProvider.sendAndConfirm(fundCeaTx, [adminKeypair]);
+  }
+
+  const pc20NoopIx = SystemProgram.transfer({
+    fromPubkey: pc20CeaAuthority,
+    toPubkey: user,
+    lamports: 1,
+  });
+  const pc20UserData = encodeExecutePayload(
+    instructionToPayloadFields({
+      instruction: pc20NoopIx,
+      targetProgram: SystemProgram.programId,
+      instructionId: 2,
+    })
+  );
+  const pc20CeaFinalizeSubTxId = anchor.web3.Keypair.generate().publicKey.toBytes();
+  const pc20CeaFinalizeUniversalTxId = generateUniversalTxId();
+  const pc20CeaFinalizeGasFee =
+    SIGNATURE_FEE_LAMPORTS +
+    pc20ExecutedRent +
+    pc20TokenRent +
+    REF_FINALIZE_STORE_UPLOAD_FEE +
+    COMPUTE_BUFFER;
+  const pc20CeaFinalizeSig = await signTssMessage({
+    instruction: TssInstruction.Pc20Finalize,
+    amount: pc20CeaMintAmount,
+    chainId: pc20TssAccount.chainId,
+    additional: buildPc20FinalizeAdditionalData({
+      universalTxId: pc20CeaFinalizeUniversalTxId,
+      subTxId: pc20CeaFinalizeSubTxId,
+      sourceAsset: pc20SourceAsset,
+      pushAccount: pc20PushAccount,
+      recipient: user,
+      name: pc20Name,
+      symbol: pc20Symbol,
+      decimals: pc20Decimals,
+      gasFee: pc20CeaFinalizeGasFee,
+      userData: pc20UserData,
+    }),
+  });
+
+  const pc20CeaFinalizeTx = await finalizePc20ExportByRef({
+    subTxId: pc20CeaFinalizeSubTxId,
+    universalTxId: pc20CeaFinalizeUniversalTxId,
+    amount: pc20CeaMintAmount,
+    sourceAsset: pc20SourceAsset,
+    pushAccount: pc20PushAccount,
+    name: pc20Name,
+    symbol: pc20Symbol,
+    decimals: pc20Decimals,
+    userData: pc20UserData,
+    gasFee: pc20CeaFinalizeGasFee,
+    signature: pc20CeaFinalizeSig.signature,
+    recoveryId: pc20CeaFinalizeSig.recoveryId,
+    messageHash: pc20CeaFinalizeSig.messageHash,
+    destinationProgram: SystemProgram.programId,
+    remainingAccounts: [
+      { pubkey: pc20State, isWritable: true, isSigner: false },
+      { pubkey: pc20Mint, isWritable: true, isSigner: false },
+      ...pc20NoopIx.keys.map((key) => ({
+        pubkey: key.pubkey,
+        isWritable: key.isWritable,
+        isSigner: false,
+      })),
+    ],
+  });
+
+  const pc20CeaAfterFinalize = await spl.getAccount(connection as any, pc20CeaAta);
+  assert.equal(
+    pc20CeaAfterFinalize.amount.toString(),
+    pc20CeaMintAmount.toString(),
+    "PC20 CEA export should mint to CEA ATA"
+  );
+  const { event: pc20CeaFinalizeEvent } = await requireEvent(
+    pc20CeaFinalizeTx,
+    "universalTxFinalized"
+  );
+  assert.equal(
+    pc20CeaFinalizeEvent.data.wrapperAddress.toBase58(),
+    pc20Mint.toBase58(),
+    "PC20 CEA export event should carry wrapped mint"
+  );
+  assert.deepEqual(
+    Buffer.from(pc20CeaFinalizeEvent.data.payload),
+    pc20UserData,
+    "PC20 CEA export event should carry decoded user_data"
+  );
+  console.log(`  ✅ 17.4 PC20 CEA export finalized: ${pc20CeaFinalizeTx}`);
+
+  // 17.5 CEA -> Push burn routed through finalizeUniversalTx self-route.
+  const pc20CeaBurnSubTxId = anchor.web3.Keypair.generate().publicKey.toBytes();
+  const pc20CeaBurnUniversalTxId = generateUniversalTxId();
+  const pc20CeaBurnPayload = Buffer.from("gateway-test-cea-pc20-burn");
+  const pc20CeaBurnIxData = encodeUniversalTxIxData({
+    token: pc20Mint,
+    amount: pc20CeaBurnAmount,
+    recipient: pc20PushAccount,
+    payload: pc20CeaBurnPayload,
+    revertRecipient: user,
+  });
+  const pc20CeaBurnAccounts = [
+    { pubkey: pc20State, isWritable: false },
+    { pubkey: pc20Mint, isWritable: true },
+    { pubkey: pc20CeaAta, isWritable: true },
+    { pubkey: spl.TOKEN_PROGRAM_ID, isWritable: false },
+  ];
+  const pc20CeaBurnGasFee =
+    SIGNATURE_FEE_LAMPORTS + pc20ExecutedRent + COMPUTE_BUFFER;
+  const pc20CeaBurnSig = await signTssMessage({
+    instruction: TssInstruction.Execute,
+    amount: 0n,
+    chainId: pc20TssAccount.chainId,
+    additional: buildExecuteAdditionalData(
+      pc20CeaBurnUniversalTxId,
+      pc20CeaBurnSubTxId,
+      PROGRAM_ID,
+      pc20PushAccount,
+      pc20CeaBurnAccounts,
+      pc20CeaBurnIxData,
+      pc20CeaBurnGasFee
+    ),
+  });
+
+  const pc20CeaBurnTx = await relayerProgram.methods
+    .finalizeUniversalTx(
+      2,
+      Array.from(pc20CeaBurnSubTxId),
+      Array.from(pc20CeaBurnUniversalTxId),
+      new anchor.BN(0),
+      pc20PushAccount,
+      accountsToWritableFlags(pc20CeaBurnAccounts),
+      pc20CeaBurnIxData,
+      new anchor.BN(pc20CeaBurnGasFee.toString()),
+      new anchor.BN(DEFAULT_DEADLINE.toString()),
+      Array.from(pc20CeaBurnSig.signature),
+      pc20CeaBurnSig.recoveryId,
+      Array.from(pc20CeaBurnSig.messageHash)
+    )
+    .accountsPartial({
+      caller: relayer,
+      config: configPda,
+      vaultSol: vaultPda,
+      ceaAuthority: pc20CeaAuthority,
+      tssPda,
+      executedSubTx: getExecutedTxPda(pc20CeaBurnSubTxId),
+      destinationProgram: PROGRAM_ID,
+      recipient: null,
+      vaultAta: null,
+      ceaAta: null,
+      mint: null,
+      tokenProgram: null,
+      rent: null,
+      associatedTokenProgram: null,
+      recipientAta: null,
+      rateLimitConfig: null,
+      tokenRateLimit: null,
+      storedIxData: null,
+      storeRefundRecipient: null,
+      systemProgram: SystemProgram.programId,
+    })
+    .remainingAccounts(
+      pc20CeaBurnAccounts.map((account) => ({
+        pubkey: account.pubkey,
+        isWritable: account.isWritable,
+        isSigner: false,
+      }))
+    )
+    .signers([relayerKeypair])
+    .rpc();
+
+  const pc20CeaAfterBurn = await spl.getAccount(connection as any, pc20CeaAta);
+  assert.equal(
+    pc20CeaAfterBurn.amount.toString(),
+    (pc20CeaMintAmount - pc20CeaBurnAmount).toString(),
+    "PC20 CEA routed burn should debit CEA ATA"
+  );
+  const { event: pc20CeaBurnEvent, events: pc20CeaBurnEvents } = await requireEvent(
+    pc20CeaBurnTx,
+    "universalTx"
+  );
+  assert.equal(
+    pc20CeaBurnEvents.some((event) => event.name === "universalTxFinalized"),
+    false,
+    "PC20 CEA burn should not emit outer UniversalTxFinalized"
+  );
+  assert.equal(
+    pc20CeaBurnEvent.data.fromCea,
+    true,
+    "PC20 CEA burn event should be from CEA"
+  );
+  assert.equal(
+    pc20CeaBurnEvent.data.token.toBase58(),
+    pc20Mint.toBase58(),
+    "PC20 CEA burn event should carry wrapped mint token"
+  );
+  assert.equal(
+    pc20CeaBurnEvent.data.amount.toString(),
+    pc20CeaBurnAmount.toString(),
+    "PC20 CEA burn event amount mismatch"
+  );
+  assert.deepEqual(
+    Buffer.from(pc20CeaBurnEvent.data.payload),
+    encodePc20EventPayload(pc20CeaBurnPayload),
+    "PC20 CEA burn event payload should be selector-prefixed"
+  );
+
+  // 17.6 TSS rescue remints PC20 through generic rescueFunds.
+  const pc20RescueSubTxId = anchor.web3.Keypair.generate().publicKey.toBytes();
+  const pc20RescueUniversalTxId = generateUniversalTxId();
+  const pc20RescueGasUsed = SIGNATURE_FEE_LAMPORTS + pc20ExecutedRent;
+  const pc20RescueGasFee = pc20RescueGasUsed + COMPUTE_BUFFER;
+  const pc20RescueSig = await signTssMessage({
+    instruction: TssInstruction.Rescue,
+    amount: pc20RescueAmount,
+    chainId: pc20TssAccount.chainId,
+    additional: buildRescueAdditionalData(
+      pc20RescueSubTxId,
+      pc20RescueUniversalTxId,
+      user,
+      pc20RescueGasFee,
+      pc20Mint,
+      pc20SourceAsset
+    ),
+  });
+
+  const pc20RescueTx = await relayerProgram.methods
+    .rescueFunds(
+      Array.from(pc20RescueSubTxId),
+      Array.from(pc20RescueUniversalTxId),
+      new anchor.BN(pc20RescueAmount.toString()),
+      new anchor.BN(pc20RescueGasFee.toString()),
+      new anchor.BN(DEFAULT_DEADLINE.toString()),
+      Array.from(pc20RescueSig.signature),
+      pc20RescueSig.recoveryId,
+      Array.from(pc20RescueSig.messageHash)
+    )
+    .accountsPartial({
+      config: configPda,
+      vault: vaultPda,
+      feeVault: feeVaultPda,
+      tssPda,
+      recipient: user,
+      executedSubTx: getExecutedTxPda(pc20RescueSubTxId),
+      caller: relayer,
+      systemProgram: SystemProgram.programId,
+      tokenVault: null,
+      recipientTokenAccount: null,
+      tokenMint: pc20Mint,
+      tokenProgram: spl.TOKEN_PROGRAM_ID,
+    })
+    .remainingAccounts([
+      { pubkey: pc20State, isWritable: false, isSigner: false },
+      { pubkey: pc20Mint, isWritable: true, isSigner: false },
+      { pubkey: pc20UserAta, isWritable: true, isSigner: false },
+      {
+        pubkey: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
+        isWritable: false,
+        isSigner: false,
+      },
+      {
+        pubkey: anchor.web3.SYSVAR_RENT_PUBKEY,
+        isWritable: false,
+        isSigner: false,
+      },
+    ])
+    .signers([relayerKeypair])
+    .rpc();
+
+  const pc20UserAfterRescue = await spl.getAccount(connection as any, pc20UserAta);
+  assert.equal(
+    pc20UserAfterRescue.amount.toString(),
+    (pc20DirectMintAmount + pc20RescueAmount).toString(),
+    "PC20 rescue should remint to user ATA"
+  );
+  const { event: pc20RescueEvent } = await requireEvent(pc20RescueTx, "fundsRescued");
+  assert.equal(
+    pc20RescueEvent.data.token.toBase58(),
+    pc20Mint.toBase58(),
+    "PC20 rescue event should carry wrapped mint token"
+  );
+  assert.equal(
+    pc20RescueEvent.data.amount.toString(),
+    pc20RescueAmount.toString(),
+    "PC20 rescue event amount mismatch"
+  );
+  assert.equal(
+    pc20RescueEvent.data.gasUsed.toString(),
+    pc20RescueGasUsed.toString(),
+    "PC20 rescue event gasUsed mismatch"
+  );
+  console.log(`  ✅ 17.6 PC20 rescue reminted: ${pc20RescueTx}`);
+
+  const pc20FinalMint = await spl.getMint(connection as any, pc20Mint);
+  assert.equal(
+    pc20FinalMint.supply.toString(),
+    (pc20DirectMintAmount + pc20CeaMintAmount - pc20CeaBurnAmount + pc20RescueAmount).toString(),
+    "PC20 final supply should match minted, burned, and reverted amounts"
+  );
+  console.log(`  ✅ 17.5 PC20 CEA routed burn finalized: ${pc20CeaBurnTx}`);
+  console.log("✅ PC20 devnet dummy flows passed!\n");
 
   console.log("All tests completed successfully!");
 }

@@ -535,6 +535,85 @@ describe("Universal Gateway - Execute Tests", () => {
       );
     });
 
+    it("keeps PC20-prefixed normal execute ix_data on the execute route", async () => {
+      const subTxId = generateTxId();
+      const universalTxId = generateUniversalTxId();
+      const pushAccount = generateSender();
+      const ixData = Buffer.from("PC20 normal execute payload", "utf8");
+      const { gasFee } = await calculateSolExecuteFees(provider.connection);
+      const tssAccount = await gatewayProgram.account.tssPda.fetch(tssPda);
+
+      const sig = await signTssMessage({
+        instruction: TssInstruction.Execute,
+        amount: BigInt(0),
+        chainId: tssAccount.chainId,
+        additional: buildExecuteAdditionalData(
+          new Uint8Array(universalTxId),
+          new Uint8Array(subTxId),
+          SystemProgram.programId,
+          new Uint8Array(pushAccount),
+          [],
+          ixData,
+          gasFee
+        ),
+      });
+
+      let error: any;
+      try {
+        await gatewayProgram.methods
+          .finalizeUniversalTx(
+            2,
+            Array.from(subTxId),
+            Array.from(universalTxId),
+            new anchor.BN(0),
+            Array.from(pushAccount),
+            Buffer.alloc(0),
+            ixData,
+            new anchor.BN(Number(gasFee)),
+            new anchor.BN(4102444800),
+            Array.from(sig.signature),
+            sig.recoveryId,
+            Array.from(sig.messageHash)
+          )
+          .accountsPartial({
+            caller: admin.publicKey,
+            config: configPda,
+            vaultSol: vaultPda,
+            ceaAuthority: getCeaAuthorityPda(pushAccount),
+            tssPda,
+            executedSubTx: getExecutedTxPda(subTxId),
+            rateLimitConfig: null,
+            tokenRateLimit: null,
+            destinationProgram: SystemProgram.programId,
+            storedIxData: null,
+            storeRefundRecipient: null,
+            recipient: null,
+            vaultAta: null,
+            ceaAta: null,
+            mint: null,
+            tokenProgram: null,
+            rent: null,
+            associatedTokenProgram: null,
+            recipientAta: null,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([admin])
+          .rpc();
+      } catch (e: any) {
+        error = e;
+      }
+
+      expect(error, "downstream SystemProgram should reject the raw test ix").to.not.equal(
+        undefined
+      );
+      const errorStr = error.toString();
+      expect(errorStr).to.not.include("Error Code: InvalidInput");
+      expect(errorStr).to.not.include("Error Code: InvalidInstruction");
+      expect(
+        await provider.connection.getAccountInfo(getExecutedTxPda(subTxId))
+      ).to.equal(null);
+    });
+
     it("should execute SOL transfer using preseeded CEA balance + partial vault top-up", async () => {
       const pushAccount = generateSender();
       const ceaAuthority = getCeaAuthorityPda(pushAccount);

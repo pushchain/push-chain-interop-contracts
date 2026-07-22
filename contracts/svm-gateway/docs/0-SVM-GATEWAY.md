@@ -24,7 +24,7 @@ The program uses PDAs for all protocol state. No external signers or owner keys 
 |---------|-------|---------------|
 | `Config` | `["config"]` | Admin/operator/pauser pubkeys, pending admin/pauser pubkeys, USD caps, Pyth oracle config (operator reuses legacy `tss_address` storage slot for layout compatibility) |
 | `Vault` | `["vault"]` | Native SOL bridge balance; also the authority for all SPL vault ATAs |
-| `FeeVault` | `["fee_vault"]` | Inbound fees and UV gas reimbursement pool |
+| `FeeVault` | `["fee_vault"]` | Inbound fees and revert UV gas reimbursement pool |
 | `TssPda` | `["final_tss_pda"]` | Active TSS Ethereum address (`tss_eth_address`), `chain_id` — this is the account verified against on every outbound call |
 | `CEA` | `["push_identity", push_account[20]]` | Per-user signing authority; no private key — gateway signs via `invoke_signed` |
 | `ExecutedSubTx` | `["executed_sub_tx", sub_tx_id[32]]` | Replay protection; existence = executed |
@@ -32,7 +32,7 @@ The program uses PDAs for all protocol state. No external signers or owner keys 
 | `TokenRateLimit` | `["rate_limit", mint]` | Per-token epoch usage |
 | `StoredIxData` | `["stored_ix_data", sub_tx_id[32], keccak256(ix_data)[32]]` | Temporary store for large `ix_data` used by the ref-finalize route |
 
-**Vault vs FeeVault separation:** `Vault` holds only user-deposited bridge funds, keeping it 1:1 backed. `FeeVault` holds inbound fees and funds UV reimbursement for `revert_universal_tx` and `rescue_funds`. `finalize_universal_tx` reimburses only `gas_used` from `Vault`; any signed surplus (`gas_to_refund = gas_fee - gas_used`) remains in `Vault` and is refunded to the user on Push Chain using the `UniversalTxFinalized` event. The inbound fee is hard-capped at `2_000_000` lamports (`0.002 SOL`). Only reverted txs consume from `FeeVault`; accumulated surplus from successful txs is recoverable by admin via `withdraw_inbound_fees`.
+**Vault vs FeeVault separation:** `Vault` holds user-deposited bridge funds and releases destination-chain gas backing for Push-paid routes. `FeeVault` holds SVM-originated inbound fees and funds `revert_universal_tx` reimbursement. `finalize_universal_tx` and `rescue_funds` reimburse only measured `gas_used` from `Vault`; any signed surplus (`gas_to_refund = gas_fee - gas_used`) is handled on Push Chain from emitted events. The inbound fee is hard-capped at `2_000_000` lamports (`0.002 SOL`). Only SVM-originated reverts consume from `FeeVault`; accumulated surplus from successful txs is recoverable by admin via `withdraw_inbound_fees`.
 
 **CEA vs EVM:** On EVM, CEA is a deployed contract per user. On SVM, CEA is a system-owned PDA. No deployment step is needed — the Solana runtime creates it on first lamport transfer.
 
@@ -134,7 +134,7 @@ See `3-REVERT.md`.
 Vault → Any recipient (TSS-designated)
 ```
 
-Emergency release when normal recovery paths are unavailable. TSS designates the recipient directly. Replay-protected via `ExecutedSubTx` PDA.
+Emergency release when normal recovery paths are unavailable. TSS designates the recipient directly. Replay-protected via `ExecutedSubTx` PDA. Rescue is Push-paid, so UV gas reimbursement comes from `Vault` and `FundsRescued.gas_used` drives Push-side refund/accounting.
 
 Emits: `FundsRescued`
 
