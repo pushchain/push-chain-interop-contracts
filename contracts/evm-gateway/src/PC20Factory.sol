@@ -197,4 +197,8 @@ contract PC20Factory is PausableUpgradeable, AccessControlDefaultAdminRulesUpgra
     function unpause() external onlyRole(OPERATOR_ROLE) {
         _unpause();
     }
+
+    function version() external pure returns (string memory) {
+        return "1.0.0";
+    }
 }

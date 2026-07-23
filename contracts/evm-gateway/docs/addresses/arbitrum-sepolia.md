@@ -21,6 +21,14 @@
 | Vault Implementation (old)                | `0x60326FA4dD66CEA3637f4Dd6B4D65ad3112B87Ef` |
 | CEAFactory                                | `0x88DC189275078Cf509E4Cc773F089c8ad07b7EA2` |
 
+## PC20 System
+
+| Contract                       | Address                                      |
+| ------------------------------ | -------------------------------------------- |
+| PC20Factory Proxy              | `0x1626922755B9b0135CA95BA7C438Ef424145951F` |
+| PC20Factory ProxyAdmin         | `0x6365ed33b5f2d558e420dc6c1247226028a32161` |
+| PC20Factory Implementation     | `0x92C71b6154dd90e3f3cA5315D201Daceab30835e` |
+
 ## External / Token Addresses
 
 | Contract               | Address |
