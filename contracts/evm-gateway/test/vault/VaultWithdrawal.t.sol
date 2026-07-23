@@ -180,7 +180,7 @@ contract VaultWithdrawalTest is Test {
         bytes memory expectedPayload = _withdrawalPayloadDirect(address(usdc), recipient, amount);
         vm.expectEmit(true, true, true, true);
         emit IVault.UniversalTxFinalized(
-            subTxId, universalTxId, originCaller, address(0), address(usdc), amount, expectedPayload
+            subTxId, universalTxId, address(0), originCaller, address(0), address(usdc), amount, expectedPayload
         );
 
         // TSS calls vault.finalizeUniversalTx with withdrawal payload
@@ -329,7 +329,7 @@ contract VaultWithdrawalTest is Test {
         bytes memory expectedPayload = _withdrawalPayloadDirect(address(0), recipient, amount);
         vm.expectEmit(true, true, true, true);
         emit IVault.UniversalTxFinalized(
-            subTxId, universalTxId, originCaller, address(0), address(0), amount, expectedPayload
+            subTxId, universalTxId, address(0), originCaller, address(0), address(0), amount, expectedPayload
         );
 
         // Fund TSS with ETH to send
@@ -596,7 +596,7 @@ contract VaultWithdrawalTest is Test {
         bytes memory expectedPayload = _withdrawalPayloadDirect(address(usdc), recipient, amount);
         vm.expectEmit(true, true, true, true);
         emit IVault.UniversalTxFinalized(
-            subTxId, universalTxId, originCaller, address(0), address(usdc), amount, expectedPayload
+            subTxId, universalTxId, address(0), originCaller, address(0), address(usdc), amount, expectedPayload
         );
 
         vm.prank(tss);
@@ -625,6 +625,7 @@ contract VaultWithdrawalTest is Test {
         emit IVault.UniversalTxFinalized(
             subTxId,
             universalTxId,
+            address(0),
             originCaller,
             address(0),
             address(usdc),
@@ -893,7 +894,7 @@ contract VaultWithdrawalTest is Test {
 
         vm.expectEmit(true, true, true, true);
         emit IVault.UniversalTxFinalized(
-            subTxId, universalTxId, originCaller, specificRecipient, address(usdc), amount, payload
+            subTxId, universalTxId, address(0), originCaller, specificRecipient, address(usdc), amount, payload
         );
 
         vm.prank(tss);
@@ -914,7 +915,7 @@ contract VaultWithdrawalTest is Test {
         vm.deal(tss, amount);
         vm.expectEmit(true, true, true, true);
         emit IVault.UniversalTxFinalized(
-            subTxId, universalTxId, originCaller, specificRecipient, address(0), amount, payload
+            subTxId, universalTxId, address(0), originCaller, specificRecipient, address(0), amount, payload
         );
 
         vm.prank(tss);

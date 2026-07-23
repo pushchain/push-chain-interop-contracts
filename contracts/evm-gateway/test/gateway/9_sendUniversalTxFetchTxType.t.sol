@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import { BaseTest } from "../BaseTest.t.sol";
 import { UniversalGateway } from "../../src/UniversalGateway.sol";
-import { TX_TYPE, RevertInstructions } from "../../src/libraries/Types.sol";
+import { TX_TYPE, RevertInstructions, PRC_20_SELECTOR } from "../../src/libraries/Types.sol";
 import { UniversalPayload, UniversalTxRequest } from "../../src/libraries/TypesUG.sol";
 import { Errors } from "../../src/libraries/Errors.sol";
 import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -146,7 +146,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: nativeValue,
-            payload: bytes(""),
+            payload: abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -168,7 +168,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: nativeValue,
-            payload: bytes(""),
+            payload: abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -190,7 +190,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: amount,
-            payload: bytes(""),
+            payload: abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -212,7 +212,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: nativeValue,
-            payload: nonEmptyPayload(),
+            payload: abi.encodePacked(PRC_20_SELECTOR, nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -247,7 +247,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: nativeValue,
-            payload: nonEmptyPayload(),
+            payload: abi.encodePacked(PRC_20_SELECTOR, nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -269,7 +269,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: nativeValue,
-            payload: nonEmptyPayload(),
+            payload: abi.encodePacked(PRC_20_SELECTOR, nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -291,7 +291,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0), // Always address(0) for UEA credit
             token: address(0),
             amount: amount,
-            payload: nonEmptyPayload(),
+            payload: abi.encodePacked(PRC_20_SELECTOR, nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -314,7 +314,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: 0,
-            payload: nonEmptyPayload(),
+            payload: abi.encodePacked(PRC_20_SELECTOR, nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -342,7 +342,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: amount,
-            payload: bytes(""),
+            payload: abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -377,7 +377,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0),
             token: erc20A,
             amount: amount,
-            payload: bytes(""),
+            payload: abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -424,7 +424,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: req.recipient,
             token: erc20A,
             amount: amount,
-            payload: nonEmptyPayload(),
+            payload: abi.encodePacked(PRC_20_SELECTOR, nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -481,7 +481,7 @@ contract GatewayFetchTxTypeTest is BaseTest {
             recipient: address(0), // Always address(0) for UEA credit
             token: address(0),
             amount: amount,
-            payload: nonEmptyPayload(),
+            payload: abi.encodePacked(PRC_20_SELECTOR, nonEmptyPayload()),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false

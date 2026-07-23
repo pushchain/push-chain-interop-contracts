@@ -46,3 +46,9 @@ enum VerificationType {
     signedVerification,
     universalTxVerification
 }
+
+/// @dev Magic prefix for PC20 export payloads. ASCII encoding of "PC20" (0x50433230).
+bytes4 constant PC_20_SELECTOR = 0x50433230;
+
+/// @dev Magic prefix for PRC20 payloads. ASCII encoding of "PRC2" (0x50524332).
+bytes4 constant PRC_20_SELECTOR = 0x50524332;

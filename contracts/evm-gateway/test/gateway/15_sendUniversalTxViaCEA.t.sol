@@ -4,7 +4,7 @@ pragma solidity 0.8.26;
 import { BaseTest } from "../BaseTest.t.sol";
 import { Vm } from "forge-std/Vm.sol";
 import { UniversalGateway } from "../../src/UniversalGateway.sol";
-import { TX_TYPE, RevertInstructions } from "../../src/libraries/Types.sol";
+import { TX_TYPE, RevertInstructions, PRC_20_SELECTOR } from "../../src/libraries/Types.sol";
 import { UniversalPayload, UniversalTxRequest } from "../../src/libraries/TypesUG.sol";
 import { Errors } from "../../src/libraries/Errors.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -221,7 +221,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
             mappedUEA,
             address(0),
             0,
-            _defaultPayload(),
+            abi.encodePacked(PRC_20_SELECTOR, _defaultPayload()),
             req.revertRecipient,
             TX_TYPE.GAS_AND_PAYLOAD,
             bytes(""),
@@ -245,7 +245,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
             mappedUEA,
             address(tokenA),
             amount,
-            bytes(""),
+            abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             req.revertRecipient,
             TX_TYPE.FUNDS,
             bytes(""),
@@ -267,7 +267,15 @@ contract SendUniversalTxViaCEATest is BaseTest {
 
         vm.expectEmit(true, true, false, true, address(gateway));
         emit UniversalTx(
-            address(cea), mappedUEA, address(0), amount, bytes(""), req.revertRecipient, TX_TYPE.FUNDS, bytes(""), true
+            address(cea),
+            mappedUEA,
+            address(0),
+            amount,
+            abi.encodePacked(PRC_20_SELECTOR, bytes("")),
+            req.revertRecipient,
+            TX_TYPE.FUNDS,
+            bytes(""),
+            true
         );
 
         vm.prank(address(cea));
@@ -294,7 +302,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
             mappedUEA,
             address(tokenA),
             amount,
-            payload,
+            abi.encodePacked(PRC_20_SELECTOR, payload),
             req.revertRecipient,
             TX_TYPE.FUNDS_AND_PAYLOAD,
             bytes(""),
@@ -355,7 +363,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
             mappedUEA,
             address(0),
             amount,
-            payload,
+            abi.encodePacked(PRC_20_SELECTOR, payload),
             req.revertRecipient,
             TX_TYPE.FUNDS_AND_PAYLOAD,
             bytes(""),
@@ -392,7 +400,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
             mappedUEA,
             address(0),
             fundsAmount,
-            payload,
+            abi.encodePacked(PRC_20_SELECTOR, payload),
             req.revertRecipient,
             TX_TYPE.FUNDS_AND_PAYLOAD,
             bytes(""),
@@ -444,7 +452,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
             mappedUEA,
             address(tokenA),
             amount,
-            payload,
+            abi.encodePacked(PRC_20_SELECTOR, payload),
             req.revertRecipient,
             TX_TYPE.FUNDS_AND_PAYLOAD,
             bytes(""),
@@ -538,7 +546,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
             mappedUEA, // recipient = mapped UEA (not address(0))
             address(tokenA),
             amount,
-            payload,
+            abi.encodePacked(PRC_20_SELECTOR, payload),
             address(0x456),
             TX_TYPE.FUNDS_AND_PAYLOAD,
             sigData,
@@ -567,7 +575,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
             address(0),
             address(0),
             gasAmount,
-            bytes(""),
+            abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             address(0x456),
             TX_TYPE.GAS,
             bytes(""),
@@ -658,7 +666,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
             mappedUEA,
             address(tokenA),
             amount,
-            payload,
+            abi.encodePacked(PRC_20_SELECTOR, payload),
             address(0x456),
             TX_TYPE.FUNDS_AND_PAYLOAD,
             bytes(""),
@@ -787,7 +795,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
             mappedUEA,
             address(0),
             gasAmount,
-            payload,
+            abi.encodePacked(PRC_20_SELECTOR, payload),
             address(0x456),
             TX_TYPE.GAS_AND_PAYLOAD,
             bytes(""),
@@ -809,7 +817,15 @@ contract SendUniversalTxViaCEATest is BaseTest {
 
         vm.expectEmit(true, true, false, true, address(gateway));
         emit UniversalTx(
-            address(cea), mappedUEA, address(0), 0, payload, address(0x456), TX_TYPE.GAS_AND_PAYLOAD, bytes(""), true
+            address(cea),
+            mappedUEA,
+            address(0),
+            0,
+            abi.encodePacked(PRC_20_SELECTOR, payload),
+            address(0x456),
+            TX_TYPE.GAS_AND_PAYLOAD,
+            bytes(""),
+            true
         );
 
         vm.prank(address(cea));
@@ -834,7 +850,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
             mappedUEA,
             address(0),
             0,
-            _defaultPayload(),
+            abi.encodePacked(PRC_20_SELECTOR, _defaultPayload()),
             req.revertRecipient,
             TX_TYPE.GAS_AND_PAYLOAD,
             bytes(""),
@@ -855,7 +871,15 @@ contract SendUniversalTxViaCEATest is BaseTest {
 
         vm.expectEmit(true, true, false, true, address(gateway));
         emit UniversalTx(
-            address(cea), mappedUEA, address(0), gasAmount, bytes(""), req.revertRecipient, TX_TYPE.GAS, bytes(""), true
+            address(cea),
+            mappedUEA,
+            address(0),
+            gasAmount,
+            abi.encodePacked(PRC_20_SELECTOR, bytes("")),
+            req.revertRecipient,
+            TX_TYPE.GAS,
+            bytes(""),
+            true
         );
 
         vm.prank(address(cea));
@@ -987,7 +1011,15 @@ contract SendUniversalTxViaCEATest is BaseTest {
 
         vm.expectEmit(true, true, false, true, address(gateway));
         emit UniversalTx(
-            user1, address(0), address(0), gasAmount, payload, address(0x456), TX_TYPE.GAS_AND_PAYLOAD, bytes(""), false
+            user1,
+            address(0),
+            address(0),
+            gasAmount,
+            abi.encodePacked(PRC_20_SELECTOR, payload),
+            address(0x456),
+            TX_TYPE.GAS_AND_PAYLOAD,
+            bytes(""),
+            false
         );
 
         vm.prank(user1);
@@ -1028,7 +1060,15 @@ contract SendUniversalTxViaCEATest is BaseTest {
 
         vm.expectEmit(true, true, false, true, address(gateway));
         emit UniversalTx(
-            address(cea), mappedUEA, address(0), gasAmount, bytes(""), req.revertRecipient, TX_TYPE.GAS, bytes(""), true
+            address(cea),
+            mappedUEA,
+            address(0),
+            gasAmount,
+            abi.encodePacked(PRC_20_SELECTOR, bytes("")),
+            req.revertRecipient,
+            TX_TYPE.GAS,
+            bytes(""),
+            true
         );
 
         vm.prank(address(cea));
@@ -1316,7 +1356,7 @@ contract SendUniversalTxViaCEATest is BaseTest {
             address(0),
             address(0),
             fundsAmount,
-            payload,
+            abi.encodePacked(PRC_20_SELECTOR, payload),
             address(0x456),
             TX_TYPE.FUNDS_AND_PAYLOAD,
             bytes(""),

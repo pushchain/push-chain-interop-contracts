@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import { BaseTest } from "../BaseTest.t.sol";
 import { UniversalGateway } from "../../src/UniversalGateway.sol";
-import { TX_TYPE, RevertInstructions } from "../../src/libraries/Types.sol";
+import { TX_TYPE, RevertInstructions, PRC_20_SELECTOR } from "../../src/libraries/Types.sol";
 import { UniversalPayload, UniversalTxRequest } from "../../src/libraries/TypesUG.sol";
 import { Errors } from "../../src/libraries/Errors.sol";
 import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -172,7 +172,7 @@ contract GatewaySendUniversalTxWithFundsTest is BaseTest {
             recipient: address(0), // FUNDS always has recipient == address(0)
             token: address(0),
             amount: fundsAmount,
-            payload: bytes(""),
+            payload: abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -400,7 +400,7 @@ contract GatewaySendUniversalTxWithFundsTest is BaseTest {
             recipient: address(0), // FUNDS always has recipient == address(0)
             token: address(tokenA),
             amount: fundsAmount,
-            payload: bytes(""),
+            payload: abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -679,7 +679,7 @@ contract GatewaySendUniversalTxWithFundsTest is BaseTest {
             recipient: address(0), // FUNDS always has recipient == address(0)
             token: address(0),
             amount: fundsAmount,
-            payload: bytes(""),
+            payload: abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             revertRecipient: revertInst.revertRecipient, // Full struct with revertMsg
             signatureData: bytes(""),
             fromCEA: false

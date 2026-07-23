@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import { BaseTest } from "../BaseTest.t.sol";
 import { UniversalGateway } from "../../src/UniversalGateway.sol";
-import { TX_TYPE, RevertInstructions } from "../../src/libraries/Types.sol";
+import { TX_TYPE, RevertInstructions, PRC_20_SELECTOR } from "../../src/libraries/Types.sol";
 import { UniversalPayload, UniversalTxRequest } from "../../src/libraries/TypesUG.sol";
 import { Errors } from "../../src/libraries/Errors.sol";
 import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -248,7 +248,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
             recipient: address(0), // address(0) for UEA credit
             token: address(0), // Native token (even though amount is 0)
             amount: gasAmount, // Zero amount
-            payload: nonEmptyPayload, // Payload is present
+            payload: abi.encodePacked(PRC_20_SELECTOR, nonEmptyPayload), // Payload is present
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -549,7 +549,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
             recipient: address(0), // Always address(0) for gas routes (UEA credit)
             token: address(0), // Native token
             amount: gasAmount,
-            payload: bytes(""), // Empty for GAS
+            payload: abi.encodePacked(PRC_20_SELECTOR, bytes("")), // Empty for GAS
             revertRecipient: revertInst.revertRecipient,
             signatureData: sigData,
             fromCEA: false
@@ -586,7 +586,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
             recipient: address(0), // Always address(0) for gas routes (UEA credit)
             token: address(0), // Native token
             amount: gasAmount,
-            payload: encodedPayload, // Non-empty for GAS_AND_PAYLOAD
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload), // Non-empty for GAS_AND_PAYLOAD
             revertRecipient: revertInst.revertRecipient,
             signatureData: sigData,
             fromCEA: false
@@ -616,11 +616,11 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: gasAmount,
-            payload: bytes(""),
+            payload: abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""), // Empty
             fromCEA: false
-         });
+        });
 
         vm.prank(user1);
         gatewayTemp.sendUniversalTx{ value: gasAmount }(req);
