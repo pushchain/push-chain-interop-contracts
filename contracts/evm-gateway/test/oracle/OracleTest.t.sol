@@ -327,7 +327,7 @@ contract OracleTest is BaseTest {
             address(newGateway),
             address(proxyAdmin),
             abi.encodeWithSelector(
-                newGateway.initialize.selector,
+                newGateway.initializeV2.selector,
                 admin,
                 pauser,
                 tss,
@@ -340,11 +340,6 @@ contract OracleTest is BaseTest {
         );
 
         UniversalGateway gatewayInstance = UniversalGateway(payable(address(proxy)));
-        vm.startPrank(admin);
-        gatewayInstance.grantRole(gatewayInstance.ROLE_MANAGER_ROLE(), admin);
-        gatewayInstance.grantRole(gatewayInstance.UG_ADMIN_ROLE(), admin);
-        gatewayInstance.grantRole(gatewayInstance.OPERATOR_ROLE(), admin);
-        vm.stopPrank();
 
         // Create a mock feed with 0 decimals to trigger the fallback logic
         MockAggregatorV3 mockFeed = new MockAggregatorV3(0); // 0 decimals!
@@ -401,7 +396,7 @@ contract OracleTest is BaseTest {
         // Deploy a new gateway via proxy with zero Uniswap addresses
         UniversalGateway impl = new UniversalGateway();
         bytes memory initData = abi.encodeWithSelector(
-            UniversalGateway.initialize.selector,
+            UniversalGateway.initializeV2.selector,
             admin,
             pauser,
             tss,
@@ -414,11 +409,6 @@ contract OracleTest is BaseTest {
         TransparentUpgradeableProxy proxy =
             new TransparentUpgradeableProxy(address(impl), admin, initData);
         UniversalGateway newGateway = UniversalGateway(payable(address(proxy)));
-        vm.startPrank(admin);
-        newGateway.grantRole(newGateway.ROLE_MANAGER_ROLE(), admin);
-        newGateway.grantRole(newGateway.UG_ADMIN_ROLE(), admin);
-        newGateway.grantRole(newGateway.OPERATOR_ROLE(), admin);
-        vm.stopPrank();
 
         // Should not revert and should have zero addresses
         assertEq(address(newGateway.uniV3Factory()), address(0));

@@ -89,7 +89,7 @@ contract GatewaySendUniversalTxTest is BaseTest {
 
         // Deploy transparent upgradeable proxy
         bytes memory initData = abi.encodeWithSelector(
-            UniversalGateway.initialize.selector,
+            UniversalGateway.initializeV2.selector,
             admin,
             pauser,
             tss,
@@ -98,8 +98,6 @@ contract GatewaySendUniversalTxTest is BaseTest {
             uniV3Factory,
             uniV3Router,
             address(weth),
-            address(0),
-            address(0),
             address(0)
         );
 
@@ -108,11 +106,6 @@ contract GatewaySendUniversalTxTest is BaseTest {
 
         // Cast proxy to UniversalGateway
         gatewayTemp = UniversalGateway(payable(address(tempProxy)));
-        vm.startPrank(admin);
-        gatewayTemp.grantRole(gatewayTemp.ROLE_MANAGER_ROLE(), admin);
-        gatewayTemp.grantRole(gatewayTemp.UG_ADMIN_ROLE(), admin);
-        gatewayTemp.grantRole(gatewayTemp.OPERATOR_ROLE(), admin);
-        vm.stopPrank();
         _configureGatewayPostDeploy(gatewayTemp, admin, address(this));
 
         vm.label(address(gatewayTemp), "UniversalGateway");

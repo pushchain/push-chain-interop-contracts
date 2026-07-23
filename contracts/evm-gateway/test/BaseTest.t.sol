@@ -183,7 +183,7 @@ abstract contract BaseTest is Test {
 
         // Deploy transparent upgradeable proxy
         bytes memory initData = abi.encodeWithSelector(
-            UniversalGateway.initialize.selector,
+            UniversalGateway.initializeV2.selector,
             admin,
             pauser,
             tss,
@@ -192,8 +192,6 @@ abstract contract BaseTest is Test {
             uniV3Factory,
             uniV3Router,
             address(weth),
-            address(0),
-            address(0),
             address(0)
         );
 
@@ -201,15 +199,6 @@ abstract contract BaseTest is Test {
 
         // Cast proxy to gateway interface
         gateway = UniversalGateway(payable(address(gatewayProxy)));
-
-        // Grant admin the operational roles (initializeV2 can't be called after
-        // initialize since __AccessControlDefaultAdminRules_init was already run)
-        vm.startPrank(admin);
-        gateway.grantRole(gateway.ROLE_MANAGER_ROLE(), admin);
-        gateway.grantRole(gateway.UG_ADMIN_ROLE(), admin);
-        gateway.grantRole(gateway.OPERATOR_ROLE(), admin);
-
-        vm.stopPrank();
 
         _configureGatewayPostDeploy(gateway, admin, address(this));
 

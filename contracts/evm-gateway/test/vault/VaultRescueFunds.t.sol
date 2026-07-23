@@ -74,7 +74,7 @@ contract VaultRescueFundsTest is Test {
         // Deploy UniversalGateway with vault address so VAULT_ROLE is granted
         UniversalGateway gatewayImpl = new UniversalGateway();
         bytes memory gatewayInitData = abi.encodeWithSelector(
-            UniversalGateway.initialize.selector,
+            UniversalGateway.initializeV2.selector,
             admin,
             pauser,
             tss,
@@ -83,8 +83,6 @@ contract VaultRescueFundsTest is Test {
             address(0),
             address(0),
             weth,
-            address(0),
-            address(0),
             address(0)
         );
         ERC1967Proxy gatewayProxy = new ERC1967Proxy(
@@ -93,9 +91,6 @@ contract VaultRescueFundsTest is Test {
         );
         gateway = UniversalGateway(payable(address(gatewayProxy)));
         vm.startPrank(admin);
-        gateway.grantRole(gateway.ROLE_MANAGER_ROLE(), admin);
-        gateway.grantRole(gateway.UG_ADMIN_ROLE(), admin);
-        gateway.grantRole(gateway.OPERATOR_ROLE(), admin);
         gateway.updateVault(address(vault));
         vm.stopPrank();
 

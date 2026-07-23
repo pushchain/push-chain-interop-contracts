@@ -97,7 +97,7 @@ contract ProtocolFeeTest is BaseTest {
     function _deployFeeGateway() internal {
         UniversalGateway impl = new UniversalGateway();
         bytes memory initData = abi.encodeWithSelector(
-            UniversalGateway.initialize.selector,
+            UniversalGateway.initializeV2.selector,
             admin,
             pauser,
             tss,
@@ -106,18 +106,11 @@ contract ProtocolFeeTest is BaseTest {
             uniV3Factory,
             uniV3Router,
             address(weth),
-            address(0),
-            address(0),
             address(0)
         );
         TransparentUpgradeableProxy proxy =
             new TransparentUpgradeableProxy(address(impl), address(proxyAdmin), initData);
         gw = UniversalGateway(payable(address(proxy)));
-        vm.startPrank(admin);
-        gw.grantRole(gw.ROLE_MANAGER_ROLE(), admin);
-        gw.grantRole(gw.UG_ADMIN_ROLE(), admin);
-        gw.grantRole(gw.OPERATOR_ROLE(), admin);
-        vm.stopPrank();
         _configureGatewayPostDeploy(gw, admin, address(this));
         vm.label(address(gw), "GW_FeeTest");
     }

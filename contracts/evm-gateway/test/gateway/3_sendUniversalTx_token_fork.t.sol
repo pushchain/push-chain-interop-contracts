@@ -143,7 +143,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
 
         // Create initialization data with mainnet WETH
         bytes memory initData = abi.encodeWithSelector(
-            UniversalGateway.initialize.selector,
+            UniversalGateway.initializeV2.selector,
             admin, // admin
             pauser, // pauser
             tss, // tss
@@ -152,8 +152,6 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
             MAINNET_UNISWAP_V3_FACTORY, // Use mainnet factory
             MAINNET_UNISWAP_V3_ROUTER, // Use mainnet router
             MAINNET_WETH, // Use mainnet WETH instead of mock
-            address(0),
-            address(0),
             address(0)
         );
 
@@ -162,11 +160,6 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
 
         // Update gateway reference
         gatewayFork = UniversalGateway(payable(address(gatewayProxy)));
-        vm.startPrank(admin);
-        gatewayFork.grantRole(gatewayFork.ROLE_MANAGER_ROLE(), admin);
-        gatewayFork.grantRole(gatewayFork.UG_ADMIN_ROLE(), admin);
-        gatewayFork.grantRole(gatewayFork.OPERATOR_ROLE(), admin);
-        vm.stopPrank();
 
         // Label for debugging
         vm.label(address(gatewayFork), "UniversalGateway-Fork");
@@ -373,7 +366,7 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
         // Create a new gateway without Uniswap configured
         UniversalGateway implementation2 = new UniversalGateway();
         bytes memory initData2 = abi.encodeWithSelector(
-            UniversalGateway.initialize.selector,
+            UniversalGateway.initializeV2.selector,
             admin,
             pauser,
             tss,
@@ -382,18 +375,11 @@ contract GatewaySendUniversalTxTokenGasForkTest is BaseTest {
             address(0), // No factory
             address(0), // No router
             MAINNET_WETH,
-            address(0),
-            address(0),
             address(0)
         );
         TransparentUpgradeableProxy proxy2 =
             new TransparentUpgradeableProxy(address(implementation2), address(proxyAdmin), initData2);
         UniversalGateway gatewayNoUniswap = UniversalGateway(payable(address(proxy2)));
-        vm.startPrank(admin);
-        gatewayNoUniswap.grantRole(gatewayNoUniswap.ROLE_MANAGER_ROLE(), admin);
-        gatewayNoUniswap.grantRole(gatewayNoUniswap.UG_ADMIN_ROLE(), admin);
-        gatewayNoUniswap.grantRole(gatewayNoUniswap.OPERATOR_ROLE(), admin);
-        vm.stopPrank();
 
         fundUserWithMainnetTokens(user1, MAINNET_USDC, 1000e6);
         vm.prank(user1);

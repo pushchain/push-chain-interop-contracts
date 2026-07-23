@@ -58,7 +58,7 @@ contract AccessControlTest is Test {
                         address(gwImpl),
                         proxyDeployer,
                         abi.encodeWithSelector(
-                            UniversalGateway.initialize.selector,
+                            UniversalGateway.initializeV2.selector,
                             admin,
                             pauser,
                             tss,
@@ -67,20 +67,12 @@ contract AccessControlTest is Test {
                             address(0),
                             address(0),
                             address(weth),
-                            address(0),
-                            address(0),
                             address(ethUsdFeed)
                         )
                     )
                 ))
         );
 
-        vm.stopPrank();
-
-        vm.startPrank(admin);
-        gw.grantRole(gw.ROLE_MANAGER_ROLE(), admin);
-        gw.grantRole(gw.UG_ADMIN_ROLE(), admin);
-        gw.grantRole(gw.OPERATOR_ROLE(), admin);
         vm.stopPrank();
 
         vm.startPrank(proxyDeployer);

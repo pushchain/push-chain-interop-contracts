@@ -70,9 +70,19 @@ contract InitializeV2 is Script, GatewayConfig {
         console.log("--- Calling initializeV2 ---");
 
         UniversalGateway gw = UniversalGateway(payable(cfg.gatewayProxy));
-        gw.initializeV2(msg.sender);
+        gw.initializeV2(
+            msg.sender,        // admin = deployer
+            msg.sender,        // pauser = deployer (TODO: set proper pauser)
+            msg.sender,        // tss (TODO: set proper TSS address)
+            1e18,              // minCapUsd = $1
+            10e18,             // maxCapUsd = $10
+            cfg.uniswapV3Factory,
+            cfg.uniswapV3Router,
+            cfg.weth,
+            cfg.ethUsdFeed
+        );
 
-        console.log("  initializeV2(", msg.sender, ") executed");
+        console.log("  initializeV2 executed");
         console.log("");
     }
 
@@ -85,8 +95,8 @@ contract InitializeV2 is Script, GatewayConfig {
 
         // Default admin delay
         uint48 delay = gw.defaultAdminDelay();
-        require(delay == 60, "defaultAdminDelay not 1 minute");
-        console.log("  OK: defaultAdminDelay = 60s");
+        require(delay == 1 days, "defaultAdminDelay not 1 day");
+        console.log("  OK: defaultAdminDelay = 1 day");
 
         // defaultAdmin
         address admin = gw.defaultAdmin();
@@ -108,13 +118,12 @@ contract InitializeV2 is Script, GatewayConfig {
         require(hasOP, "OPERATOR_ROLE not granted");
         console.log("  OK: OPERATOR_ROLE granted");
 
-        // PAUSER_ROLE — not granted by initializeV2, but should survive from V1
-        console.log("  NOTE: PAUSER_ROLE was NOT granted by initializeV2");
-        console.log("        It must already exist from V1 initialization.");
+        // PAUSER_ROLE — granted by initializeV2
         bool hasPauser = gw.hasRole(gw.PAUSER_ROLE(), msg.sender);
-        console.log("  PAUSER_ROLE held by caller:", hasPauser);
+        require(hasPauser, "PAUSER_ROLE not granted");
+        console.log("  OK: PAUSER_ROLE granted");
 
-        // VAULT_ROLE — should survive from V1 setVault call
+        // VAULT_ROLE — granted by initializeV2 (Vault address must be set first)
         address vault = gw.VAULT();
         bool hasVR = gw.hasRole(gw.VAULT_ROLE(), vault);
         console.log("  VAULT_ROLE held by Vault  :", hasVR);
@@ -132,7 +141,7 @@ contract InitializeV2 is Script, GatewayConfig {
         console.log("========================================");
         console.log("  Proxy      :", cfg.gatewayProxy);
         console.log("  Admin      :", msg.sender);
-        console.log("  Delay      : 60s (1 minute)");
+        console.log("  Delay      : 1 day");
         console.log("");
         console.log("NEXT STEP:");
         console.log("  Run 3_verifyGateway.s.sol");
