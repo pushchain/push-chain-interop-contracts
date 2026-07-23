@@ -385,12 +385,6 @@ contract Vault is
         }
     }
 
-    /// @dev Returns true when token is a PC20 wrapper deployed by the factory.
-    function _isPC20Wrapper(address token) private view returns (bool) {
-        if (address(pc20Factory) == address(0)) return false;
-        return pc20Factory.isPC20Wrapper(token);
-    }
-
     /// @dev Returns true when data starts with PC_20_SELECTOR (PC20 export path).
     function _isPC20Export(bytes calldata data) private pure returns (bool) {
         if (data.length < 4) return false;
