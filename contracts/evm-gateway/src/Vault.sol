@@ -236,13 +236,8 @@ contract Vault is PausableUpgradeable, ReentrancyGuardUpgradeable, AccessControl
                 revert Errors.PayloadExecuted();
             }
             isPC20RevertExecuted[subTxId] = true;
-            pc20Factory.revertMint(
-                token, revertInstruction.revertRecipient, amount
-            );
-            emit UniversalTxReverted(
-                subTxId, universalTxId, token, amount,
-                revertInstruction
-            );
+            pc20Factory.revertMint(token, revertInstruction.revertRecipient, amount);
+            emit UniversalTxReverted(subTxId, universalTxId, token, amount, revertInstruction);
         } else if (token == address(0)) {
             if (msg.value != amount) revert Errors.InvalidAmount();
             gateway.revertUniversalTx{ value: amount }(subTxId, universalTxId, token, amount, revertInstruction);
@@ -274,13 +269,8 @@ contract Vault is PausableUpgradeable, ReentrancyGuardUpgradeable, AccessControl
                 revert Errors.PayloadExecuted();
             }
             isPC20RevertExecuted[subTxId] = true;
-            pc20Factory.revertMint(
-                token, revertInstruction.revertRecipient, amount
-            );
-            emit FundsRescued(
-                subTxId, universalTxId, token, amount,
-                revertInstruction
-            );
+            pc20Factory.revertMint(token, revertInstruction.revertRecipient, amount);
+            emit FundsRescued(subTxId, universalTxId, token, amount, revertInstruction);
         } else if (token == address(0)) {
             if (msg.value != amount) revert Errors.InvalidAmount();
             gateway.rescueFunds{ value: amount }(subTxId, universalTxId, token, amount, revertInstruction);
@@ -349,7 +339,9 @@ contract Vault is PausableUpgradeable, ReentrancyGuardUpgradeable, AccessControl
             ICEA(cea).executeUniversalTx(subTxId, universalTxId, pushAccount, recipient, userData);
         }
 
-        _emitUniversalTxFinalized(subTxId, universalTxId, wrapper, pushAccount, recipient, sourceAsset, amount, userData);
+        _emitUniversalTxFinalized(
+            subTxId, universalTxId, wrapper, pushAccount, recipient, sourceAsset, amount, userData
+        );
     }
 
     // ==============================

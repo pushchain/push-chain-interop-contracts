@@ -31,11 +31,8 @@ contract UniversalGateway_TxRoutingFuzz is BaseTest {
     }
 
     /// @dev Non-empty payload + zero amount + any native value → GAS_AND_PAYLOAD (never InvalidInput).
-    function testFuzz_FetchTxType_PayloadOnly_NeverInvalidInput(
-        uint8 payloadLen,
-        uint96 nativeValue
-    ) public {
-        payloadLen  = uint8(bound(payloadLen, 1, 200));
+    function testFuzz_FetchTxType_PayloadOnly_NeverInvalidInput(uint8 payloadLen, uint96 nativeValue) public {
+        payloadLen = uint8(bound(payloadLen, 1, 200));
         nativeValue = uint96(bound(nativeValue, 0, 5 ether));
 
         bytes memory payload = abi.encode(
@@ -80,21 +77,15 @@ contract UniversalGateway_TxRoutingFuzz is BaseTest {
         try gateway.sendUniversalTx{ value: amount }(req) { }
         catch (bytes memory err) {
             bytes4 sel = bytes4(err);
-            assertNotEq(
-                sel, Errors.InvalidInput.selector,
-                "native funds with matching value must not be InvalidInput"
-            );
+            assertNotEq(sel, Errors.InvalidInput.selector, "native funds with matching value must not be InvalidInput");
         }
     }
 
     /// @dev Native FUNDS: msg.value < amount always reverts with InvalidInput or InvalidAmount.
     ///      When sentValue == 0: _fetchTxType sees hasNativeValue=false for a native FUNDS tx → InvalidInput.
     ///      When sentValue > 0 but < amount: _sendTxWithFunds validates amount == nativeValue → InvalidAmount.
-    function testFuzz_FetchTxType_NativeFunds_ValueLessThanAmount_Reverts(
-        uint96 amount,
-        uint96 shortfall
-    ) public {
-        amount    = uint96(bound(amount,    1, 5 ether));
+    function testFuzz_FetchTxType_NativeFunds_ValueLessThanAmount_Reverts(uint96 amount, uint96 shortfall) public {
+        amount = uint96(bound(amount, 1, 5 ether));
         shortfall = uint96(bound(shortfall, 1, amount));
         uint256 sentValue = uint256(amount) - uint256(shortfall);
 
@@ -149,10 +140,8 @@ contract UniversalGateway_TxRoutingFuzz is BaseTest {
         vm.deal(address(this), amount * 3);
 
         // Use makeAddr to get an EOA that can receive ETH (avoids precompile addresses like 0x9)
-        RevertInstructions memory cfg = RevertInstructions({
-            revertRecipient: makeAddr("revertRecipient"),
-            revertMsg: bytes("")
-        });
+        RevertInstructions memory cfg =
+            RevertInstructions({ revertRecipient: makeAddr("revertRecipient"), revertMsg: bytes("") });
 
         // First call: marks isExecuted[subTxId] = true
         gateway.revertUniversalTx{ value: amount }(subTxId, bytes32(0), address(0), amount, cfg);
@@ -167,10 +156,8 @@ contract UniversalGateway_TxRoutingFuzz is BaseTest {
         uint256 amount = 1 ether;
         vm.deal(address(this), amount * 3);
 
-        RevertInstructions memory cfg = RevertInstructions({
-            revertRecipient: makeAddr("revertRecipient"),
-            revertMsg: bytes("")
-        });
+        RevertInstructions memory cfg =
+            RevertInstructions({ revertRecipient: makeAddr("revertRecipient"), revertMsg: bytes("") });
 
         // First: revert marks isExecuted[subTxId] = true
         gateway.revertUniversalTx{ value: amount }(subTxId, bytes32(0), address(0), amount, cfg);
@@ -181,19 +168,16 @@ contract UniversalGateway_TxRoutingFuzz is BaseTest {
     }
 
     /// @dev Distinct subTxIds are independent — first revert does not block second.
-    function testFuzz_ReplayProtection_DistinctSubTxIds_IndependentlySucceed(
-        bytes32 subTxId1,
-        bytes32 subTxId2
-    ) public {
+    function testFuzz_ReplayProtection_DistinctSubTxIds_IndependentlySucceed(bytes32 subTxId1, bytes32 subTxId2)
+        public
+    {
         vm.assume(subTxId1 != subTxId2);
 
         uint256 amount = 1 ether;
         vm.deal(address(this), amount * 3);
 
-        RevertInstructions memory cfg = RevertInstructions({
-            revertRecipient: makeAddr("revertRecipient"),
-            revertMsg: bytes("")
-        });
+        RevertInstructions memory cfg =
+            RevertInstructions({ revertRecipient: makeAddr("revertRecipient"), revertMsg: bytes("") });
 
         gateway.revertUniversalTx{ value: amount }(subTxId1, bytes32(0), address(0), amount, cfg);
 

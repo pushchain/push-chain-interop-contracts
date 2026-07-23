@@ -28,8 +28,7 @@ import { GatewayConfig } from "../../config/testnet/GatewayConfig.sol";
  *     --rpc-url $RPC_URL -vvv
  */
 contract VerifyGateway is Script, GatewayConfig {
-    bytes32 internal constant _IMPLEMENTATION_SLOT =
-        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+    bytes32 internal constant _IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
     Config cfg;
 
@@ -215,10 +214,7 @@ contract VerifyGateway is Script, GatewayConfig {
         address vaultGateway = address(Vault(payable(vault)).gateway());
         console.log("  Vault.gateway() :", vaultGateway);
         console.log("  Gateway proxy   :", cfg.gatewayProxy);
-        _require(
-            vaultGateway == cfg.gatewayProxy,
-            "Vault.gateway does not point to this proxy"
-        );
+        _require(vaultGateway == cfg.gatewayProxy, "Vault.gateway does not point to this proxy");
 
         console.log("  OK");
         console.log("");

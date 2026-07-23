@@ -23,21 +23,21 @@ enum TX_TYPE {
 
 /// @notice Revert/refund instructions for failed transactions.
 struct RevertInstructions {
-    address revertRecipient;         // where funds go in revert/refund cases
-    bytes   revertMsg;               // arbitrary message for relayers/UEA
+    address revertRecipient; // where funds go in revert/refund cases
+    bytes revertMsg; // arbitrary message for relayers/UEA
 }
 
 /// @notice Multicall structure for CEA execution.
 struct Multicall {
-    address to;                      // target contract address
-    uint256 value;                   // native token amount to send with call
-    bytes   data;                    // call data to execute
+    address to; // target contract address
+    uint256 value; // native token amount to send with call
+    bytes data; // call data to execute
 }
 
 /// @notice Packed per-token usage for the current epoch only (no on-chain history kept).
 struct EpochUsage {
-    uint64  epoch;                   // epoch index = block.timestamp / epochDurationSec
-    uint192 used;                    // amount consumed in this epoch (token's natural units)
+    uint64 epoch; // epoch index = block.timestamp / epochDurationSec
+    uint192 used; // amount consumed in this epoch (token's natural units)
 }
 
 /// @notice Signature verification types.

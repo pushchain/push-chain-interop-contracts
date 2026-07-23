@@ -210,7 +210,12 @@ contract MockWETH is ERC20, IWETH {
     /**
      * @dev Simulates a failed withdrawal (for testing error conditions)
      */
-    function simulateWithdrawalFailure(uint256 /* wad */ ) external pure {
+    function simulateWithdrawalFailure(
+        uint256 /* wad */
+    )
+        external
+        pure
+    {
         revert("MockWETH: simulated withdrawal failure");
     }
 

@@ -35,14 +35,16 @@ contract UniversalGateway_RateLimitsFuzz is BaseTest {
 
         bool firstReverted;
         vm.prank(user1);
-        try gateway.sendUniversalTx{ value: amount1 }(req) { } catch {
+        try gateway.sendUniversalTx{ value: amount1 }(req) { }
+        catch {
             firstReverted = true;
         }
 
         // If first tx succeeded, track USD consumed so far
         bool secondReverted;
         vm.prank(user1);
-        try gateway.sendUniversalTx{ value: amount2 }(req) { } catch (bytes memory err) {
+        try gateway.sendUniversalTx{ value: amount2 }(req) { }
+        catch (bytes memory err) {
             secondReverted = true;
             // If second reverts it must be BlockCapLimitExceeded (or USD cap range check)
             bytes4 sel = bytes4(err);
@@ -71,7 +73,7 @@ contract UniversalGateway_RateLimitsFuzz is BaseTest {
         ethAmount = bound(ethAmount, 5.5e15, 2.5e16);
 
         vm.startPrank(governance);
-        gateway.setBlockUsdCap(10e18);  // $10 block cap
+        gateway.setBlockUsdCap(10e18); // $10 block cap
         gateway.setCapsUSD(1e18, 1000e18); // widen per-tx range to [$1, $1000]
         vm.stopPrank();
 
@@ -92,8 +94,8 @@ contract UniversalGateway_RateLimitsFuzz is BaseTest {
         // Block cap = $3, per-tx caps [$1, $10]. First tx = 1.5e15 wei ($3) fills block cap.
         // Second tx = 5e14 wei ($1) = minimum — fits per-tx check but block cap is full.
         vm.startPrank(governance);
-        gateway.setBlockUsdCap(3e18);       // $3 block cap
-        gateway.setCapsUSD(1e18, 10e18);    // per-tx [$1, $10] (same as default)
+        gateway.setBlockUsdCap(3e18); // $3 block cap
+        gateway.setCapsUSD(1e18, 10e18); // per-tx [$1, $10] (same as default)
         vm.stopPrank();
 
         vm.deal(user1, 10 ether);
@@ -123,16 +125,13 @@ contract UniversalGateway_RateLimitsFuzz is BaseTest {
 
     /// @dev Amount + used never silently exceeds threshold for ERC20 tokens.
     ///      The second send must succeed iff initialSend + secondSend ≤ threshold.
-    function testFuzz_EpochRateLimit_UsedNeverExceedsThreshold(
-        uint128 initialSend,
-        uint128 secondSend
-    ) public {
+    function testFuzz_EpochRateLimit_UsedNeverExceedsThreshold(uint128 initialSend, uint128 secondSend) public {
         vm.skip(true); // Rate limiting disabled on testnet
         uint256 threshold = 100_000 ether;
 
         // Constrain both sends to at most threshold each
         initialSend = uint128(bound(initialSend, 1 ether, threshold));
-        secondSend  = uint128(bound(secondSend,  1 ether, threshold));
+        secondSend = uint128(bound(secondSend, 1 ether, threshold));
 
         // Set threshold for tokenA
         address[] memory tokens = new address[](1);
@@ -221,7 +220,8 @@ contract UniversalGateway_RateLimitsFuzz is BaseTest {
         vm.deal(user1, ethAmountWei + 1 ether);
         UniversalTxRequest memory req = _buildGasTxRequest();
         vm.prank(user1);
-        try gateway.sendUniversalTx{ value: ethAmountWei }(req) { } catch (bytes memory err) {
+        try gateway.sendUniversalTx{ value: ethAmountWei }(req) { }
+        catch (bytes memory err) {
             bytes4 sel = bytes4(err);
             assertNotEq(sel, Errors.InvalidAmount.selector, "in-range tx must not fail USD cap check");
         }

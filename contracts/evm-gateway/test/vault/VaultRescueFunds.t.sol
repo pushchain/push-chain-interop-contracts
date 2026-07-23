@@ -65,10 +65,7 @@ contract VaultRescueFundsTest is Test {
             address(1), // placeholder gateway
             address(ceaFactory)
         );
-        ERC1967Proxy vaultProxy = new ERC1967Proxy(
-            address(vaultImpl),
-            vaultInitData
-        );
+        ERC1967Proxy vaultProxy = new ERC1967Proxy(address(vaultImpl), vaultInitData);
         vault = Vault(payable(address(vaultProxy)));
 
         // Deploy UniversalGateway with vault address so VAULT_ROLE is granted
@@ -87,10 +84,7 @@ contract VaultRescueFundsTest is Test {
             address(0),
             address(0)
         );
-        ERC1967Proxy gatewayProxy = new ERC1967Proxy(
-            address(gatewayImpl),
-            gatewayInitData
-        );
+        ERC1967Proxy gatewayProxy = new ERC1967Proxy(address(gatewayImpl), gatewayInitData);
         gateway = UniversalGateway(payable(address(gatewayProxy)));
         vm.startPrank(admin);
         gateway.grantRole(gateway.ROLE_MANAGER_ROLE(), admin);
@@ -148,9 +142,7 @@ contract VaultRescueFundsTest is Test {
         vm.prank(tss);
         vm.expectEmit(true, true, true, true);
         emit FundsRescued(SUB_TX_ID, UNIVERSAL_TX_ID, address(0), amount, ri);
-        vault.rescueFunds{ value: amount }(
-            SUB_TX_ID, UNIVERSAL_TX_ID, address(0), amount, ri
-        );
+        vault.rescueFunds{ value: amount }(SUB_TX_ID, UNIVERSAL_TX_ID, address(0), amount, ri);
 
         assertEq(recipient.balance, recipientBefore + amount);
     }
@@ -204,9 +196,7 @@ contract VaultRescueFundsTest is Test {
 
         vm.prank(tss);
         vm.expectRevert(Errors.InsufficientBalance.selector);
-        vault.rescueFunds(
-            SUB_TX_ID, UNIVERSAL_TX_ID, address(token), vaultBalance + 1, ri
-        );
+        vault.rescueFunds(SUB_TX_ID, UNIVERSAL_TX_ID, address(token), vaultBalance + 1, ri);
     }
 
     // ==============================
@@ -219,9 +209,7 @@ contract VaultRescueFundsTest is Test {
         vm.deal(tss, 10 ether);
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidAmount.selector);
-        vault.rescueFunds{ value: 3 ether }(
-            SUB_TX_ID, UNIVERSAL_TX_ID, address(0), 5 ether, ri
-        );
+        vault.rescueFunds{ value: 3 ether }(SUB_TX_ID, UNIVERSAL_TX_ID, address(0), 5 ether, ri);
     }
 
     function testRescueFundsERC20NonZeroValueReverts() public {
@@ -230,9 +218,7 @@ contract VaultRescueFundsTest is Test {
         vm.deal(tss, 1 ether);
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidAmount.selector);
-        vault.rescueFunds{ value: 1 ether }(
-            SUB_TX_ID, UNIVERSAL_TX_ID, address(token), 100e18, ri
-        );
+        vault.rescueFunds{ value: 1 ether }(SUB_TX_ID, UNIVERSAL_TX_ID, address(token), 100e18, ri);
     }
 
     // ==============================
@@ -262,8 +248,6 @@ contract VaultRescueFundsTest is Test {
         vm.deal(tss, 1 ether);
         vm.prank(tss);
         vm.expectRevert(Errors.WithdrawFailed.selector);
-        vault.rescueFunds{ value: 1 ether }(
-            SUB_TX_ID, UNIVERSAL_TX_ID, address(0), 1 ether, ri
-        );
+        vault.rescueFunds{ value: 1 ether }(SUB_TX_ID, UNIVERSAL_TX_ID, address(0), 1 ether, ri);
     }
 }

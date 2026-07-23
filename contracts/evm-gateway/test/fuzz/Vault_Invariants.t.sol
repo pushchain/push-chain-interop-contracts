@@ -23,10 +23,10 @@ contract Vault_InvariantsFuzz is Test {
     address public weth;
 
     function setUp() public {
-        admin  = makeAddr("admin");
+        admin = makeAddr("admin");
         pauser = makeAddr("pauser");
-        tss    = makeAddr("tss");
-        weth   = makeAddr("weth");
+        tss = makeAddr("tss");
+        weth = makeAddr("weth");
 
         ceaFactory = new MockCEAFactory();
 
@@ -34,10 +34,17 @@ contract Vault_InvariantsFuzz is Test {
         UniversalGateway gatewayImpl = new UniversalGateway();
         bytes memory gatewayInit = abi.encodeWithSelector(
             UniversalGateway.initialize.selector,
-            admin, pauser, tss,
-            1e18, 10e18,
-            address(0), address(0), weth,
-            address(0), address(0), address(0)
+            admin,
+            pauser,
+            tss,
+            1e18,
+            10e18,
+            address(0),
+            address(0),
+            weth,
+            address(0),
+            address(0),
+            address(0)
         );
         ERC1967Proxy gatewayProxy = new ERC1967Proxy(address(gatewayImpl), gatewayInit);
         gateway = UniversalGateway(payable(address(gatewayProxy)));
@@ -64,7 +71,7 @@ contract Vault_InvariantsFuzz is Test {
         // Deploy token and register it in gateway
         mockToken = new MockERC20("Mock", "MCK", 18, 0);
 
-        address[] memory tokens     = new address[](2);
+        address[] memory tokens = new address[](2);
         uint256[] memory thresholds = new uint256[](2);
         tokens[0] = address(mockToken);
         tokens[1] = address(0); // native
@@ -80,11 +87,8 @@ contract Vault_InvariantsFuzz is Test {
     // =========================================================
 
     /// @dev Native flow: msg.value != amount always reverts InvalidAmount.
-    function testFuzz_Finalize_Native_MsgValueMismatch_Reverts(
-        uint256 amount,
-        uint256 sentValue
-    ) public {
-        amount    = bound(amount,    1, 100 ether);
+    function testFuzz_Finalize_Native_MsgValueMismatch_Reverts(uint256 amount, uint256 sentValue) public {
+        amount = bound(amount, 1, 100 ether);
         sentValue = bound(sentValue, 0, 200 ether);
         vm.assume(sentValue != amount);
 
@@ -93,18 +97,13 @@ contract Vault_InvariantsFuzz is Test {
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidAmount.selector);
         vault.finalizeUniversalTx{ value: sentValue }(
-            bytes32(0), bytes32(0),
-            pushAccount, makeAddr("recip"),
-            address(0), amount, bytes("")
+            bytes32(0), bytes32(0), pushAccount, makeAddr("recip"), address(0), amount, bytes("")
         );
     }
 
     /// @dev ERC20 flow: any non-zero msg.value always reverts InvalidAmount.
-    function testFuzz_Finalize_ERC20_NonZeroMsgValue_Reverts(
-        uint96 amount,
-        uint96 sentValue
-    ) public {
-        amount    = uint96(bound(amount,    1, 10_000e18));
+    function testFuzz_Finalize_ERC20_NonZeroMsgValue_Reverts(uint96 amount, uint96 sentValue) public {
+        amount = uint96(bound(amount, 1, 10_000e18));
         sentValue = uint96(bound(sentValue, 1, 10 ether));
 
         mockToken.mint(address(vault), amount);
@@ -114,9 +113,7 @@ contract Vault_InvariantsFuzz is Test {
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidAmount.selector);
         vault.finalizeUniversalTx{ value: sentValue }(
-            bytes32(0), bytes32(0),
-            pushAccount, makeAddr("recip"),
-            address(mockToken), amount, bytes("")
+            bytes32(0), bytes32(0), pushAccount, makeAddr("recip"), address(mockToken), amount, bytes("")
         );
     }
 
@@ -130,9 +127,7 @@ contract Vault_InvariantsFuzz is Test {
         address pushAccount = makeAddr("pushUser");
         vm.prank(tss);
         vault.finalizeUniversalTx(
-            bytes32(0), bytes32(0),
-            pushAccount, makeAddr("recip"),
-            address(mockToken), amount, bytes("")
+            bytes32(0), bytes32(0), pushAccount, makeAddr("recip"), address(mockToken), amount, bytes("")
         );
 
         uint256 vaultAfter = mockToken.balanceOf(address(vault));
@@ -144,64 +139,42 @@ contract Vault_InvariantsFuzz is Test {
     // =========================================================
 
     /// @dev Native revert: msg.value != amount always reverts InvalidAmount.
-    function testFuzz_RevertTx_Native_MsgValueMismatch_Reverts(
-        uint256 amount,
-        uint256 sentValue
-    ) public {
-        amount    = bound(amount,    1, 100 ether);
+    function testFuzz_RevertTx_Native_MsgValueMismatch_Reverts(uint256 amount, uint256 sentValue) public {
+        amount = bound(amount, 1, 100 ether);
         sentValue = bound(sentValue, 0, 200 ether);
         vm.assume(sentValue != amount);
 
-        RevertInstructions memory cfg = RevertInstructions({
-            revertRecipient: makeAddr("recip"),
-            revertMsg: bytes("")
-        });
+        RevertInstructions memory cfg = RevertInstructions({ revertRecipient: makeAddr("recip"), revertMsg: bytes("") });
 
         vm.deal(tss, sentValue + 1);
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidAmount.selector);
-        vault.revertUniversalTx{ value: sentValue }(
-            bytes32(0), bytes32(0), address(0), amount, cfg
-        );
+        vault.revertUniversalTx{ value: sentValue }(bytes32(0), bytes32(0), address(0), amount, cfg);
     }
 
     /// @dev ERC20 revert: any non-zero msg.value always reverts InvalidAmount.
-    function testFuzz_RevertTx_ERC20_NonZeroMsgValue_Reverts(
-        uint96 amount,
-        uint96 sentValue
-    ) public {
-        amount    = uint96(bound(amount,    1, 10_000e18));
+    function testFuzz_RevertTx_ERC20_NonZeroMsgValue_Reverts(uint96 amount, uint96 sentValue) public {
+        amount = uint96(bound(amount, 1, 10_000e18));
         sentValue = uint96(bound(sentValue, 1, 10 ether));
 
         mockToken.mint(address(vault), amount);
         vm.deal(tss, sentValue + 1);
 
-        RevertInstructions memory cfg = RevertInstructions({
-            revertRecipient: makeAddr("recip"),
-            revertMsg: bytes("")
-        });
+        RevertInstructions memory cfg = RevertInstructions({ revertRecipient: makeAddr("recip"), revertMsg: bytes("") });
 
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidAmount.selector);
-        vault.revertUniversalTx{ value: sentValue }(
-            bytes32(0), bytes32(0), address(mockToken), amount, cfg
-        );
+        vault.revertUniversalTx{ value: sentValue }(bytes32(0), bytes32(0), address(mockToken), amount, cfg);
     }
 
     /// @dev ERC20 revert: amount > vault balance always reverts InsufficientBalance.
-    function testFuzz_RevertTx_ERC20_InsufficientBalance_Reverts(
-        uint96 vaultBalance,
-        uint96 amount
-    ) public {
+    function testFuzz_RevertTx_ERC20_InsufficientBalance_Reverts(uint96 vaultBalance, uint96 amount) public {
         vaultBalance = uint96(bound(vaultBalance, 0, 10_000e18 - 1));
-        amount       = uint96(bound(amount, uint256(vaultBalance) + 1, 10_000e18));
+        amount = uint96(bound(amount, uint256(vaultBalance) + 1, 10_000e18));
 
         mockToken.mint(address(vault), vaultBalance);
 
-        RevertInstructions memory cfg = RevertInstructions({
-            revertRecipient: makeAddr("recip"),
-            revertMsg: bytes("")
-        });
+        RevertInstructions memory cfg = RevertInstructions({ revertRecipient: makeAddr("recip"), revertMsg: bytes("") });
 
         vm.prank(tss);
         vm.expectRevert(Errors.InsufficientBalance.selector);
@@ -209,19 +182,13 @@ contract Vault_InvariantsFuzz is Test {
     }
 
     /// @dev rescueFunds ERC20: amount > vault balance always reverts InsufficientBalance.
-    function testFuzz_RescueFunds_ERC20_InsufficientBalance_Reverts(
-        uint96 vaultBalance,
-        uint96 amount
-    ) public {
+    function testFuzz_RescueFunds_ERC20_InsufficientBalance_Reverts(uint96 vaultBalance, uint96 amount) public {
         vaultBalance = uint96(bound(vaultBalance, 0, 10_000e18 - 1));
-        amount       = uint96(bound(amount, uint256(vaultBalance) + 1, 10_000e18));
+        amount = uint96(bound(amount, uint256(vaultBalance) + 1, 10_000e18));
 
         mockToken.mint(address(vault), vaultBalance);
 
-        RevertInstructions memory cfg = RevertInstructions({
-            revertRecipient: makeAddr("recip"),
-            revertMsg: bytes("")
-        });
+        RevertInstructions memory cfg = RevertInstructions({ revertRecipient: makeAddr("recip"), revertMsg: bytes("") });
 
         vm.prank(tss);
         vm.expectRevert(Errors.InsufficientBalance.selector);
@@ -229,25 +196,17 @@ contract Vault_InvariantsFuzz is Test {
     }
 
     /// @dev rescueFunds native: msg.value != amount always reverts InvalidAmount.
-    function testFuzz_RescueFunds_Native_MsgValueMismatch_Reverts(
-        uint256 amount,
-        uint256 sentValue
-    ) public {
-        amount    = bound(amount,    1, 100 ether);
+    function testFuzz_RescueFunds_Native_MsgValueMismatch_Reverts(uint256 amount, uint256 sentValue) public {
+        amount = bound(amount, 1, 100 ether);
         sentValue = bound(sentValue, 0, 200 ether);
         vm.assume(sentValue != amount);
 
-        RevertInstructions memory cfg = RevertInstructions({
-            revertRecipient: makeAddr("recip"),
-            revertMsg: bytes("")
-        });
+        RevertInstructions memory cfg = RevertInstructions({ revertRecipient: makeAddr("recip"), revertMsg: bytes("") });
 
         vm.deal(tss, sentValue + 1);
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidAmount.selector);
-        vault.rescueFunds{ value: sentValue }(
-            bytes32(0), bytes32(0), address(0), amount, cfg
-        );
+        vault.rescueFunds{ value: sentValue }(bytes32(0), bytes32(0), address(0), amount, cfg);
     }
 
     // =========================================================
@@ -262,9 +221,7 @@ contract Vault_InvariantsFuzz is Test {
         vm.prank(tss);
         vm.expectRevert(Errors.ZeroAddress.selector);
         vault.finalizeUniversalTx(
-            bytes32(0), bytes32(0),
-            address(0), makeAddr("recip"),
-            address(mockToken), amount, bytes("")
+            bytes32(0), bytes32(0), address(0), makeAddr("recip"), address(mockToken), amount, bytes("")
         );
     }
 
@@ -273,10 +230,7 @@ contract Vault_InvariantsFuzz is Test {
         amount = uint96(bound(amount, 1, 1000e18));
         mockToken.mint(address(vault), amount);
 
-        RevertInstructions memory cfg = RevertInstructions({
-            revertRecipient: address(0),
-            revertMsg: bytes("")
-        });
+        RevertInstructions memory cfg = RevertInstructions({ revertRecipient: address(0), revertMsg: bytes("") });
 
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidRecipient.selector);
@@ -285,10 +239,7 @@ contract Vault_InvariantsFuzz is Test {
 
     /// @dev amount == 0 always reverts InvalidAmount in revertUniversalTx.
     function testFuzz_RevertTx_ZeroAmount_Reverts(bytes32 subTxId) public {
-        RevertInstructions memory cfg = RevertInstructions({
-            revertRecipient: makeAddr("recip"),
-            revertMsg: bytes("")
-        });
+        RevertInstructions memory cfg = RevertInstructions({ revertRecipient: makeAddr("recip"), revertMsg: bytes("") });
 
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidAmount.selector);
@@ -297,10 +248,7 @@ contract Vault_InvariantsFuzz is Test {
 
     /// @dev amount == 0 always reverts InvalidAmount in rescueFunds.
     function testFuzz_RescueFunds_ZeroAmount_Reverts(bytes32 subTxId) public {
-        RevertInstructions memory cfg = RevertInstructions({
-            revertRecipient: makeAddr("recip"),
-            revertMsg: bytes("")
-        });
+        RevertInstructions memory cfg = RevertInstructions({ revertRecipient: makeAddr("recip"), revertMsg: bytes("") });
 
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidAmount.selector);
@@ -312,10 +260,7 @@ contract Vault_InvariantsFuzz is Test {
         amount = uint96(bound(amount, 1, 1000e18));
         mockToken.mint(address(vault), amount);
 
-        RevertInstructions memory cfg = RevertInstructions({
-            revertRecipient: address(0),
-            revertMsg: bytes("")
-        });
+        RevertInstructions memory cfg = RevertInstructions({ revertRecipient: address(0), revertMsg: bytes("") });
 
         vm.prank(tss);
         vm.expectRevert(Errors.InvalidRecipient.selector);

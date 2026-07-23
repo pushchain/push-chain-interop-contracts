@@ -1,20 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Errors} from "./libraries/Errors.sol";
-import {IPC20Factory} from "./interfaces/IPC20Factory.sol";
-import {PC20Wrapper} from "./PC20Wrapper.sol";
+import { Errors } from "./libraries/Errors.sol";
+import { IPC20Factory } from "./interfaces/IPC20Factory.sol";
+import { PC20Wrapper } from "./PC20Wrapper.sol";
 
-import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {
     AccessControlDefaultAdminRulesUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
 
-contract PC20Factory is
-    PausableUpgradeable,
-    AccessControlDefaultAdminRulesUpgradeable,
-    IPC20Factory
-{
+contract PC20Factory is PausableUpgradeable, AccessControlDefaultAdminRulesUpgradeable, IPC20Factory {
     // ==============================
     //      ROLES
     // ==============================
@@ -66,18 +62,8 @@ contract PC20Factory is
     //      INITIALIZER
     // ==============================
 
-    function initialize(
-        address admin,
-        address pauser,
-        address vault_,
-        address gateway_
-    ) external initializer {
-        if (
-            admin == address(0) ||
-            pauser == address(0) ||
-            vault_ == address(0) ||
-            gateway_ == address(0)
-        ) {
+    function initialize(address admin, address pauser, address vault_, address gateway_) external initializer {
+        if (admin == address(0) || pauser == address(0) || vault_ == address(0) || gateway_ == address(0)) {
             revert Errors.ZeroAddress();
         }
 
@@ -104,12 +90,12 @@ contract PC20Factory is
     // ==============================
 
     /// @inheritdoc IPC20Factory
-    function deployWrapper(
-        address sourceAsset,
-        string calldata name,
-        string calldata symbol,
-        uint8 decimals
-    ) external onlyRole(VAULT_ROLE) whenNotPaused returns (address wrapper) {
+    function deployWrapper(address sourceAsset, string calldata name, string calldata symbol, uint8 decimals)
+        external
+        onlyRole(VAULT_ROLE)
+        whenNotPaused
+        returns (address wrapper)
+    {
         if (sourceAsset == address(0)) revert InvalidSourceAsset();
         if (sourceToWrapper[sourceAsset] != address(0)) {
             revert WrapperAlreadyDeployed(sourceAsset);
@@ -120,17 +106,13 @@ contract PC20Factory is
         if (bytes(symbol).length > MAX_SYMBOL_LENGTH) revert SymbolTooLong();
 
         bytes32 salt = keccak256(abi.encode(sourceAsset));
-        wrapper = address(
-            new PC20Wrapper{salt: salt}(sourceAsset, address(this))
-        );
+        wrapper = address(new PC20Wrapper{ salt: salt }(sourceAsset, address(this)));
         PC20Wrapper(wrapper).initialize(name, symbol, decimals);
 
         sourceToWrapper[sourceAsset] = wrapper;
         wrapperToSource[wrapper] = sourceAsset;
 
-        emit PC20WrapperDeployed(
-            sourceAsset, wrapper, name, symbol, decimals
-        );
+        emit PC20WrapperDeployed(sourceAsset, wrapper, name, symbol, decimals);
     }
 
     // ==============================
@@ -138,33 +120,21 @@ contract PC20Factory is
     // ==============================
 
     /// @inheritdoc IPC20Factory
-    function mintFor(
-        address sourceAsset,
-        address to,
-        uint256 amount
-    ) external onlyRole(VAULT_ROLE) whenNotPaused {
+    function mintFor(address sourceAsset, address to, uint256 amount) external onlyRole(VAULT_ROLE) whenNotPaused {
         address wrapper = sourceToWrapper[sourceAsset];
         if (wrapper == address(0)) revert WrapperNotDeployed(sourceAsset);
         PC20Wrapper(wrapper).mint(to, amount);
     }
 
     /// @inheritdoc IPC20Factory
-    function burnFrom(
-        address sourceAsset,
-        address from,
-        uint256 amount
-    ) external onlyRole(GATEWAY_ROLE) whenNotPaused {
+    function burnFrom(address sourceAsset, address from, uint256 amount) external onlyRole(GATEWAY_ROLE) whenNotPaused {
         address wrapper = sourceToWrapper[sourceAsset];
         if (wrapper == address(0)) revert WrapperNotDeployed(sourceAsset);
         PC20Wrapper(wrapper).burn(from, amount);
     }
 
     /// @inheritdoc IPC20Factory
-    function revertMint(
-        address wrapper,
-        address to,
-        uint256 amount
-    ) external onlyRole(VAULT_ROLE) whenNotPaused {
+    function revertMint(address wrapper, address to, uint256 amount) external onlyRole(VAULT_ROLE) whenNotPaused {
         address sourceAsset = wrapperToSource[wrapper];
         if (sourceAsset == address(0)) revert WrapperNotDeployed(wrapper);
         PC20Wrapper(wrapper).mint(to, amount);
@@ -175,41 +145,22 @@ contract PC20Factory is
     // ==============================
 
     /// @inheritdoc IPC20Factory
-    function getWrapper(
-        address sourceAsset
-    ) external view returns (address) {
+    function getWrapper(address sourceAsset) external view returns (address) {
         return sourceToWrapper[sourceAsset];
     }
 
     /// @inheritdoc IPC20Factory
-    function isPC20Wrapper(
-        address addr
-    ) external view returns (bool) {
+    function isPC20Wrapper(address addr) external view returns (bool) {
         return wrapperToSource[addr] != address(0);
     }
 
     /// @inheritdoc IPC20Factory
-    function computeWrapperAddress(
-        address sourceAsset
-    ) external view returns (address predicted) {
+    function computeWrapperAddress(address sourceAsset) external view returns (address predicted) {
         bytes32 salt = keccak256(abi.encode(sourceAsset));
-        bytes memory creationCode = abi.encodePacked(
-            type(PC20Wrapper).creationCode,
-            abi.encode(sourceAsset, address(this))
-        );
+        bytes memory creationCode =
+            abi.encodePacked(type(PC20Wrapper).creationCode, abi.encode(sourceAsset, address(this)));
         predicted = address(
-            uint160(
-                uint256(
-                    keccak256(
-                        abi.encodePacked(
-                            bytes1(0xff),
-                            address(this),
-                            salt,
-                            keccak256(creationCode)
-                        )
-                    )
-                )
-            )
+            uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, keccak256(creationCode)))))
         );
     }
 
@@ -218,9 +169,7 @@ contract PC20Factory is
     // ==============================
 
     /// @inheritdoc IPC20Factory
-    function updateVault(
-        address newVault
-    ) external onlyRole(OPERATOR_ROLE) {
+    function updateVault(address newVault) external onlyRole(OPERATOR_ROLE) {
         if (newVault == address(0)) revert Errors.ZeroAddress();
         address oldVault = vault;
         _revokeRole(VAULT_ROLE, oldVault);
@@ -230,9 +179,7 @@ contract PC20Factory is
     }
 
     /// @inheritdoc IPC20Factory
-    function updateGateway(
-        address newGateway
-    ) external onlyRole(OPERATOR_ROLE) {
+    function updateGateway(address newGateway) external onlyRole(OPERATOR_ROLE) {
         if (newGateway == address(0)) revert Errors.ZeroAddress();
         address oldGateway = gateway;
         _revokeRole(GATEWAY_ROLE, oldGateway);

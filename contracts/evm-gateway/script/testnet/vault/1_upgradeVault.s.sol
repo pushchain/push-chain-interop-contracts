@@ -5,7 +5,9 @@ import { Script } from "forge-std/Script.sol";
 import { console } from "forge-std/console.sol";
 import { Vault } from "../../../src/Vault.sol";
 import { ProxyAdmin } from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
-import { ITransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    ITransparentUpgradeableProxy
+} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import { VaultConfig } from "../../config/testnet/VaultConfig.sol";
 
 /**
@@ -21,10 +23,8 @@ import { VaultConfig } from "../../config/testnet/VaultConfig.sol";
  *     --rpc-url $RPC_URL --private-key $KEY --broadcast -vvv
  */
 contract UpgradeVault is Script, VaultConfig {
-    bytes32 internal constant _ADMIN_SLOT =
-        0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
-    bytes32 internal constant _IMPLEMENTATION_SLOT =
-        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+    bytes32 internal constant _ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
+    bytes32 internal constant _IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
     Config cfg;
     address public oldImpl;
@@ -102,11 +102,7 @@ contract UpgradeVault is Script, VaultConfig {
 
     function _upgrade() internal {
         console.log("--- Upgrading Proxy (no initializeV2) ---");
-        ProxyAdmin(proxyAdmin).upgradeAndCall(
-            ITransparentUpgradeableProxy(cfg.vaultProxy),
-            newImpl,
-            bytes("")
-        );
+        ProxyAdmin(proxyAdmin).upgradeAndCall(ITransparentUpgradeableProxy(cfg.vaultProxy), newImpl, bytes(""));
         console.log("  upgradeAndCall executed (empty calldata)");
         console.log("");
     }

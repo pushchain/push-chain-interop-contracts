@@ -19,7 +19,6 @@ contract MockTokenApprovalVariants is MockERC20 {
         NO_RETURN_DATA, // Simulates tokens with no return value (but still returns true for interface)
         REVERT_ON_ZERO, // Reverts when approving amount = 0
         ALWAYS_REVERT // Always reverts on approve
-
     }
 
     ApprovalBehavior public behavior;

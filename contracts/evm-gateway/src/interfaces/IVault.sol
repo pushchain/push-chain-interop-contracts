@@ -75,12 +75,7 @@ interface IVault {
     /// @param tokens            Array of ERC20 token addresses migrated
     /// @param amounts           Array of amounts transferred (parallel to tokens)
     /// @param nativeAmount      Amount of native ETH transferred (0 if none)
-    event TokensMigrated(
-        address indexed newVault,
-        address[] tokens,
-        uint256[] amounts,
-        uint256 nativeAmount
-    );
+    event TokensMigrated(address indexed newVault, address[] tokens, uint256[] amounts, uint256 nativeAmount);
 
     // =========================
     //  V_2: WITHDRAW & EXECUTION
@@ -145,10 +140,7 @@ interface IVault {
     //  V_2b: PC20 ADMIN
     // =========================
 
-    event PC20FactoryUpdated(
-        address indexed oldFactory,
-        address indexed newFactory
-    );
+    event PC20FactoryUpdated(address indexed oldFactory, address indexed newFactory);
 
     function updatePC20Factory(address newFactory) external;
 

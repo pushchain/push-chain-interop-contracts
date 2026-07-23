@@ -26,8 +26,7 @@ import { VaultConfig } from "../../config/testnet/VaultConfig.sol";
  *     --rpc-url $RPC_URL -vvv
  */
 contract VerifyVault is Script, VaultConfig {
-    bytes32 internal constant _IMPLEMENTATION_SLOT =
-        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+    bytes32 internal constant _IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
     Config cfg;
 
@@ -99,10 +98,7 @@ contract VerifyVault is Script, VaultConfig {
         bool hasPR = v.hasRole(v.PAUSER_ROLE(), deployer);
         console.log("  deployer has PAUSER_ROLE      :", hasPR);
         if (!hasPR) {
-            console.log(
-                "  WARN: PAUSER_ROLE not held by deployer"
-                " (check who holds it)"
-            );
+            console.log("  WARN: PAUSER_ROLE not held by deployer" " (check who holds it)");
         }
 
         address tss = v.TSS_ADDRESS();
@@ -168,10 +164,7 @@ contract VerifyVault is Script, VaultConfig {
             address gwVault = UniversalGateway(payable(gw)).VAULT();
             console.log("  Gateway.VAULT()    :", gwVault);
             console.log("  Vault proxy        :", cfg.vaultProxy);
-            _require(
-                gwVault == cfg.vaultProxy,
-                "Gateway.VAULT does not point to this Vault proxy"
-            );
+            _require(gwVault == cfg.vaultProxy, "Gateway.VAULT does not point to this Vault proxy");
         }
 
         console.log("  OK");

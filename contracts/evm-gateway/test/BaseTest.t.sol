@@ -224,11 +224,7 @@ abstract contract BaseTest is Test {
     /// @dev Configure a freshly-deployed testnet gateway with vault and epoch duration.
     ///      Testnet `initialize()` leaves VAULT, epochDurationSec at zero; this fills them.
     ///      Caller must ensure `adminAddr` holds OPERATOR_ROLE.
-    function _configureGatewayPostDeploy(
-        UniversalGateway gw,
-        address adminAddr,
-        address vaultAddr
-    ) internal {
+    function _configureGatewayPostDeploy(UniversalGateway gw, address adminAddr, address vaultAddr) internal {
         vm.prank(adminAddr);
         gw.updateVault(vaultAddr);
         // epochDurationSec starts at 0; updateEpochDuration divides by old value,

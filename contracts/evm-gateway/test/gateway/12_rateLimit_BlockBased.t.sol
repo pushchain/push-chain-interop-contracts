@@ -346,7 +346,8 @@ contract GatewayBlockRateLimitTest is BaseTest {
         vm.prank(user1);
         vm.expectRevert(Errors.BlockCapLimitExceeded.selector);
         gateway.sendUniversalTx{ value: ETH_FOR_5_USD + ETH_FOR_2_USD / 2 }( // $6
-        _buildFundsAndPayloadTxRequest(address(tokenA), 1 ether, payload));
+            _buildFundsAndPayloadTxRequest(address(tokenA), 1 ether, payload)
+        );
     }
 
     // ===========================

@@ -51,10 +51,7 @@ contract InitializeV2 is Script, GatewayConfig {
         UniversalGateway gw = UniversalGateway(payable(cfg.gatewayProxy));
 
         string memory ver = gw.version();
-        require(
-            keccak256(bytes(ver)) == keccak256(bytes("2.0.0")),
-            "version mismatch - run 1_upgradeGateway first"
-        );
+        require(keccak256(bytes(ver)) == keccak256(bytes("2.0.0")), "version mismatch - run 1_upgradeGateway first");
         console.log("  OK: version =", ver);
 
         bool isAdmin = gw.hasRole(gw.DEFAULT_ADMIN_ROLE(), msg.sender);

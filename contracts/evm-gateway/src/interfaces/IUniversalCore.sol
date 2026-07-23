@@ -28,13 +28,10 @@ interface IUniversalCore {
             uint256 gasLimitUsed
         );
 
-    function swapAndBurnGas(
-        address gasToken,
-        uint24 fee,
-        uint256 gasFee,
-        uint256 deadline,
-        address caller
-    ) external payable returns (uint256 gasTokenOut, uint256 refund);
+    function swapAndBurnGas(address gasToken, uint24 fee, uint256 gasFee, uint256 deadline, address caller)
+        external
+        payable
+        returns (uint256 gasTokenOut, uint256 refund);
 
     /**
      * @notice Returns whether a PRC20 token is supported by UniversalCore.

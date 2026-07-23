@@ -285,7 +285,6 @@ contract VaultWithdrawalTest is Test {
         assertEq(cea.lastPayload(), payload, "CEA should have been called with payload");
     }
 
-
     /// @notice Test ERC20 withdrawal with non-zero msg.value - should revert
     function testWithdraw_ERC20_MsgValueNonZero_Reverts() public {
         bytes32 subTxId = keccak256("tx7");
@@ -436,7 +435,6 @@ contract VaultWithdrawalTest is Test {
         // Verify no ETH moved (amount was 0)
         assertEq(recipient.balance, initialBalance, "Recipient balance unchanged");
     }
-
 
     // =========================
     //  3. PAYLOAD EXECUTION TESTS (Unchanged - should still work)
@@ -834,7 +832,12 @@ contract VaultWithdrawalTest is Test {
 
         vm.prank(tss);
         vault.finalizeUniversalTx(
-            subTxId, universalTxId, originCaller, address(0), address(usdc), amount,
+            subTxId,
+            universalTxId,
+            originCaller,
+            address(0),
+            address(usdc),
+            amount,
             _withdrawalPayloadDirect(address(usdc), recipient, amount)
         );
 
@@ -854,7 +857,12 @@ contract VaultWithdrawalTest is Test {
 
         vm.prank(tss);
         vault.finalizeUniversalTx(
-            subTxId, universalTxId, originCaller, specificRecipient, address(usdc), amount,
+            subTxId,
+            universalTxId,
+            originCaller,
+            specificRecipient,
+            address(usdc),
+            amount,
             _withdrawalPayloadDirect(address(usdc), recipient, amount)
         );
 
@@ -874,7 +882,12 @@ contract VaultWithdrawalTest is Test {
         vm.deal(tss, amount);
         vm.prank(tss);
         vault.finalizeUniversalTx{ value: amount }(
-            subTxId, universalTxId, originCaller, specificRecipient, address(0), amount,
+            subTxId,
+            universalTxId,
+            originCaller,
+            specificRecipient,
+            address(0),
+            amount,
             _withdrawalPayloadDirect(address(0), recipient, amount)
         );
 
@@ -950,13 +963,7 @@ contract VaultWithdrawalTest is Test {
         // Must NOT revert — the guard skips safeTransfer when amount=0
         vm.prank(tss);
         vault.finalizeUniversalTx(
-            subTxId,
-            universalTxId,
-            originCaller,
-            address(0),
-            address(zeroRejectToken),
-            0,
-            payload
+            subTxId, universalTxId, originCaller, address(0), address(zeroRejectToken), 0, payload
         );
 
         // No tokens transferred
@@ -982,13 +989,7 @@ contract VaultWithdrawalTest is Test {
 
         vm.prank(tss);
         vault.finalizeUniversalTx(
-            subTxId,
-            universalTxId,
-            originCaller,
-            address(0),
-            address(zeroRejectToken),
-            amount,
-            payload
+            subTxId, universalTxId, originCaller, address(0), address(zeroRejectToken), amount, payload
         );
 
         // Vault decreased, recipient received (CEA executed the transfer payload)

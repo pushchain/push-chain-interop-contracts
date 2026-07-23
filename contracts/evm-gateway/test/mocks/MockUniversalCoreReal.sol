@@ -285,10 +285,7 @@ contract MockUniversalCoreReal is IUniversalCore {
         if (gasLimitWithBaseLimit == 0) {
             gasLimitWithBaseLimit = baseLimit;
         } else {
-            require(
-                gasLimitWithBaseLimit >= baseLimit,
-                "MockUniversalCore: gas limit below base"
-            );
+            require(gasLimitWithBaseLimit >= baseLimit, "MockUniversalCore: gas limit below base");
         }
 
         gasToken = gasTokenPRC20ByChainNamespace[chainNamespace];
@@ -327,21 +324,19 @@ contract MockUniversalCoreReal is IUniversalCore {
         gasFee = gasPrice * rescueGasLimit;
     }
 
-    function setBaseGasLimitByChain(
-        string memory chainNamespace,
-        uint256 gasLimit
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setBaseGasLimitByChain(string memory chainNamespace, uint256 gasLimit)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         baseGasLimitByChainNamespace[chainNamespace] = gasLimit;
     }
 
     // ========= Swap Functions =========
-    function swapAndBurnGas(
-        address gasTokenAddr,
-        uint24,
-        uint256 gasFee,
-        uint256,
-        address caller
-    ) external payable returns (uint256 gasTokenOut, uint256 refund) {
+    function swapAndBurnGas(address gasTokenAddr, uint24, uint256 gasFee, uint256, address caller)
+        external
+        payable
+        returns (uint256 gasTokenOut, uint256 refund)
+    {
         require(gasFee > 0, "MockUniversalCore: zero total output");
 
         // Burn gasFee portion (mint then burn to simulate swap+burn)
@@ -353,12 +348,12 @@ contract MockUniversalCoreReal is IUniversalCore {
         // Refund unused PC directly to the caller (1:1 ratio for mock simplicity)
         if (msg.value > gasFee) {
             refund = msg.value - gasFee;
-            (bool ok,) = caller.call{value: refund}("");
+            (bool ok,) = caller.call{ value: refund }("");
             require(ok, "MockUniversalCore: refund failed");
         }
     }
 
-    receive() external payable {}
+    receive() external payable { }
 
     // ========= Test Helper Functions =========
     function setUniversalExecutorModule(address _uem) external {
