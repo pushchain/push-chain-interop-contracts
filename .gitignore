@@ -1,3 +1,16 @@
-# macOS
+# Compiler files
+cache/
+out/
+.claude
+
+# Docs Internal
+docs-internal/
+
+# Ignores development broadcast logs
+broadcast/
+
+# Dotenv file
+.env
 .DS_Store
-**/.DS_Store
+
+contracts/evm-gateway/broadcast/**
