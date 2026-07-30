@@ -157,6 +157,18 @@ fn route_pc20_universal_tx<'info>(
     );
     require!(parsed_user.mint == req.token, GatewayError::InvalidMint);
 
+    if adjusted_native_amount > 0 {
+        let token_rate_limit = ctx
+            .accounts
+            .token_rate_limit
+            .as_ref()
+            .ok_or(error!(GatewayError::InvalidAccount))?;
+        require!(
+            token_rate_limit.token_mint == Pubkey::default(),
+            GatewayError::InvalidAccount
+        );
+    }
+
     spl_burn(
         &pc20_mint,
         &user_ata.to_account_info(),
@@ -361,8 +373,14 @@ fn handle_native_funds_route(
         )?;
     }
 
+    // FUNDS route is rate-limited: token_rate_limit is required here. It is only optional for the
+    // PC20 burn route (which returns earlier and never reaches this code). A FUNDS caller passing
+    // None is rejected — rate limiting cannot be bypassed.
     validate_token_and_consume_rate_limit(
-        &mut ctx.accounts.token_rate_limit,
+        ctx.accounts
+            .token_rate_limit
+            .as_mut()
+            .ok_or(error!(GatewayError::InvalidAccount))?,
         Pubkey::default(),
         req.amount as u128,
         &ctx.accounts.rate_limit_config,
@@ -399,8 +417,13 @@ fn handle_spl_funds_route(
         )?;
     }
 
+    // FUNDS route is rate-limited: token_rate_limit is required here (optional only for the PC20
+    // burn route, which returns earlier). A FUNDS caller passing None is rejected.
     validate_token_and_consume_rate_limit(
-        &mut ctx.accounts.token_rate_limit,
+        ctx.accounts
+            .token_rate_limit
+            .as_mut()
+            .ok_or(error!(GatewayError::InvalidAccount))?,
         req.token,
         req.amount as u128,
         &ctx.accounts.rate_limit_config,
@@ -540,10 +563,12 @@ pub struct SendUniversalTx<'info> {
     )]
     pub rate_limit_config: Account<'info, RateLimitConfig>,
 
-    /// Token rate limit - REQUIRED for universal entrypoint
-    /// NOTE: For native SOL, use Pubkey::default() as the token_mint when deriving this PDA
+    /// Token rate limit — required for the GAS/FUNDS routes (rate-limited), OPTIONAL for the
+    /// PC20 burn route (which does not consume a per-token rate limit). Legacy GAS/FUNDS callers
+    /// pass this exactly as before (their call is unchanged); PC20 burns pass `None`.
+    /// NOTE: For native SOL, use Pubkey::default() as the token_mint when deriving this PDA.
     #[account(mut)]
-    pub token_rate_limit: Account<'info, TokenRateLimit>,
+    pub token_rate_limit: Option<Account<'info, TokenRateLimit>>,
 
     pub token_program: Program<'info, Token>,
 

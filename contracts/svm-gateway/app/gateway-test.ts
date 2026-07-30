@@ -4265,17 +4265,7 @@ async function run() {
   // ===========================================================================
   // 17. PC20 end-to-end flows
   // ===========================================================================
-  // PC20 devnet flows are dummy-program-only (mutating state on the DJoF slot).
-  // Against `main` (or any other program), skip cleanly so the harness completes.
-  if (PROGRAM_ID.toBase58() !== KNOWN_PROGRAMS.dummy) {
-    console.log(
-      `\n17. Skipping PC20 devnet flows (only supported on the dummy program; current PROGRAM_ID=${PROGRAM_ID.toBase58()}).`
-    );
-    console.log("All tests completed successfully!");
-    return;
-  }
-
-  console.log("\n17. Testing PC20 flows on devnet dummy...");
+  console.log(`\n17. Testing PC20 flows on devnet (${PROGRAM_ID.toBase58()})...`);
 
   const pc20SourceAsset = generateNonZeroBytes(20);
   const pc20PushAccount = generateNonZeroBytes(20);
@@ -4605,7 +4595,8 @@ async function run() {
       user,
       priceUpdate: PRICE_ACCOUNT,
       rateLimitConfig: rateLimitConfigPda,
-      tokenRateLimit: nativeSolTokenRateLimitPda,
+      // PC20 burn: token_rate_limit is Optional and ignored by the PC20 branch — pass null.
+      tokenRateLimit: null,
       systemProgram: SystemProgram.programId,
       tokenProgram: spl.TOKEN_PROGRAM_ID,
     })

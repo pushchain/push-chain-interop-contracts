@@ -95,7 +95,7 @@ Normal accounts:
 | `user` | caller signer |
 | `price_update` | same account required by generic IDL |
 | `rate_limit_config` | same account required by generic IDL |
-| `token_rate_limit` | same account required by generic IDL |
+| `token_rate_limit` | `null` for pure PC20 burn; native-SOL rate-limit PDA if `native_amount` exceeds the inbound fee and the excess is routed as native `Funds` |
 | `token_program` | SPL Token program |
 | `system_program` | System program |
 
@@ -365,6 +365,9 @@ For normal SOL/SPL/PRC20 callers:
 - `send_universal_tx` becomes a PC20 burn only when `remaining_accounts` exactly
   match `[pc20_state, pc20_mint]` for `req.token`; unrelated remaining accounts
   stay on the legacy route.
+- For pure PC20 burns, pass `token_rate_limit = null`. If the same call sends
+  native value above the configured inbound fee, the excess becomes a normal
+  native `Funds` leg and the SDK must pass the native-SOL token-rate-limit PDA.
 - `revert_universal_tx` and `rescue_funds` become PC20 remints only when
   `remaining_accounts` exactly match
   `[pc20_state, pc20_mint, recipient_ata, associated_token_program, rent]` for

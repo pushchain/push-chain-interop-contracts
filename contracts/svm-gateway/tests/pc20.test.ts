@@ -469,6 +469,7 @@ describe("Universal Gateway - PC20", () => {
     caller?: Keypair;
     userAta: PublicKey;
     nativeAmount?: number;
+    tokenRateLimit?: PublicKey | null;
     remainingAccounts?: anchor.web3.AccountMeta[];
   }) => {
     const caller = params.caller ?? directRecipient;
@@ -493,7 +494,15 @@ describe("Universal Gateway - PC20", () => {
         user: caller.publicKey,
         priceUpdate: mockPriceFeed,
         rateLimitConfig: rateLimitConfigPda,
-        tokenRateLimit: nativeSolTokenRateLimitPda,
+        // A pure PC20 burn does not consume a per-token rate limit — pass null (no unused-account
+        // hack). But if native value is also sent, the post-fee remainder routes as a native FUNDS
+        // bridge, which IS rate-limited, so the native-SOL rate-limit PDA is required for that leg.
+        tokenRateLimit:
+          params.tokenRateLimit !== undefined
+            ? params.tokenRateLimit
+            : (params.nativeAmount ?? 0) > 0
+              ? nativeSolTokenRateLimitPda
+              : null,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
@@ -1681,6 +1690,81 @@ describe("Universal Gateway - PC20", () => {
       PublicKey.default.toBase58()
     );
     expect(Number(universalEvents[1].data.amount)).to.equal(nativeTopUp);
+  });
+
+  it("rejects PC20 burn native excess without token rate-limit PDA and rolls back burn", async () => {
+    const burnAmount = 1_000_000;
+    const nativeTopUp = 1_000_000;
+    await mintWrappedPc20ToUser(burnAmount);
+    const recipientAta = getAssociatedTokenAddressSync(
+      wrappedMint,
+      directRecipient.publicKey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+    const balanceBefore = Number(
+      (await getAccount(provider.connection, recipientAta)).amount
+    );
+    const vaultBefore = await provider.connection.getBalance(vaultPda);
+
+    await expectError(
+      sendPc20Tx({
+        subTxId: generate32Bytes(),
+        amount: burnAmount,
+        recipient: generate20Bytes(),
+        payload: Buffer.from("missing-native-rate-limit", "utf8"),
+        revertRecipient: revertRecipient.publicKey,
+        userAta: recipientAta,
+        nativeAmount: nativeTopUp,
+        tokenRateLimit: null,
+      }),
+      "InvalidAccount"
+    );
+
+    const balanceAfter = Number(
+      (await getAccount(provider.connection, recipientAta)).amount
+    );
+    const vaultAfter = await provider.connection.getBalance(vaultPda);
+    expect(balanceAfter).to.equal(balanceBefore);
+    expect(vaultAfter).to.equal(vaultBefore);
+  });
+
+  it("rejects legacy native FUNDS when token rate-limit PDA is omitted", async () => {
+    const nativeAmount = 1_000_000;
+    const vaultBefore = await provider.connection.getBalance(vaultPda);
+    const req = {
+      recipient: Array.from(generate20Bytes()),
+      token: PublicKey.default,
+      amount: new anchor.BN(nativeAmount),
+      payload: Buffer.from([]),
+      revertRecipient: revertRecipient.publicKey,
+      signatureData: Buffer.from("missing_legacy_rate_limit"),
+    };
+
+    await expectError(
+      gatewayProgram.methods
+        .sendUniversalTx(req, new anchor.BN(nativeAmount))
+        .accountsPartial({
+          config: configPda,
+          vault: vaultPda,
+          feeVault: feeVaultPda,
+          userTokenAccount: null,
+          gatewayTokenAccount: null,
+          user: directRecipient.publicKey,
+          priceUpdate: mockPriceFeed,
+          rateLimitConfig: rateLimitConfigPda,
+          tokenRateLimit: null,
+          systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([directRecipient])
+        .rpc(),
+      "InvalidAccount"
+    );
+
+    const vaultAfter = await provider.connection.getBalance(vaultPda);
+    expect(vaultAfter).to.equal(vaultBefore);
   });
 
   it("burns wrapped supply from the CEA after an EVM-key-authorized request", async () => {
