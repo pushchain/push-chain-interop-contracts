@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import { BaseTest } from "../BaseTest.t.sol";
 import { UniversalGateway } from "../../src/UniversalGateway.sol";
-import { TX_TYPE, RevertInstructions } from "../../src/libraries/Types.sol";
+import { TX_TYPE, RevertInstructions, PRC_20_SELECTOR } from "../../src/libraries/Types.sol";
 import { UniversalPayload, UniversalTxRequest, UniversalTokenTxRequest } from "../../src/libraries/TypesUG.sol";
 import { Errors } from "../../src/libraries/Errors.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -345,7 +345,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             address(0),
             address(0),
             gasAmount, // nativeValue from unwrap
-            bytes(""),
+            abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             req.revertRecipient,
             TX_TYPE.GAS,
             bytes(""),
@@ -424,7 +424,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             address(0),
             address(0),
             expectedETH, // nativeValue from swap = 1 ETH
-            bytes(""),
+            abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             req.revertRecipient,
             TX_TYPE.GAS,
             bytes(""),
@@ -467,7 +467,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             address(0),
             address(0),
             expectedETH,
-            payloadBytes,
+            abi.encodePacked(PRC_20_SELECTOR, payloadBytes),
             req.revertRecipient,
             TX_TYPE.GAS_AND_PAYLOAD,
             bytes(""),
@@ -507,7 +507,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             address(0),
             address(usdc), // ERC20 bridge token
             fundsAmount, // Funds amount, not gas amount
-            bytes(""),
+            abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             req.revertRecipient,
             TX_TYPE.FUNDS,
             bytes(""),
@@ -549,7 +549,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             address(0),
             address(usdc),
             fundsAmount,
-            payloadBytes,
+            abi.encodePacked(PRC_20_SELECTOR, payloadBytes),
             req.revertRecipient,
             TX_TYPE.FUNDS_AND_PAYLOAD,
             bytes(""),
@@ -696,7 +696,15 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
         // Act: Should succeed with default deadline
         vm.expectEmit(true, true, false, true, address(gatewayTemp));
         emit UniversalTx(
-            user1, address(0), address(0), expectedETH, bytes(""), req.revertRecipient, TX_TYPE.GAS, bytes(""), false
+            user1,
+            address(0),
+            address(0),
+            expectedETH,
+            abi.encodePacked(PRC_20_SELECTOR, bytes("")),
+            req.revertRecipient,
+            TX_TYPE.GAS,
+            bytes(""),
+            false
         );
 
         vm.prank(user1);
@@ -763,7 +771,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             address(0),
             address(0),
             expectedETH,
-            bytes(""),
+            abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             req.revertRecipient,
             TX_TYPE.GAS,
             customSignature, // Preserved

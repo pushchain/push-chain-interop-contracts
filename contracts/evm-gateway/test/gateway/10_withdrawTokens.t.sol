@@ -107,9 +107,7 @@ contract GatewayTSSFunctionsTest is BaseTest {
         );
 
         // revertUniversalTx requires VAULT_ROLE (test contract has this role)
-        gateway.revertUniversalTx(
-            subTxId, universalTxId, address(usdc), withdrawAmount, RevertInstructions(user1, "")
-        );
+        gateway.revertUniversalTx(subTxId, universalTxId, address(usdc), withdrawAmount, RevertInstructions(user1, ""));
 
         // Check balances
         assertEq(usdc.balanceOf(address(gateway)), initialGatewayBalance - withdrawAmount);
@@ -152,9 +150,7 @@ contract GatewayTSSFunctionsTest is BaseTest {
         uint256 excessiveAmount = usdc.balanceOf(address(gateway)) + 1;
 
         vm.expectRevert();
-        gateway.revertUniversalTx(
-            subTxId, universalTxId, address(usdc), excessiveAmount, RevertInstructions(user1, "")
-        );
+        gateway.revertUniversalTx(subTxId, universalTxId, address(usdc), excessiveAmount, RevertInstructions(user1, ""));
     }
 
     // =========================
@@ -315,9 +311,7 @@ contract GatewayTSSFunctionsTest is BaseTest {
 
         // Revert USDC (requires VAULT_ROLE)
         uint256 initialUsdcBalance = usdc.balanceOf(user1);
-        gateway.revertUniversalTx(
-            bytes32(uint256(20)), bytes32(uint256(1020)), address(usdc), usdcAmount, revertCfg
-        );
+        gateway.revertUniversalTx(bytes32(uint256(20)), bytes32(uint256(1020)), address(usdc), usdcAmount, revertCfg);
         assertEq(usdc.balanceOf(user1), initialUsdcBalance + usdcAmount);
 
         // Revert ETH (requires VAULT_ROLE)

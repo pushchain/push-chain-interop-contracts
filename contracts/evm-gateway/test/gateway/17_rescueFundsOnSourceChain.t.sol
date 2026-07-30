@@ -62,13 +62,7 @@ contract RescueFundsOnSourceChainTest is Test {
         universalCore = new MockUniversalCoreReal(uem);
 
         gasToken = new MockPRC20(
-            "Push Chain Native",
-            "PC",
-            18,
-            SOURCE_CHAIN_NAMESPACE,
-            MockPRC20.TokenType.PC,
-            address(universalCore),
-            ""
+            "Push Chain Native", "PC", 18, SOURCE_CHAIN_NAMESPACE, MockPRC20.TokenType.PC, address(universalCore), ""
         );
 
         prc20Token = new MockPRC20(
@@ -84,28 +78,17 @@ contract RescueFundsOnSourceChainTest is Test {
         vm.prank(uem);
         universalCore.setGasPrice(SOURCE_CHAIN_NAMESPACE, DEFAULT_GAS_PRICE);
         vm.prank(uem);
-        universalCore.setGasTokenPRC20(
-            SOURCE_CHAIN_NAMESPACE,
-            address(gasToken)
-        );
+        universalCore.setGasTokenPRC20(SOURCE_CHAIN_NAMESPACE, address(gasToken));
 
         // Deploy gateway
         UniversalGatewayPC implementation = new UniversalGatewayPC();
         proxyAdmin = new ProxyAdmin(admin);
 
         bytes memory initData = abi.encodeWithSelector(
-            UniversalGatewayPC.initialize.selector,
-            admin,
-            pauser,
-            address(universalCore),
-            vaultPC
+            UniversalGatewayPC.initialize.selector, admin, pauser, address(universalCore), vaultPC
         );
 
-        gatewayProxy = new TransparentUpgradeableProxy(
-            address(implementation),
-            address(proxyAdmin),
-            initData
-        );
+        gatewayProxy = new TransparentUpgradeableProxy(address(implementation), address(proxyAdmin), initData);
         gateway = UniversalGatewayPC(address(gatewayProxy));
 
         // Set rescue gas limit on UniversalCore
@@ -122,10 +105,7 @@ contract RescueFundsOnSourceChainTest is Test {
         uint256 pcToSend = expectedGasFee + 0.5 ether;
 
         vm.prank(user1);
-        gateway.rescueFundsOnSourceChain{ value: pcToSend }(
-            UNIVERSAL_TX_ID,
-            address(prc20Token)
-        );
+        gateway.rescueFundsOnSourceChain{ value: pcToSend }(UNIVERSAL_TX_ID, address(prc20Token));
     }
 
     function testRescueEventParams() public {
@@ -144,10 +124,7 @@ contract RescueFundsOnSourceChainTest is Test {
             DEFAULT_GAS_PRICE,
             RESCUE_GAS_LIMIT
         );
-        gateway.rescueFundsOnSourceChain{ value: pcToSend }(
-            UNIVERSAL_TX_ID,
-            address(prc20Token)
-        );
+        gateway.rescueFundsOnSourceChain{ value: pcToSend }(UNIVERSAL_TX_ID, address(prc20Token));
     }
 
     function testRescueNoProtocolFee() public {
@@ -157,10 +134,7 @@ contract RescueFundsOnSourceChainTest is Test {
         uint256 vaultPCBefore = vaultPC.balance;
 
         vm.prank(user1);
-        gateway.rescueFundsOnSourceChain{ value: pcToSend }(
-            UNIVERSAL_TX_ID,
-            address(prc20Token)
-        );
+        gateway.rescueFundsOnSourceChain{ value: pcToSend }(UNIVERSAL_TX_ID, address(prc20Token));
 
         assertEq(vaultPC.balance, vaultPCBefore);
     }
@@ -173,10 +147,7 @@ contract RescueFundsOnSourceChainTest is Test {
         uint256 prc20Before = prc20Token.balanceOf(user1);
 
         vm.prank(user1);
-        gateway.rescueFundsOnSourceChain{ value: pcToSend }(
-            UNIVERSAL_TX_ID,
-            address(prc20Token)
-        );
+        gateway.rescueFundsOnSourceChain{ value: pcToSend }(UNIVERSAL_TX_ID, address(prc20Token));
 
         assertEq(prc20Token.balanceOf(user1), prc20Before);
     }
@@ -189,10 +160,7 @@ contract RescueFundsOnSourceChainTest is Test {
         uint256 userBefore = user1.balance;
 
         vm.prank(user1);
-        gateway.rescueFundsOnSourceChain{ value: pcToSend }(
-            UNIVERSAL_TX_ID,
-            address(prc20Token)
-        );
+        gateway.rescueFundsOnSourceChain{ value: pcToSend }(UNIVERSAL_TX_ID, address(prc20Token));
 
         assertEq(user1.balance, userBefore - expectedGasFee);
     }
@@ -204,10 +172,7 @@ contract RescueFundsOnSourceChainTest is Test {
     function testRescueRevertZeroPRC20() public {
         vm.prank(user1);
         vm.expectRevert(Errors.ZeroAddress.selector);
-        gateway.rescueFundsOnSourceChain{ value: 1 ether }(
-            UNIVERSAL_TX_ID,
-            address(0)
-        );
+        gateway.rescueFundsOnSourceChain{ value: 1 ether }(UNIVERSAL_TX_ID, address(0));
     }
 
     function testRescueRevertWhenPaused() public {
@@ -216,19 +181,13 @@ contract RescueFundsOnSourceChainTest is Test {
 
         vm.prank(user1);
         vm.expectRevert();
-        gateway.rescueFundsOnSourceChain{ value: 1 ether }(
-            UNIVERSAL_TX_ID,
-            address(prc20Token)
-        );
+        gateway.rescueFundsOnSourceChain{ value: 1 ether }(UNIVERSAL_TX_ID, address(prc20Token));
     }
 
     function testRescueRevertZeroValue() public {
         vm.prank(user1);
         vm.expectRevert(Errors.ZeroAmount.selector);
-        gateway.rescueFundsOnSourceChain{ value: 0 }(
-            UNIVERSAL_TX_ID,
-            address(prc20Token)
-        );
+        gateway.rescueFundsOnSourceChain{ value: 0 }(UNIVERSAL_TX_ID, address(prc20Token));
     }
 
     function testRescueRevertZeroGasPrice() public {
@@ -242,26 +201,14 @@ contract RescueFundsOnSourceChainTest is Test {
 
         UniversalGatewayPC impl2 = new UniversalGatewayPC();
         ProxyAdmin pa2 = new ProxyAdmin(admin);
-        bytes memory initData = abi.encodeWithSelector(
-            UniversalGatewayPC.initialize.selector,
-            admin,
-            pauser,
-            address(badCore),
-            vaultPC
-        );
-        TransparentUpgradeableProxy proxy2 = new TransparentUpgradeableProxy(
-            address(impl2),
-            address(pa2),
-            initData
-        );
+        bytes memory initData =
+            abi.encodeWithSelector(UniversalGatewayPC.initialize.selector, admin, pauser, address(badCore), vaultPC);
+        TransparentUpgradeableProxy proxy2 = new TransparentUpgradeableProxy(address(impl2), address(pa2), initData);
         UniversalGatewayPC gw2 = UniversalGatewayPC(address(proxy2));
 
         vm.prank(user1);
         vm.expectRevert();
-        gw2.rescueFundsOnSourceChain{ value: 1 ether }(
-            UNIVERSAL_TX_ID,
-            address(prc20Token)
-        );
+        gw2.rescueFundsOnSourceChain{ value: 1 ether }(UNIVERSAL_TX_ID, address(prc20Token));
     }
 
     function testRescueRevertZeroGasToken() public {
@@ -275,26 +222,14 @@ contract RescueFundsOnSourceChainTest is Test {
 
         UniversalGatewayPC impl2 = new UniversalGatewayPC();
         ProxyAdmin pa2 = new ProxyAdmin(admin);
-        bytes memory initData = abi.encodeWithSelector(
-            UniversalGatewayPC.initialize.selector,
-            admin,
-            pauser,
-            address(badCore),
-            vaultPC
-        );
-        TransparentUpgradeableProxy proxy2 = new TransparentUpgradeableProxy(
-            address(impl2),
-            address(pa2),
-            initData
-        );
+        bytes memory initData =
+            abi.encodeWithSelector(UniversalGatewayPC.initialize.selector, admin, pauser, address(badCore), vaultPC);
+        TransparentUpgradeableProxy proxy2 = new TransparentUpgradeableProxy(address(impl2), address(pa2), initData);
         UniversalGatewayPC gw2 = UniversalGatewayPC(address(proxy2));
 
         vm.prank(user1);
         vm.expectRevert();
-        gw2.rescueFundsOnSourceChain{ value: 1 ether }(
-            UNIVERSAL_TX_ID,
-            address(prc20Token)
-        );
+        gw2.rescueFundsOnSourceChain{ value: 1 ether }(UNIVERSAL_TX_ID, address(prc20Token));
     }
 
     function testRescueRevertZeroGasLimit() public {
@@ -308,26 +243,14 @@ contract RescueFundsOnSourceChainTest is Test {
 
         UniversalGatewayPC impl2 = new UniversalGatewayPC();
         ProxyAdmin pa2 = new ProxyAdmin(admin);
-        bytes memory initData = abi.encodeWithSelector(
-            UniversalGatewayPC.initialize.selector,
-            admin,
-            pauser,
-            address(badCore),
-            vaultPC
-        );
-        TransparentUpgradeableProxy proxy2 = new TransparentUpgradeableProxy(
-            address(impl2),
-            address(pa2),
-            initData
-        );
+        bytes memory initData =
+            abi.encodeWithSelector(UniversalGatewayPC.initialize.selector, admin, pauser, address(badCore), vaultPC);
+        TransparentUpgradeableProxy proxy2 = new TransparentUpgradeableProxy(address(impl2), address(pa2), initData);
         UniversalGatewayPC gw2 = UniversalGatewayPC(address(proxy2));
 
         vm.prank(user1);
         vm.expectRevert();
-        gw2.rescueFundsOnSourceChain{ value: 1 ether }(
-            UNIVERSAL_TX_ID,
-            address(prc20Token)
-        );
+        gw2.rescueFundsOnSourceChain{ value: 1 ether }(UNIVERSAL_TX_ID, address(prc20Token));
     }
 
     // ============================================================
@@ -350,13 +273,9 @@ contract RescueFundsOnSourceChainTest is Test {
             DEFAULT_GAS_PRICE,
             RESCUE_GAS_LIMIT
         );
-        gateway.rescueFundsOnSourceChain{ value: pcToSend }(
-            UNIVERSAL_TX_ID,
-            address(prc20Token)
-        );
+        gateway.rescueFundsOnSourceChain{ value: pcToSend }(UNIVERSAL_TX_ID, address(prc20Token));
 
         // TX_TYPE.RESCUE_FUNDS == 4
         assertEq(uint8(TX_TYPE.RESCUE_FUNDS), 4);
     }
-
 }

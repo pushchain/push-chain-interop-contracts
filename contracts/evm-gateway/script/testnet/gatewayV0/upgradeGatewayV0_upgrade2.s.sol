@@ -5,7 +5,9 @@ import { Script } from "forge-std/Script.sol";
 import { console } from "forge-std/console.sol";
 import { UniversalGateway } from "../../../src/UniversalGateway.sol";
 import { ProxyAdmin } from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
-import { ITransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    ITransparentUpgradeableProxy
+} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import { GatewayConfig } from "../../config/testnet/GatewayConfig.sol";
 
 /**
@@ -27,10 +29,8 @@ contract UpgradeGatewayV0_2 is Script, GatewayConfig {
     // ========================================
     //        EIP-1967 PROXY CONSTANTS
     // ========================================
-    bytes32 internal constant _ADMIN_SLOT =
-        0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
-    bytes32 internal constant _IMPLEMENTATION_SLOT =
-        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+    bytes32 internal constant _ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
+    bytes32 internal constant _IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
     // ========================================
     //         UPGRADE STATE
@@ -136,9 +136,7 @@ contract UpgradeGatewayV0_2 is Script, GatewayConfig {
     function _performUpgrade() internal {
         console.log("--- Performing Upgrade ---");
         ProxyAdmin admin = ProxyAdmin(proxyAdmin);
-        admin.upgradeAndCall(
-            ITransparentUpgradeableProxy(cfg.gatewayProxy), newImplementation, ""
-        );
+        admin.upgradeAndCall(ITransparentUpgradeableProxy(cfg.gatewayProxy), newImplementation, "");
         console.log("Upgrade executed");
         console.log("");
     }

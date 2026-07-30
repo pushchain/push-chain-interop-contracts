@@ -43,7 +43,7 @@ contract MockReentrantContract {
             payload: bytes(""),
             revertRecipient: revertRecipient
         });
-        IUniversalGatewayPC(gateway).sendUniversalTxOutbound{value: msg.value}(req);
+        IUniversalGatewayPC(gateway).sendUniversalTxOutbound{ value: msg.value }(req);
     }
 
     function attemptReentrancyWithExecute(
@@ -62,10 +62,10 @@ contract MockReentrantContract {
             payload: payload,
             revertRecipient: revertRecipient
         });
-        IUniversalGatewayPC(gateway).sendUniversalTxOutbound{value: msg.value}(req);
+        IUniversalGatewayPC(gateway).sendUniversalTxOutbound{ value: msg.value }(req);
     }
 
-    receive() external payable {}
+    receive() external payable { }
 
     // ============================================================================
     // Vault Reentrancy Functions

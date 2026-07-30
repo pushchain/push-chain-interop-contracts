@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import { BaseTest } from "../BaseTest.t.sol";
 import { UniversalGateway } from "../../src/UniversalGateway.sol";
-import { TX_TYPE, RevertInstructions } from "../../src/libraries/Types.sol";
+import { TX_TYPE, RevertInstructions, PRC_20_SELECTOR } from "../../src/libraries/Types.sol";
 import { UniversalPayload, UniversalTxRequest } from "../../src/libraries/TypesUG.sol";
 import { Errors } from "../../src/libraries/Errors.sol";
 import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -163,7 +163,7 @@ contract GatewaySendUniversalTxTest is BaseTest {
             recipient: address(0), // Gas always credits UEA (address(0))
             token: address(0), // Native token
             amount: gasAmount,
-            payload: bytes(""),
+            payload: abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             revertRecipient: req.revertRecipient,
             txType: TX_TYPE.GAS,
             signatureData: bytes(""),
@@ -205,7 +205,7 @@ contract GatewaySendUniversalTxTest is BaseTest {
             recipient: address(0), // Gas always credits UEA (address(0))
             token: address(0), // Native token
             amount: gasAmount,
-            payload: encodedPayload,
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload),
             revertRecipient: req.revertRecipient,
             txType: TX_TYPE.GAS_AND_PAYLOAD,
             signatureData: bytes(""),
@@ -248,7 +248,7 @@ contract GatewaySendUniversalTxTest is BaseTest {
             recipient: address(0), // FUNDS credits caller's UEA
             token: address(0), // Native token
             amount: fundsAmount,
-            payload: bytes(""),
+            payload: abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             revertRecipient: req.revertRecipient,
             txType: TX_TYPE.FUNDS,
             signatureData: bytes(""),

@@ -22,18 +22,20 @@ interface IVault {
     /// @param newCEAFactory     New CEAFactory address
     event CEAFactoryUpdated(address indexed oldCEAFactory, address indexed newCEAFactory);
 
-    /// @notice                  Universal tx finalized event
+    /// @notice                  Universal tx finalized event (emitted for both PRC20 and PC20 paths)
     /// @param subTxId           Gateway transaction identifier
     /// @param universalTxId     Universal transaction identifier
+    /// @param wrapperAddress    PC20 wrapper address on this chain; address(0) for PRC20 path
     /// @param pushAccount       Push Chain account (UEA) this transaction is attributed to
     /// @param recipient         Destination address on the external chain; address(0) means park in CEA
-    /// @param token             Token address being sent
-    /// @param amount            Amount of token being sent
-    /// @param data              Calldata to be executed on target contract on external chain
+    /// @param token             PRC20: token address (address(0) for native). PC20: sourceAsset address.
+    /// @param amount            PRC20: amount unlocked. PC20: amount minted.
+    /// @param data              PRC20: Multicall calldata. PC20: userData (empty if none).
     event UniversalTxFinalized(
         bytes32 indexed subTxId,
         bytes32 indexed universalTxId,
-        address indexed pushAccount,
+        address indexed wrapperAddress,
+        address pushAccount,
         address recipient,
         address token,
         uint256 amount,
@@ -73,12 +75,7 @@ interface IVault {
     /// @param tokens            Array of ERC20 token addresses migrated
     /// @param amounts           Array of amounts transferred (parallel to tokens)
     /// @param nativeAmount      Amount of native ETH transferred (0 if none)
-    event TokensMigrated(
-        address indexed newVault,
-        address[] tokens,
-        uint256[] amounts,
-        uint256 nativeAmount
-    );
+    event TokensMigrated(address indexed newVault, address[] tokens, uint256[] amounts, uint256 nativeAmount);
 
     // =========================
     //  V_2: WITHDRAW & EXECUTION
@@ -138,6 +135,14 @@ interface IVault {
         uint256 amount,
         RevertInstructions calldata revertInstruction
     ) external payable;
+
+    // =========================
+    //  V_2b: PC20 ADMIN
+    // =========================
+
+    event PC20FactoryUpdated(address indexed oldFactory, address indexed newFactory);
+
+    function updatePC20Factory(address newFactory) external;
 
     // =========================
     //    V_3: MIGRATION

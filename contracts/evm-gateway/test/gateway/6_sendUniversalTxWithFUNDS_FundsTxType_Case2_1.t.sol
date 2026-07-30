@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import { BaseTest } from "../BaseTest.t.sol";
 import { UniversalGateway } from "../../src/UniversalGateway.sol";
-import { TX_TYPE, RevertInstructions, VerificationType } from "../../src/libraries/Types.sol";
+import { TX_TYPE, RevertInstructions, VerificationType, PRC_20_SELECTOR } from "../../src/libraries/Types.sol";
 import { UniversalPayload, UniversalTxRequest } from "../../src/libraries/TypesUG.sol";
 import { Errors } from "../../src/libraries/Errors.sol";
 import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -177,7 +177,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_1_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA),
             amount: fundsAmount,
-            payload: encodedPayload, // Payload preserved
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload), // Payload preserved
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -268,7 +268,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_1_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA),
             amount: fundsAmount,
-            payload: encodedPayload, // Exact payload preserved
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload), // Exact payload preserved
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -436,7 +436,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_1_Test is BaseTest {
             recipient: address(0),
             token: address(tokenA),
             amount: fundsAmount,
-            payload: bytes(""),
+            payload: abi.encodePacked(PRC_20_SELECTOR, bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -469,7 +469,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_1_Test is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: 0,
-            payload: encodedPayload,
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload),
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -614,7 +614,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_1_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA),
             amount: fundsAmount,
-            payload: encodedPayload,
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload),
             revertRecipient: revertInst.revertRecipient, // Full struct with revertMsg
             signatureData: bytes(""),
             fromCEA: false
@@ -648,11 +648,11 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_1_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA),
             amount: fundsAmount,
-            payload: encodedPayload,
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload),
             revertRecipient: req.revertRecipient,
             signatureData: sigData, // Should preserve signature data
             fromCEA: false
-         });
+        });
 
         vm.prank(user1);
         gatewayTemp.sendUniversalTx{ value: 0 }(req);
@@ -694,7 +694,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_1_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA),
             amount: fundsAmount,
-            payload: encodedPayload,
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload),
             revertRecipient: address(0x456),
             signatureData: bytes(""),
             fromCEA: false

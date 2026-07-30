@@ -61,7 +61,9 @@ contract OracleTest is BaseTest {
 
         // Set Uniswap V3 addresses
         vm.prank(admin);
-        gateway.updateUniswapV3Config(0x1F98431c8aD98523631AE4a59f267346ea31F984, 0xE592427A0AEce92De3Edee1F18E0157C05861564);
+        gateway.updateUniswapV3Config(
+            0x1F98431c8aD98523631AE4a59f267346ea31F984, 0xE592427A0AEce92De3Edee1F18E0157C05861564
+        );
         console.log("Uniswap V3 addresses set");
         console.log("========================");
     }
@@ -411,8 +413,7 @@ contract OracleTest is BaseTest {
             address(0), // router = address(0)
             address(gateway.WETH())
         );
-        TransparentUpgradeableProxy proxy =
-            new TransparentUpgradeableProxy(address(impl), admin, initData);
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), admin, initData);
         UniversalGateway newGateway = UniversalGateway(payable(address(proxy)));
         vm.startPrank(admin);
         newGateway.grantRole(newGateway.ROLE_MANAGER_ROLE(), admin);

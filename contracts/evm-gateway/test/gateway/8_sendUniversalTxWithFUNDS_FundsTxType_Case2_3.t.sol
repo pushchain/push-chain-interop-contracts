@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import { BaseTest } from "../BaseTest.t.sol";
 import { UniversalGateway } from "../../src/UniversalGateway.sol";
-import { TX_TYPE, RevertInstructions, VerificationType } from "../../src/libraries/Types.sol";
+import { TX_TYPE, RevertInstructions, VerificationType, PRC_20_SELECTOR } from "../../src/libraries/Types.sol";
 import { UniversalPayload, UniversalTxRequest } from "../../src/libraries/TypesUG.sol";
 import { Errors } from "../../src/libraries/Errors.sol";
 import { TransparentUpgradeableProxy } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -202,7 +202,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA), // ERC20 token for funds
             amount: erc20Amount,
-            payload: encodedPayload, // Funds event has full payload
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload), // Funds event has full payload
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -271,7 +271,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA),
             amount: erc20Amount,
-            payload: encodedPayload, // Full payload preserved
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload), // Full payload preserved
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -445,7 +445,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
             recipient: address(0), // Gas routes always credit UEA
             token: address(0),
             amount: msgValue,
-            payload: encodedPayload,
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -897,7 +897,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA),
             amount: erc20Amount,
-            payload: encodedPayload,
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -980,7 +980,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA),
             amount: erc20Amount,
-            payload: encodedPayload,
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false
@@ -1028,7 +1028,7 @@ contract GatewaySendUniversalTxWithFunds_PAYLOAD_Case2_3_Test is BaseTest {
             recipient: address(0), // FUNDS_AND_PAYLOAD always has recipient == address(0)
             token: address(tokenA), // ERC20 token
             amount: erc20Amount,
-            payload: encodedPayload,
+            payload: abi.encodePacked(PRC_20_SELECTOR, encodedPayload),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""),
             fromCEA: false

@@ -48,12 +48,7 @@ contract VaultMigrateTokensTest is Test {
     address public attacker;
     address public weth;
 
-    event TokensMigrated(
-        address indexed newVault,
-        address[] tokens,
-        uint256[] amounts,
-        uint256 nativeAmount
-    );
+    event TokensMigrated(address indexed newVault, address[] tokens, uint256[] amounts, uint256 nativeAmount);
 
     function setUp() public {
         admin = makeAddr("admin");
@@ -66,12 +61,8 @@ contract VaultMigrateTokensTest is Test {
 
         // Deploy old vault with placeholder gateway
         Vault vaultImpl = new Vault();
-        bytes memory vaultInitData = abi.encodeWithSelector(
-            Vault.initialize.selector,
-            admin, pauser, tss,
-            address(1),
-            address(ceaFactory)
-        );
+        bytes memory vaultInitData =
+            abi.encodeWithSelector(Vault.initialize.selector, admin, pauser, tss, address(1), address(ceaFactory));
         ERC1967Proxy vaultProxy = new ERC1967Proxy(address(vaultImpl), vaultInitData);
         vault = Vault(payable(address(vaultProxy)));
 
@@ -79,11 +70,17 @@ contract VaultMigrateTokensTest is Test {
         UniversalGateway gwImpl = new UniversalGateway();
         bytes memory gwInitData = abi.encodeWithSelector(
             UniversalGateway.initialize.selector,
-            admin, pauser, tss,
-            1e18, 10e18,
-            address(0), address(0),
+            admin,
+            pauser,
+            tss,
+            1e18,
+            10e18,
+            address(0),
+            address(0),
             weth,
-            address(0), address(0), address(0)
+            address(0),
+            address(0),
+            address(0)
         );
         ERC1967Proxy gwProxy = new ERC1967Proxy(address(gwImpl), gwInitData);
         gateway = UniversalGateway(payable(address(gwProxy)));
@@ -102,10 +99,7 @@ contract VaultMigrateTokensTest is Test {
         // Deploy new vault
         Vault newVaultImpl = new Vault();
         bytes memory newVaultInitData = abi.encodeWithSelector(
-            Vault.initialize.selector,
-            admin, pauser, tss,
-            address(gateway),
-            address(ceaFactory)
+            Vault.initialize.selector, admin, pauser, tss, address(gateway), address(ceaFactory)
         );
         ERC1967Proxy newVaultProxy = new ERC1967Proxy(address(newVaultImpl), newVaultInitData);
         newVault = Vault(payable(address(newVaultProxy)));
@@ -409,11 +403,7 @@ contract VaultMigrateTokensTest is Test {
         _pauseBoth();
         vm.deal(address(vault), 1 ether);
 
-        ReentrantReceiver reentrant = new ReentrantReceiver(
-            vault,
-            address(newVault),
-            _tokenList1()
-        );
+        ReentrantReceiver reentrant = new ReentrantReceiver(vault, address(newVault), _tokenList1());
 
         vm.prank(admin);
         vm.expectRevert();
