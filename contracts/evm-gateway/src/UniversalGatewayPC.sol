@@ -23,7 +23,6 @@ pragma solidity 0.8.26;
 
 import { Errors } from "./libraries/Errors.sol";
 import { IPRC20 } from "./interfaces/IPRC20.sol";
-import { IPC20 } from "./interfaces/IPC20.sol";
 import { IVaultPC } from "./interfaces/IVaultPC.sol";
 import { IVaultPC20 } from "./interfaces/IVaultPC20.sol";
 import { IUniversalCore } from "./interfaces/IUniversalCore.sol";
@@ -158,7 +157,6 @@ contract UniversalGatewayPC is
 
         if (isPC20) {
             if (req.amount == 0) revert Errors.ZeroAmount();
-            IPC20(req.token).pc20Metadata();
 
             string memory destChainNamespace = _decodePC20ChainNamespace(req.payload);
             if (bytes(destChainNamespace).length == 0) revert Errors.InvalidData();

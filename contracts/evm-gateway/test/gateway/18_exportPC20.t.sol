@@ -15,7 +15,8 @@ import { UniversalOutboundTxRequest, PC_20_SELECTOR as TYPES_PC_20_SELECTOR } fr
 import { Errors } from "../../src/libraries/Errors.sol";
 import { MockPRC20 } from "../mocks/MockPRC20.sol";
 import { MockUniversalCoreReal } from "../mocks/MockUniversalCoreReal.sol";
-import { MockPC20Token, MockNonPC20Token, MockFeeOnTransferPC20 } from "../mocks/MockPC20Token.sol";
+import { MockPC20Token, MockPlainERC20, MockFeeOnTransferPC20 } from "../mocks/MockPC20Token.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract ExportPC20Test is Test {
     // ===== ACTORS =====
@@ -162,7 +163,7 @@ contract ExportPC20Test is Test {
         } else if (token == address(pc20TokenB)) {
             return ("PushTokenB", "PTKB", 18);
         }
-        (name, symbol, decimals,) = MockPC20Token(token).pc20Metadata();
+        return (ERC20(token).name(), ERC20(token).symbol(), ERC20(token).decimals());
     }
 
     function _buildPC20Request(
@@ -460,26 +461,25 @@ contract ExportPC20Test is Test {
         gateway.sendUniversalTxOutbound{ value: PC_FEE }(req);
     }
 
-    function test_ExportPC20_RevertsNonIPC20Token() public {
-        MockNonPC20Token badToken = new MockNonPC20Token();
-        badToken.mint(user1, 100e18);
+    /// @dev PC20 export is permissionless: a plain ERC-20 with no PC20-specific
+    ///      surface exports normally. Destination metadata travels in the payload,
+    ///      so the token itself needs no extra interface.
+    function test_ExportPC20_PlainERC20Succeeds() public {
+        MockPlainERC20 plainToken = new MockPlainERC20();
+        plainToken.mint(user1, 100e18);
         vm.prank(user1);
-        badToken.approve(address(gateway), type(uint256).max);
+        plainToken.approve(address(gateway), type(uint256).max);
 
-        bytes memory payload = _buildPC20Payload(DEST_CHAIN, "NotPC20", "NPC", 18, bytes(""));
-        UniversalOutboundTxRequest memory req = UniversalOutboundTxRequest({
-            recipient: abi.encodePacked(address(0xDEAD)),
-            token: address(badToken),
-            amount: 10e18,
-            gasLimit: 0,
-            gasPrice: 0,
-            maxPCForGas: 0,
-            payload: payload,
-            revertRecipient: user2
-        });
+        uint256 amount = 10e18;
+        UniversalOutboundTxRequest memory req =
+            _buildPC20Request(address(plainToken), amount, DEST_CHAIN, 0, 0, bytes(""), user2);
+
         vm.prank(user1);
-        vm.expectRevert();
         gateway.sendUniversalTxOutbound{ value: PC_FEE }(req);
+
+        assertEq(plainToken.balanceOf(address(vaultPC20)), amount);
+        assertEq(vaultPC20.totalLocked(address(plainToken)), amount);
+        assertEq(gateway.nonce(), 1);
     }
 
     function test_ExportPC20_RevertsEmptyDestChainNamespace() public {

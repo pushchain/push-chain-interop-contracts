@@ -2,7 +2,6 @@
 pragma solidity 0.8.26;
 
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import { IPC20 } from "../../src/interfaces/IPC20.sol";
 
 contract MockPC20Token is ERC20 {
     uint8 private _decimals;
@@ -19,27 +18,15 @@ contract MockPC20Token is ERC20 {
         return _decimals;
     }
 
-    function pc20Metadata()
-        external
-        view
-        returns (
-            string memory,
-            string memory,
-            uint8,
-            address
-        )
-    {
-        return (name(), symbol(), _decimals, address(this));
-    }
-
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
 }
 
-/// @dev A plain ERC-20 that does NOT implement pc20Metadata().
-contract MockNonPC20Token is ERC20 {
-    constructor() ERC20("NotPC20", "NPC") {}
+/// @dev A plain ERC-20 with no PC20-specific surface. Exportable like any other
+///      ERC-20 — destination metadata is carried by the PC20 payload, not the token.
+contract MockPlainERC20 is ERC20 {
+    constructor() ERC20("PlainToken", "PLAIN") {}
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
@@ -52,14 +39,6 @@ contract MockFeeOnTransferPC20 is ERC20 {
 
     constructor(uint256 fee_) ERC20("FeeToken", "FEE") {
         fee = fee_;
-    }
-
-    function pc20Metadata()
-        external
-        view
-        returns (string memory, string memory, uint8, address)
-    {
-        return (name(), symbol(), 18, address(this));
     }
 
     function mint(address to, uint256 amount) external {
