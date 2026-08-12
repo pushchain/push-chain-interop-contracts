@@ -8,8 +8,8 @@
 | ----------------------------------------- | -------------------------------------------- |
 | UniversalGateway Proxy                    | `0xFD4fef1F43aFEc8b5bcdEEc47f35a1431479aC16` |
 | UniversalGateway ProxyAdmin               | `0x0b30F0ECd37B8D44FE1d2b98d5Dc64654d9ac9b3` |
-| UniversalGateway Implementation (current, pc20 changes) | `0x0C746189698F2054C199E9CD54b2f6B316397E75` |
-| UniversalGateway Implementation (old, post-audit)        | `0x24B978f08E320e9B48d3A12b75A4AF914530E937` |
+| UniversalGateway Implementation (current, indexed subTxId) | `0x34B2a6B88E1549381BFda9a42C7C684b84Aa4B74` |
+| UniversalGateway Implementation (old, pc20 changes)        | `0x0C746189698F2054C199E9CD54b2f6B316397E75` |
 
 ## Vault System
 

@@ -54,10 +54,10 @@ interface IUniversalGateway {
     /// @param amount               Amount of token being reverted
     /// @param revertInstruction    Revert settings configuration
     event RevertUniversalTx(
-        bytes32 subTxId,
+        bytes32 indexed subTxId,
         bytes32 indexed universalTxId,
         address indexed to,
-        address indexed token,
+        address token,
         uint256 amount,
         RevertInstructions revertInstruction
     );
