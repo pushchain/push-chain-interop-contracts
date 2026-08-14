@@ -51,10 +51,7 @@ contract UniversalGatewayPC is
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
-    /// @notice ERC-165 interface id for IERC721 — used to reject NFTs from the PC20 export path.
-    bytes4 public constant ERC721_INTERFACE_ID = 0x80ac58cd;
-
-    /// @notice MUTABLE — admin-updatable via updateUniversalCore.
+        /// @notice MUTABLE — admin-updatable via updateUniversalCore.
     address public universalCore;
     /// @notice MUTABLE — admin-updatable via updateVaultPC.
     IVaultPC public vaultPC;
@@ -337,8 +334,11 @@ contract UniversalGatewayPC is
             token.staticcall(abi.encodeWithSelector(IERC20.allowance.selector, address(this), address(this)));
         if (!ok || data.length < 32) revert Errors.NotSupported();
 
+        // ERC-165 interface id for IERC721.
+        bytes4 erc721InterfaceId = 0x80ac58cd;
+
         (bool isERC165, bytes memory erc721Data) =
-            token.staticcall(abi.encodeWithSelector(IERC165.supportsInterface.selector, ERC721_INTERFACE_ID));
+            token.staticcall(abi.encodeWithSelector(IERC165.supportsInterface.selector, erc721InterfaceId));
         if (isERC165 && erc721Data.length >= 32 && abi.decode(erc721Data, (bool))) {
             revert Errors.NotSupported();
         }
