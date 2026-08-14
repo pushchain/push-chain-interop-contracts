@@ -15,7 +15,14 @@ import { UniversalOutboundTxRequest, PC_20_SELECTOR as TYPES_PC_20_SELECTOR } fr
 import { Errors } from "../../src/libraries/Errors.sol";
 import { MockPRC20 } from "../mocks/MockPRC20.sol";
 import { MockUniversalCoreReal } from "../mocks/MockUniversalCoreReal.sol";
-import { MockPC20Token, MockPlainERC20, MockFeeOnTransferPC20 } from "../mocks/MockPC20Token.sol";
+import {
+    MockPC20Token,
+    MockPlainERC20,
+    MockNoMetadataERC20,
+    MockFeeOnTransferPC20,
+    MockERC721,
+    MockERC721WithAllowance
+} from "../mocks/MockPC20Token.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract ExportPC20Test is Test {
@@ -480,6 +487,163 @@ contract ExportPC20Test is Test {
         assertEq(plainToken.balanceOf(address(vaultPC20)), amount);
         assertEq(vaultPC20.totalLocked(address(plainToken)), amount);
         assertEq(gateway.nonce(), 1);
+    }
+
+    /// @dev An EOA (no code) is not a token. Caught at the gateway rather than
+    ///      relying on VaultPC20's balance guard to fail it downstream.
+    function test_ExportPC20_RevertsEOAToken() public {
+        address notAToken = makeAddr("notAToken");
+
+        bytes memory payload = _buildPC20Payload(DEST_CHAIN, "Fake", "FAKE", 18, bytes(""));
+        UniversalOutboundTxRequest memory req = UniversalOutboundTxRequest({
+            recipient: abi.encodePacked(address(0xDEAD)),
+            token: notAToken,
+            amount: 10e18,
+            gasLimit: 0,
+            gasPrice: 0,
+            maxPCForGas: 0,
+            payload: payload,
+            revertRecipient: user2
+        });
+
+        vm.prank(user1);
+        vm.expectRevert(Errors.NotSupported.selector);
+        gateway.sendUniversalTxOutbound{ value: PC_FEE }(req);
+    }
+
+    /// @dev An ERC-721 must not be exportable. balanceOf(address) and approve(address,uint256)
+    ///      share selectors with ERC-20, so this is caught by the absence of allowance().
+    function test_ExportPC20_RevertsERC721() public {
+        MockERC721 nft = new MockERC721();
+        nft.mint(user1, 1);
+
+        vm.prank(uem);
+        universalCore.setProtocolFeeByToken(address(nft), DEFAULT_PROTOCOL_FEE);
+
+        bytes memory payload = _buildPC20Payload(DEST_CHAIN, "MockNFT", "MNFT", 18, bytes(""));
+        UniversalOutboundTxRequest memory req = UniversalOutboundTxRequest({
+            recipient: abi.encodePacked(address(0xDEAD)),
+            token: address(nft),
+            amount: 1,
+            gasLimit: 0,
+            gasPrice: 0,
+            maxPCForGas: 0,
+            payload: payload,
+            revertRecipient: user2
+        });
+
+        vm.prank(user1);
+        vm.expectRevert(Errors.NotSupported.selector);
+        gateway.sendUniversalTxOutbound{ value: PC_FEE }(req);
+    }
+
+    /// @dev An ERC-721 that fakes allowance() still gets rejected, via the
+    ///      ERC-165 supportsInterface(0x80ac58cd) probe.
+    function test_ExportPC20_RevertsERC721WithAllowanceStub() public {
+        MockERC721WithAllowance nft = new MockERC721WithAllowance();
+        nft.mint(user1, 1);
+
+        vm.prank(uem);
+        universalCore.setProtocolFeeByToken(address(nft), DEFAULT_PROTOCOL_FEE);
+
+        bytes memory payload = _buildPC20Payload(DEST_CHAIN, "SneakyNFT", "SNFT", 18, bytes(""));
+        UniversalOutboundTxRequest memory req = UniversalOutboundTxRequest({
+            recipient: abi.encodePacked(address(0xDEAD)),
+            token: address(nft),
+            amount: 1,
+            gasLimit: 0,
+            gasPrice: 0,
+            maxPCForGas: 0,
+            payload: payload,
+            revertRecipient: user2
+        });
+
+        vm.prank(user1);
+        vm.expectRevert(Errors.NotSupported.selector);
+        gateway.sendUniversalTxOutbound{ value: PC_FEE }(req);
+    }
+
+    /// @dev Payload decimals are NOT validated against the source token. The payload is the sole
+    ///      source of destination wrapper metadata, so callers (SDK/relayer) are responsible for
+    ///      encoding it correctly. Documents intent: this export succeeds despite the mismatch.
+    function test_ExportPC20_DecimalsMismatchNotValidated() public {
+        MockPC20Token token6 = new MockPC20Token("SixDec", "SIX", 6);
+        token6.mint(user1, 100e18);
+        vm.prank(user1);
+        token6.approve(address(gateway), type(uint256).max);
+
+        vm.prank(uem);
+        universalCore.setProtocolFeeByToken(address(token6), DEFAULT_PROTOCOL_FEE);
+
+        uint256 amount = 10e6;
+        // Payload declares 18 while the token reports 6.
+        bytes memory payload = _buildPC20Payload(DEST_CHAIN, "SixDec", "SIX", 18, bytes(""));
+        UniversalOutboundTxRequest memory req = UniversalOutboundTxRequest({
+            recipient: abi.encodePacked(address(0xDEAD)),
+            token: address(token6),
+            amount: amount,
+            gasLimit: 0,
+            gasPrice: 0,
+            maxPCForGas: 0,
+            payload: payload,
+            revertRecipient: user2
+        });
+
+        vm.prank(user1);
+        gateway.sendUniversalTxOutbound{ value: PC_FEE }(req);
+
+        assertEq(vaultPC20.totalLocked(address(token6)), amount);
+    }
+
+    /// @dev Non-18 decimals are fine as long as the payload agrees with the token.
+    function test_ExportPC20_NonStandardDecimalsSucceeds() public {
+        MockPC20Token token6 = new MockPC20Token("SixDec", "SIX", 6);
+        token6.mint(user1, 100e18);
+        vm.prank(user1);
+        token6.approve(address(gateway), type(uint256).max);
+
+        vm.prank(uem);
+        universalCore.setProtocolFeeByToken(address(token6), DEFAULT_PROTOCOL_FEE);
+
+        uint256 amount = 10e6;
+        UniversalOutboundTxRequest memory req =
+            _buildPC20Request(address(token6), amount, DEST_CHAIN, 0, 0, bytes(""), user2);
+
+        vm.prank(user1);
+        gateway.sendUniversalTxOutbound{ value: PC_FEE }(req);
+
+        assertEq(vaultPC20.totalLocked(address(token6)), amount);
+    }
+
+    /// @dev decimals() is OPTIONAL per EIP-20. A token omitting it must still export,
+    ///      with the payload value accepted as-is.
+    function test_ExportPC20_TokenWithoutDecimalsSucceeds() public {
+        MockNoMetadataERC20 bareToken = new MockNoMetadataERC20();
+        bareToken.mint(user1, 100e18);
+        vm.prank(user1);
+        bareToken.approve(address(gateway), type(uint256).max);
+
+        vm.prank(uem);
+        universalCore.setProtocolFeeByToken(address(bareToken), DEFAULT_PROTOCOL_FEE);
+
+        uint256 amount = 10e18;
+        bytes memory payload = _buildPC20Payload(DEST_CHAIN, "Bare", "BARE", 18, bytes(""));
+        UniversalOutboundTxRequest memory req = UniversalOutboundTxRequest({
+            recipient: abi.encodePacked(address(0xDEAD)),
+            token: address(bareToken),
+            amount: amount,
+            gasLimit: 0,
+            gasPrice: 0,
+            maxPCForGas: 0,
+            payload: payload,
+            revertRecipient: user2
+        });
+
+        vm.prank(user1);
+        gateway.sendUniversalTxOutbound{ value: PC_FEE }(req);
+
+        assertEq(bareToken.balanceOf(address(vaultPC20)), amount);
+        assertEq(vaultPC20.totalLocked(address(bareToken)), amount);
     }
 
     function test_ExportPC20_RevertsEmptyDestChainNamespace() public {

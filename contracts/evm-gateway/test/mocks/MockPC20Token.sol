@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { ERC721 } from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 
 contract MockPC20Token is ERC20 {
     uint8 private _decimals;
@@ -30,6 +31,65 @@ contract MockPlainERC20 is ERC20 {
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
+    }
+}
+
+/// @dev Minimal token exposing only the mandatory EIP-20 surface — no decimals()/name()/symbol().
+///      EIP-20 marks metadata OPTIONAL, so such tokens must remain exportable.
+contract MockNoMetadataERC20 {
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+    uint256 public totalSupply;
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+        totalSupply += amount;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+
+    function transfer(address to, uint256 amount) public returns (bool) {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        uint256 allowed = allowance[from][msg.sender];
+        if (allowed != type(uint256).max) {
+            allowance[from][msg.sender] = allowed - amount;
+        }
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+}
+
+/// @dev A real ERC-721. Must never be exportable via the PC20 path.
+///      Note balanceOf(address) and approve(address,uint256) share selectors with ERC-20,
+///      so only allowance()/ERC-165 can tell this apart from a fungible token.
+contract MockERC721 is ERC721 {
+    constructor() ERC721("MockNFT", "MNFT") {}
+
+    function mint(address to, uint256 tokenId) external {
+        _mint(to, tokenId);
+    }
+}
+
+/// @dev An ERC-721 that also exposes an allowance() stub, defeating the primary probe.
+///      Caught only by the ERC-165 supportsInterface(0x80ac58cd) check.
+contract MockERC721WithAllowance is ERC721 {
+    constructor() ERC721("SneakyNFT", "SNFT") {}
+
+    function mint(address to, uint256 tokenId) external {
+        _mint(to, tokenId);
+    }
+
+    function allowance(address, address) external pure returns (uint256) {
+        return type(uint256).max;
     }
 }
 
