@@ -23,7 +23,6 @@ pragma solidity 0.8.26;
 
 import { Errors } from "./libraries/Errors.sol";
 import { IPRC20 } from "./interfaces/IPRC20.sol";
-import { IPC20 } from "./interfaces/IPC20.sol";
 import { IVaultPC } from "./interfaces/IVaultPC.sol";
 import { IVaultPC20 } from "./interfaces/IVaultPC20.sol";
 import { IUniversalCore } from "./interfaces/IUniversalCore.sol";
@@ -32,6 +31,7 @@ import { TX_TYPE } from "./libraries/Types.sol";
 import { UniversalOutboundTxRequest, PC_20_SELECTOR } from "./libraries/TypesUGPC.sol";
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 
@@ -51,7 +51,7 @@ contract UniversalGatewayPC is
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
-    /// @notice MUTABLE — admin-updatable via updateUniversalCore.
+        /// @notice MUTABLE — admin-updatable via updateUniversalCore.
     address public universalCore;
     /// @notice MUTABLE — admin-updatable via updateVaultPC.
     IVaultPC public vaultPC;
@@ -158,10 +158,11 @@ contract UniversalGatewayPC is
 
         if (isPC20) {
             if (req.amount == 0) revert Errors.ZeroAmount();
-            IPC20(req.token).pc20Metadata();
 
             string memory destChainNamespace = _decodePC20ChainNamespace(req.payload);
             if (bytes(destChainNamespace).length == 0) revert Errors.InvalidData();
+
+            _validateERC20Metadata(req.token);
 
             (gasToken, gasFee, protocolFee, gasPrice, gasLimitUsed) =
                 _fetchPC20ExportGasAndFees(destChainNamespace, req.gasLimit, req.token);
@@ -295,10 +296,52 @@ contract UniversalGatewayPC is
 
     /// @dev Extracts destChainNamespace from a PC20-encoded payload.
     ///      Expected layout: [PC_20_SELECTOR (4 B)][abi.encode(destChainNamespace, name, symbol, decimals)][user calldata…]
-    ///      Only the first ABI-encoded string (destChainNamespace) is decoded; remaining fields are
-    ///      passed through opaquely to the destination chain for wrapped ERC-20 deployment.
-    function _decodePC20ChainNamespace(bytes calldata payload) internal pure returns (string memory destChainNamespace) {
+    ///      Only the first ABI-encoded string is decoded; name, symbol and decimals are passed through
+    ///      opaquely to the destination chain, which bounds name/symbol length when deploying the wrapper.
+    function _decodePC20ChainNamespace(bytes calldata payload)
+        internal
+        pure
+        returns (string memory destChainNamespace)
+    {
         (destChainNamespace) = abi.decode(payload[4:], (string));
+    }
+
+    /// @dev            Basic sanity checks on a PC20 source token, performed without requiring the
+    ///                 token to implement any Push-specific interface.
+    ///
+    ///                 Primary probe is allowance(address,address): it is mandatory for every ERC-20,
+    ///                 is absent from ERC-721/ERC-1155, and is the exact capability the export path
+    ///                 relies on via safeTransferFrom. balanceOf and approve are NOT usable as
+    ///                 discriminators — their selectors are identical across ERC-20 and ERC-721
+    ///                 (balanceOf(address) is 0x70a08231 in both), so an NFT would pass.
+    ///
+    ///                 Secondary probe rejects anything advertising ERC-721 via ERC-165. ERC-20s do
+    ///                 not implement ERC-165, so a revert or false here is the normal passing case.
+    ///
+    ///                 Deliberately does NOT require name()/symbol()/decimals(): EIP-20 marks them
+    ///                 OPTIONAL, and some tokens (e.g. MKR) return bytes32 rather than string.
+    ///                 Requiring them would reject valid tokens. Metadata forwarded to the
+    ///                 destination comes from the export payload, not from the token.
+    ///
+    ///                 This is a type check, not a trust check: any contract can implement these
+    ///                 functions and lie. Fund-safety rests on VaultPC20's balance accounting.
+    ///
+    /// @param token    PC20 source token on Push Chain.
+    function _validateERC20Metadata(address token) internal view {
+        if (token.code.length == 0) revert Errors.NotSupported();
+
+        (bool ok, bytes memory data) =
+            token.staticcall(abi.encodeWithSelector(IERC20.allowance.selector, address(this), address(this)));
+        if (!ok || data.length < 32) revert Errors.NotSupported();
+
+        // ERC-165 interface id for IERC721.
+        bytes4 erc721InterfaceId = 0x80ac58cd;
+
+        (bool isERC165, bytes memory erc721Data) =
+            token.staticcall(abi.encodeWithSelector(IERC165.supportsInterface.selector, erc721InterfaceId));
+        if (isERC165 && erc721Data.length >= 32 && abi.decode(erc721Data, (bool))) {
+            revert Errors.NotSupported();
+        }
     }
 
     /// @dev                    Validates token and revertRecipient are non-zero.
