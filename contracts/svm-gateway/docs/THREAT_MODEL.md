@@ -143,6 +143,11 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Control: `dispatch_finalize_action` runs post-CPI invariants (F-2026-18980). CEA account must remain System-owned and empty; CEA ATA `owner` and `close_authority` must be unchanged from the pre-CPI snapshot; any delegate change on the CEA ATA is bounded so that a new delegate or an increased allowance cannot exceed the amount staged this tx. Prior legitimate delegations survive across later unrelated executes; on the current-mint ATA `spl_token::Revoke` is allowed, while on bystander CEA-owned ATAs (passed in `remaining_accounts`) delegate identity and allowance must be strictly unchanged.  
    Residual: in-call spending of pre-existing CEA lamports or token balance during the same CPI is not sandboxed. Consistent with the CEA-as-wallet model: the user chose the target and the signed payload made accounts writable.
 
+17. **Recipient ATA rent farming (accepted risk)**  
+   Risk: on SPL withdraw, if the recipient's ATA does not exist, the gateway creates it via CPI with the caller (relayer) as rent-payer. An attacker can drive many small withdrawals to fresh recipient wallets, forcing the relayer to sponsor ATA rent each time.  
+   Control: none currently. Deliberately deferred. Rationale: ATA auto-create mirrors the CEA ATA path and preserves first-withdraw UX to fresh wallets. Mitigation candidates (recipient-pays via amount deduction; billing on Push Chain L1) are tracked as protocol changes for a future revision.  
+   Residual: relayer sponsors ATA rent (~0.002 SOL per new `(recipient, mint)`); recoverable only by the recipient closing the ATA.
+
 ---
 
 ## 5. Cross-Program / Operational Risks
