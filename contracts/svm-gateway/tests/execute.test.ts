@@ -5211,6 +5211,122 @@ describe("Universal Gateway - Execute Tests", () => {
       );
     });
 
+    it("T14: rejects spl_token::Revoke on bystander CEA-owned ATA", async () => {
+      // Bystanders must remain strictly unchanged (budget = 0). Revoke on a
+      // bystander clears a delegate the user set intentionally in a prior
+      // execute; the CPI target has no legitimate reason to touch delegations
+      // on accounts unrelated to the staged mint.
+      const pushAccount = generateSender();
+      const delegate = Keypair.generate().publicKey;
+      const stagedFirst = asTokenAmount(1);
+
+      // Step 1: seed the USDT ATA with a legitimate delegate via a normal
+      // self-Approve (this passes T2's rule since delegate == staged).
+      await runHostileExecute({
+        pushAccount,
+        op: 2,
+        target: delegate,
+        amount: stagedFirst,
+        stagedAmount: stagedFirst,
+        mint: mockUSDT.mint.publicKey,
+      });
+
+      const bystanderAta = await getCeaAta(pushAccount, mockUSDT.mint.publicKey);
+      const seeded = await readCeaDelegate(bystanderAta);
+      expect(seeded.delegate?.toBase58()).to.equal(delegate.toBase58());
+      expect(seeded.amount).to.equal(BigInt(stagedFirst.toString()));
+
+      // Step 2: SOL finalize (no current-mint ATA) with the USDT ATA passed
+      // as a bystander in remaining_accounts. Hostile op = Revoke targeting
+      // the bystander. Must revert — bystanders are budget-0.
+      const ceaAuthority = getCeaAuthorityPda(pushAccount);
+      const attacker = Keypair.generate().publicKey;
+
+      const hostileIx = await counterProgram.methods
+        .hostileCeaOp(5, attacker, new anchor.BN(0)) // op=5 revoke
+        .accountsPartial({
+          cea: ceaAuthority,
+          ceaAta: bystanderAta,
+          aux: attacker,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .instruction();
+
+      const accounts = instructionAccountsToGatewayMetas(hostileIx);
+      const remainingAccounts = instructionAccountsToRemaining(hostileIx);
+      const subTxId = generateTxId();
+      const universalTxId = generateUniversalTxId();
+      const staged = asLamports(0.001);
+      const { gasFee } = await calculateSolExecuteFees(provider.connection);
+
+      const tssAccount = await gatewayProgram.account.tssPda.fetch(tssPda);
+      const sig = await signTssMessage({
+        instruction: TssInstruction.Execute,
+        amount: BigInt(staged.toString()),
+        chainId: tssAccount.chainId,
+        additional: buildExecuteAdditionalData(
+          new Uint8Array(universalTxId),
+          new Uint8Array(subTxId),
+          counterProgram.programId,
+          new Uint8Array(pushAccount),
+          accounts,
+          hostileIx.data,
+          gasFee,
+          PublicKey.default
+        ),
+      });
+
+      await expectRejection(
+        gatewayProgram.methods
+          .finalizeUniversalTx(
+            2,
+            Array.from(subTxId),
+            Array.from(universalTxId),
+            staged,
+            Array.from(pushAccount),
+            accountsToWritableFlagsOnly(accounts),
+            Buffer.from(hostileIx.data),
+            new anchor.BN(Number(gasFee)),
+            new anchor.BN(4102444800),
+            Array.from(sig.signature),
+            sig.recoveryId,
+            Array.from(sig.messageHash)
+          )
+          .accountsPartial({
+            caller: admin.publicKey,
+            config: configPda,
+            vaultAta: null,
+            vaultSol: vaultPda,
+            ceaAuthority,
+            ceaAta: null,
+            mint: null,
+            tssPda,
+            executedSubTx: getExecutedTxPda(subTxId),
+            rateLimitConfig: null,
+            tokenRateLimit: null,
+            destinationProgram: counterProgram.programId,
+            storedIxData: null,
+            storeRefundRecipient: null,
+            recipient: null,
+            tokenProgram: null,
+            systemProgram: SystemProgram.programId,
+            rent: null,
+            associatedTokenProgram: null,
+            recipientAta: null,
+          })
+          .remainingAccounts(remainingAccounts)
+          .signers([admin])
+          .rpc(),
+        "InvalidAccount"
+      );
+
+      // Delegate on the bystander must be intact after the rejected tx.
+      const after = await readCeaDelegate(bystanderAta);
+      expect(after.delegate?.toBase58()).to.equal(delegate.toBase58());
+      expect(after.amount).to.equal(BigInt(stagedFirst.toString()));
+    });
+
     it("T10: native-only path (no cea_ata) unaffected by ATA invariants", async () => {
       const pushAccount = generateSender();
       const staged = asLamports(0.001);

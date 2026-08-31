@@ -662,12 +662,12 @@ fn dispatch_finalize_action(
 
 /// Post-CPI invariants on a CEA-owned SPL token account. Blocks
 /// `SetAuthority(AccountOwner)`, `SetAuthority(CloseAccount)`, and unbounded
-/// `Approve`. Delegate delta is bounded by `budget` (amount staged this tx for
-/// the current-mint ATA; 0 for bystanders).
+/// `Approve`. `budget` is the amount staged this tx for the current-mint ATA;
+/// bystanders pass 0 and must remain strictly unchanged (including `Revoke`).
 ///
-/// Delegate identity may only change when the prior delegate was inactive
-/// (`None` or allowance 0) or when the new delegate is `None` (Revoke). This
-/// prevents an active allowance from being diverted to a different party.
+/// For `budget > 0`, delegate identity may only change when the prior delegate
+/// was inactive (`None` or allowance 0) or when the new delegate is `None`
+/// (Revoke). This prevents an active allowance from being diverted.
 #[inline(never)]
 fn check_cea_ata_invariants(
     after: &spl_token::state::Account,
@@ -679,6 +679,14 @@ fn check_cea_ata_invariants(
         after.close_authority == before.close_authority,
         GatewayError::InvalidAccount
     );
+    if budget == 0 {
+        require!(after.delegate == before.delegate, GatewayError::InvalidAccount);
+        require!(
+            after.delegated_amount == before.delegated_amount,
+            GatewayError::InvalidAccount
+        );
+        return Ok(());
+    }
     if after.delegate != before.delegate {
         require!(
             after.delegate.is_none()
