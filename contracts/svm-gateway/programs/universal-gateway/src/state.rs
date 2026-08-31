@@ -232,6 +232,7 @@ pub struct UniversalTxFinalized {
     pub gas_used: u64,             // Actual relayer reimbursement (lamports)
     pub gas_to_refund: u64,        // Unused gas returned to user on Push Chain
     pub ata_created: bool,         // Whether CEA ATA was created in this finalize
+    pub recipient_ata_created: bool, // Whether recipient ATA was created (SPL withdraw path)
     pub push_account: [u8; 20],    // EVM address
     pub target: Pubkey,            // Target program
     pub token: Pubkey,             // Token (Pubkey::default() for SOL)

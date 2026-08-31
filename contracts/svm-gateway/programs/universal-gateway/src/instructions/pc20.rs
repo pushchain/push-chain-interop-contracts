@@ -558,6 +558,9 @@ fn process_pc20_export<'a, 'info>(
         gas_to_refund,
         push_account: params.push_account,
         ata_created: cea_ata_created,
+        // PC20 export doesn't touch a recipient ATA — the wrapped-mint route uses
+        // pc20_recipient_ata_lamports_paid inside gas_used instead.
+        recipient_ata_created: false,
         target: *accounts.recipient.key,
         token: source_asset_as_pubkey(params.source_asset),
         amount: params.amount,
