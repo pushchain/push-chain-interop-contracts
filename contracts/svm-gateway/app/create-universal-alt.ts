@@ -79,12 +79,19 @@ async function main() {
         [Buffer.from(RATE_LIMIT_CONFIG_SEED)],
         PROGRAM_ID,
     );
+    // emit_cpi self-CPI target: PDA(["__event_authority"], program). Constant per program.
+    const [eventAuthorityPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("__event_authority")],
+        PROGRAM_ID,
+    );
 
     console.log("Config PDA:", configPda.toBase58());
     console.log("Vault  PDA:", vaultPda.toBase58());
     console.log("FeeVault PDA:", feeVaultPda.toBase58());
     console.log("RateLimitConfig PDA:", rateLimitConfigPda.toBase58());
     console.log("Price account:", PRICE_ACCOUNT.toBase58());
+    console.log("EventAuthority PDA:", eventAuthorityPda.toBase58());
+    console.log("Program (self):", PROGRAM_ID.toBase58());
 
     // 1) Create the lookup table
     const slot = await connection.getSlot("finalized");
@@ -115,6 +122,8 @@ async function main() {
         PRICE_ACCOUNT,
         spl.TOKEN_PROGRAM_ID,
         SystemProgram.programId,
+        eventAuthorityPda,
+        PROGRAM_ID, // required as an account on every emit_cpi instruction
     ];
 
     const extendIx = AddressLookupTableProgram.extendLookupTable({
