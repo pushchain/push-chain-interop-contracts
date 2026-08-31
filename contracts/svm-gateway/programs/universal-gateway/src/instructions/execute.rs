@@ -663,8 +663,102 @@ fn dispatch_finalize_action<'a, 'b, 'c, 'info>(
         data: ix_data.to_vec(),
     };
 
+    // F-2026-18980 — Pre-CPI snapshot of every CEA-owned SPL token account this
+    // tx exposes. Current-mint ATA (typed slot) has budget = `amount`. Bystanders
+    // in remaining_accounts have budget = 0 (strictly unchanged). Token-2022
+    // accounts are not currently supported; extend the SPL-Token owner check if
+    // added later.
+    let cea_ata_key = ctx.accounts.cea_ata.as_ref().map(|a| a.key());
+    let current_snapshot = ctx
+        .accounts
+        .cea_ata
+        .as_ref()
+        .map(|a| parse_token_account(&a.to_account_info()))
+        .transpose()?;
+
+    let mut bystanders: Vec<(usize, spl_token::state::Account)> = Vec::new();
+    for (idx, info) in ctx.remaining_accounts.iter().enumerate() {
+        if Some(info.key()) == cea_ata_key {
+            continue;
+        }
+        if info.owner != &spl_token::ID {
+            continue;
+        }
+        let Ok(parsed) = parse_token_account(info) else {
+            continue;
+        };
+        if parsed.owner != cea_key {
+            continue;
+        }
+        bystanders.push((idx, parsed));
+    }
+
     invoke_signed(&cpi_ix, ctx.remaining_accounts, &[cea_seeds])?;
+
+    // CEA account must remain System-owned and empty (blocks `assign` brick).
+    let cea = ctx.accounts.cea_authority.to_account_info();
+    require!(
+        cea.owner == &anchor_lang::system_program::ID && cea.data_is_empty(),
+        GatewayError::InvalidAccount
+    );
+
+    // Current-mint ATA: budget = `amount`.
+    if let (Some(cea_ata), Some(before)) =
+        (ctx.accounts.cea_ata.as_ref(), current_snapshot)
+    {
+        let after = parse_token_account(&cea_ata.to_account_info())?;
+        check_cea_ata_invariants(&after, &before, amount)?;
+    }
+
+    // Bystander CEA-owned ATAs: budget = 0 (strictly unchanged).
+    for (idx, before) in &bystanders {
+        let after = parse_token_account(&ctx.remaining_accounts[*idx])?;
+        check_cea_ata_invariants(&after, before, 0)?;
+    }
+
     Ok(false)
+}
+
+/// Post-CPI invariants on a CEA-owned SPL token account. Blocks
+/// `SetAuthority(AccountOwner)`, `SetAuthority(CloseAccount)`, and unbounded
+/// `Approve`. `budget` is the amount staged this tx for the current-mint ATA;
+/// bystanders pass 0 and must remain strictly unchanged (including `Revoke`).
+///
+/// For `budget > 0`, delegate identity may only change when the prior delegate
+/// was inactive (`None` or allowance 0) or when the new delegate is `None`
+/// (Revoke). This prevents an active allowance from being diverted.
+#[inline(never)]
+fn check_cea_ata_invariants(
+    after: &spl_token::state::Account,
+    before: &spl_token::state::Account,
+    budget: u64,
+) -> Result<()> {
+    require!(after.owner == before.owner, GatewayError::InvalidOwner);
+    require!(
+        after.close_authority == before.close_authority,
+        GatewayError::InvalidAccount
+    );
+    if budget == 0 {
+        require!(after.delegate == before.delegate, GatewayError::InvalidAccount);
+        require!(
+            after.delegated_amount == before.delegated_amount,
+            GatewayError::InvalidAccount
+        );
+        return Ok(());
+    }
+    if after.delegate != before.delegate {
+        require!(
+            after.delegate.is_none()
+                || before.delegate.is_none()
+                || before.delegated_amount == 0,
+            GatewayError::InvalidAccount
+        );
+        require!(after.delegated_amount <= budget, GatewayError::InvalidAccount);
+    } else if after.delegated_amount > before.delegated_amount {
+        let increase = after.delegated_amount - before.delegated_amount;
+        require!(increase <= budget, GatewayError::InvalidAccount);
+    }
+    Ok(())
 }
 
 fn reconstruct_accounts_from_flags<'info>(

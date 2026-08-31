@@ -138,6 +138,11 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Risk: `finalize_universal_tx` with `destination_program = gateway` can treat an inner generic `send_universal_tx` discriminator as a PC20 CEA burn when the signed remaining accounts match the PC20 account shape.
    Control: TSS signs the destination program, inner instruction data, account list, and writable flags; signer policy must explicitly classify `target = gateway`, inner `send_universal_tx`, `outer amount = 0`, and PC20 remaining accounts as PC20 burn intent.
 
+16. **Malicious execute target installing persistent state on CEA**  
+   Risk: a target invoked via `finalize_universal_tx` receives the CEA as a CPI signer and could plant persistent authority mutations (`spl_token::Approve`, `spl_token::SetAuthority(AccountOwner)`, `spl_token::SetAuthority(CloseAccount)`, `system_instruction::assign`) that survive the tx and drain funds bridged into the CEA afterwards or brick every future finalize.  
+   Control: `dispatch_finalize_action` runs post-CPI invariants (F-2026-18980). CEA account must remain System-owned and empty; CEA ATA `owner` and `close_authority` must be unchanged from the pre-CPI snapshot; any delegate change on the CEA ATA is bounded so that a new delegate or an increased allowance cannot exceed the amount staged this tx. Prior legitimate delegations survive across later unrelated executes; on the current-mint ATA `spl_token::Revoke` is allowed, while on bystander CEA-owned ATAs (passed in `remaining_accounts`) delegate identity and allowance must be strictly unchanged.  
+   Residual: in-call spending of pre-existing CEA lamports or token balance during the same CPI is not sandboxed. Consistent with the CEA-as-wallet model: the user chose the target and the signed payload made accounts writable.
+
 ---
 
 ## 5. Cross-Program / Operational Risks
