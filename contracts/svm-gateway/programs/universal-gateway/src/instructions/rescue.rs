@@ -32,6 +32,7 @@ const SPL_TOKEN_ACCOUNT_LEN: usize = 165;
 //   SOL: amount || [sub_tx_id, universal_tx_id, recipient, gas_fee]
 //   SPL: amount || [sub_tx_id, universal_tx_id, mint, recipient, gas_fee]
 
+#[event_cpi]
 #[derive(Accounts)]
 #[instruction(sub_tx_id: [u8; 32])]
 pub struct RescueFunds<'info> {
@@ -282,7 +283,7 @@ pub fn rescue_funds<'info>(
         .ok_or(error!(GatewayError::InvalidAmount))?;
     require!(gas_fee >= gas_used, GatewayError::InsufficientGasBudget);
 
-    emit!(crate::state::FundsRescued {
+    emit_cpi!(crate::state::FundsRescued {
         sub_tx_id,
         universal_tx_id,
         token: ctx

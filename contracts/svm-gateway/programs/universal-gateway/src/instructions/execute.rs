@@ -31,6 +31,7 @@ const SPL_TOKEN_ACCOUNT_LEN: usize = 165;
 //  UNIFIED FINALIZE_UNIVERSAL_TX
 // =========================
 
+#[event_cpi]
 #[derive(Accounts)]
 #[instruction(instruction_id: u8, sub_tx_id: [u8; 32], universal_tx_id: [u8; 32], amount: u64, push_account: [u8; 20])]
 pub struct FinalizeUniversalTx<'info> {
@@ -346,7 +347,7 @@ pub fn finalize_universal_tx_common<'a, 'b, 'c, 'info>(
     )?;
 
     if !dispatched_pc20_cea_burn {
-        emit!(UniversalTxFinalized {
+        emit_cpi!(UniversalTxFinalized {
             sub_tx_id,
             universal_tx_id,
             wrapper_address: Pubkey::default(),
@@ -631,7 +632,7 @@ fn dispatch_finalize_action<'a, 'b, 'c, 'info>(
 
     if request.target == *ctx.program_id {
         if request.is_pc20_cea_burn {
-            route_pc20_burn_from_finalize_cea(
+            let event = route_pc20_burn_from_finalize_cea(
                 ctx.program_id,
                 &ctx.accounts.cea_authority.to_account_info(),
                 ctx.remaining_accounts,
@@ -639,6 +640,7 @@ fn dispatch_finalize_action<'a, 'b, 'c, 'info>(
                 ix_data,
                 cea_seeds,
             )?;
+            emit_cpi!(event);
             return Ok(true);
         }
         send_universal_tx_to_uea(ctx, push_account, ix_data, cea_seeds)?;

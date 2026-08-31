@@ -290,14 +290,19 @@ pub fn handle_pc20_export_from_universal<'a, 'b, 'c, 'info>(
         recovery_id,
         message_hash,
     };
-    process_pc20_export(
+    let event = process_pc20_export(
         accounts,
         params,
         store_upload_fee_lamports,
         store_refund_recipient,
-    )
+    )?;
+    emit_cpi!(event);
+    Ok(())
 }
 
+/// Executes the PC20 CEA-burn side-effects and returns the `UniversalTx` event data.
+/// Caller must `emit_cpi!` the returned event; `emit_cpi!` requires handler ctx which
+/// this ctx-free helper does not have.
 pub fn route_pc20_burn_from_finalize_cea<'info>(
     program_id: &Pubkey,
     cea_authority: &AccountInfo<'info>,
@@ -305,7 +310,7 @@ pub fn route_pc20_burn_from_finalize_cea<'info>(
     push_account: [u8; 20],
     ix_data: &[u8],
     cea_seeds: &[&[u8]],
-) -> Result<()> {
+) -> Result<UniversalTx> {
     let args = parse_pc20_burn_ix(ix_data)?;
     let tx_type = pc20_burn_tx_type(args.amount)?;
     require!(push_account != [0u8; 20], GatewayError::ZeroAddress);
@@ -333,7 +338,7 @@ pub fn route_pc20_burn_from_finalize_cea<'info>(
         cea_seeds,
     )?;
 
-    emit!(UniversalTx {
+    Ok(UniversalTx {
         sender: *cea_authority.key,
         recipient: args.recipient,
         token: *route_accounts.pc20_mint.key,
@@ -343,9 +348,7 @@ pub fn route_pc20_burn_from_finalize_cea<'info>(
         tx_type,
         signature_data: args.signature_data.clone(),
         from_cea: true,
-    });
-
-    Ok(())
+    })
 }
 
 fn parse_pc20_burn_ix(ix_data: &[u8]) -> Result<ParsedPc20BurnArgs> {
@@ -373,7 +376,7 @@ fn process_pc20_export<'a, 'info>(
     params: Pc20FinalizeParams,
     store_upload_fee_lamports: u64,
     store_refund_recipient: Option<&AccountInfo<'info>>,
-) -> Result<()> {
+) -> Result<UniversalTxFinalized> {
     require!(params.amount > 0, GatewayError::InvalidAmount);
     require!(
         params.recipient != Pubkey::default(),
@@ -546,7 +549,7 @@ fn process_pc20_export<'a, 'info>(
         store_refund_recipient,
     )?;
 
-    emit!(UniversalTxFinalized {
+    Ok(UniversalTxFinalized {
         sub_tx_id: params.sub_tx_id,
         universal_tx_id: params.universal_tx_id,
         wrapper_address: *accounts.pc20_mint.key,
@@ -559,9 +562,7 @@ fn process_pc20_export<'a, 'info>(
         token: source_asset_as_pubkey(params.source_asset),
         amount: params.amount,
         payload: params.user_data.clone(),
-    });
-
-    Ok(())
+    })
 }
 
 fn source_asset_as_pubkey(source_asset: [u8; 20]) -> Pubkey {

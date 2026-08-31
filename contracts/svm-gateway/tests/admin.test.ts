@@ -6,6 +6,7 @@ import { expect } from "chai";
 import * as sharedState from "./shared-state";
 import { getTssEthAddress, TSS_CHAIN_ID } from "./helpers/tss";
 import { ensureTestSetup } from "./helpers/test-setup";
+import { extractEventCpi } from "./helpers/test-utils";
 
 
 describe("Universal Gateway - Admin Functions Tests", () => {
@@ -134,28 +135,7 @@ describe("Universal Gateway - Admin Functions Tests", () => {
                 config = await program.account.config.fetch(configPda);
                 expect(config.operator.toString()).to.equal(newOperator.publicKey.toString());
 
-                let tx = null;
-                for (let i = 0; i < 10; i++) {
-                    tx = await provider.connection.getTransaction(txSig, {
-                        commitment: "confirmed",
-                        maxSupportedTransactionVersion: 0,
-                    });
-                    if (tx?.meta?.logMessages) break;
-                    await new Promise(resolve => setTimeout(resolve, 250));
-                }
-                expect(tx?.meta?.logMessages).to.exist;
-
-                const eventCoder = new anchor.BorshEventCoder(program.idl);
-                const events = (tx?.meta?.logMessages ?? [])
-                    .filter((log) => log.includes("Program data:"))
-                    .map((log) => {
-                        try {
-                            return eventCoder.decode(log.split("Program data: ")[1]);
-                        } catch {
-                            return null;
-                        }
-                    })
-                    .filter((event) => event !== null);
+                const events = await extractEventCpi(provider.connection, program, txSig);
 
                 const operatorChanged = events.find(event => event.name === "operatorChanged");
                 expect(operatorChanged).to.exist;

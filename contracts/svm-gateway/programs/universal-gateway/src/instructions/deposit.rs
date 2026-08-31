@@ -66,7 +66,7 @@ fn collect_inbound_fee(ctx: &mut Context<SendUniversalTx>, native_amount: u64) -
 
     let adjusted_native_amount = native_amount - fee_lamports;
 
-    emit!(InboundFeeCollected {
+    emit_cpi!(InboundFeeCollected {
         payer: ctx.accounts.user.key(),
         amount_lamports: fee_lamports,
         native_amount_before: native_amount,
@@ -177,7 +177,7 @@ fn route_pc20_universal_tx<'info>(
     )?;
 
     let prefixed_payload = pc20_prefixed_payload(&req.payload);
-    emit!(UniversalTx {
+    emit_cpi!(UniversalTx {
         sender: ctx.accounts.user.key(),
         recipient: req.recipient,
         token: req.token,
@@ -276,7 +276,7 @@ fn send_tx_with_gas_route(
             GatewayError::InvalidAmount
         );
 
-        emit!(UniversalTx {
+        emit_cpi!(UniversalTx {
             sender: ctx.accounts.user.key(),
             recipient: [0u8; 20],
             token: Pubkey::default(),
@@ -308,7 +308,7 @@ fn send_tx_with_gas_route(
     system_program::transfer(cpi_ctx, gas_amount)?;
 
     // Emit UniversalTx event (recipient as Pubkey::default() → UEA)
-    emit!(UniversalTx {
+    emit_cpi!(UniversalTx {
         sender: ctx.accounts.user.key(),
         recipient: [0u8; 20],
         token: Pubkey::default(),
@@ -343,7 +343,7 @@ fn send_tx_with_funds_route(
         handle_spl_funds_route(ctx, &req, native_amount, tx_type)?;
     }
 
-    emit_funds_route_event(ctx, req, tx_type);
+    emit_funds_route_event(ctx, req, tx_type)?;
     Ok(())
 }
 
@@ -437,13 +437,13 @@ fn emit_funds_route_event(
     ctx: &Context<SendUniversalTx>,
     req: UniversalTxRequest,
     tx_type: TxType,
-) {
+) -> Result<()> {
     let recipient = if tx_type == TxType::Funds {
         req.recipient
     } else {
         [0u8; 20]
     };
-    emit!(UniversalTx {
+    emit_cpi!(UniversalTx {
         sender: ctx.accounts.user.key(),
         recipient,
         token: req.token,
@@ -454,6 +454,7 @@ fn emit_funds_route_event(
         signature_data: req.signature_data,
         from_cea: false,
     });
+    Ok(())
 }
 
 /// Transfer SPL tokens from user's token account to the vault's ATA.
@@ -517,6 +518,7 @@ fn deposit_spl_to_vault(ctx: &Context<SendUniversalTx>, token: Pubkey, amount: u
 //        ACCOUNT STRUCTS
 // =========================
 
+#[event_cpi]
 #[derive(Accounts)]
 pub struct SendUniversalTx<'info> {
     #[account(

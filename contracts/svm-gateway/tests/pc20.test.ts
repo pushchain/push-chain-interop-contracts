@@ -24,6 +24,7 @@ import {
 } from "../app/execute-payload";
 import * as sharedState from "./shared-state";
 import { ensureTestSetup } from "./helpers/test-setup";
+import { extractEventCpi } from "./helpers/test-utils";
 import {
   buildExecuteAdditionalData,
   buildPc20FinalizeAdditionalData,
@@ -150,39 +151,7 @@ const decodeEvents = async (
   provider: anchor.AnchorProvider,
   program: Program<UniversalGateway>,
   signature: string
-) => {
-  let txDetails: Awaited<
-    ReturnType<typeof provider.connection.getTransaction>
-  > | null = null;
-  for (let attempt = 0; attempt < 10; attempt++) {
-    txDetails = await provider.connection.getTransaction(signature, {
-      commitment: "confirmed",
-      maxSupportedTransactionVersion: 0,
-    });
-    if (txDetails?.meta?.logMessages?.length) {
-      break;
-    }
-    await sleep(500);
-  }
-
-  if (!txDetails?.meta?.logMessages) {
-    throw new Error(`Missing transaction metadata for ${signature}`);
-  }
-
-  const eventCoder = new anchor.BorshEventCoder(program.idl);
-  return txDetails.meta.logMessages
-    .map((log) => {
-      if (!log.startsWith("Program data: ")) {
-        return null;
-      }
-      try {
-        return eventCoder.decode(log.split("Program data: ")[1]);
-      } catch {
-        return null;
-      }
-    })
-    .filter((event): event is NonNullable<typeof event> => event !== null);
-};
+) => extractEventCpi(provider.connection, program, signature);
 
 const airdropAndConfirm = async (
   provider: anchor.AnchorProvider,

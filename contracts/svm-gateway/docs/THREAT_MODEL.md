@@ -148,6 +148,11 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Control: none currently. Deliberately deferred. Rationale: ATA auto-create mirrors the CEA ATA path and preserves first-withdraw UX to fresh wallets. Mitigation candidates (recipient-pays via amount deduction; billing on Push Chain L1) are tracked as protocol changes for a future revision.  
    Residual: relayer sponsors ATA rent (~0.002 SOL per new `(recipient, mint)`); recoverable only by the recipient closing the ATA.
 
+18. **Event forgery via co-executed program logs (F-2026-18198)**  
+   Risk: with `emit!`, an event lands in the shared program-log stream as `Program data: <base64>`. A parser that regexes log lines cannot cryptographically bind the emitting program, so any co-executed program in the same transaction can log a byte-identical string and forge a `UniversalTx` event, triggering a spurious mint on the Push Chain L1 that the UV credits to the attacker.  
+   Control: every event is emitted via `emit_cpi!` (self-CPI to the program's `event_authority` PDA). The event bytes live in `meta.innerInstructions` under our program's id — only our program can produce them. UVs parse events from inner instructions, not from `Program data:` log lines, and validate the emitting program id.  
+   Residual: parser correctness. If a UV falls back to log parsing, forgery becomes possible again; this is enforced off-chain in the UV codebase.
+
 ---
 
 ## 5. Cross-Program / Operational Risks

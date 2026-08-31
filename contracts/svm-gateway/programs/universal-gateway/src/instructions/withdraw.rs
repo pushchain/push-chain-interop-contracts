@@ -229,7 +229,7 @@ pub fn send_universal_tx_to_uea(
         (false, _) => TxType::GasAndPayload, // payload-only, no funds transferred
     };
 
-    emit!(UniversalTx {
+    emit_cpi!(UniversalTx {
         sender: ctx.accounts.cea_authority.key(),
         recipient: push_account,
         token,
