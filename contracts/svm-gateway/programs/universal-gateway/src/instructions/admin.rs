@@ -2,6 +2,7 @@ use crate::{errors::*, state::*};
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token};
 
+#[event_cpi]
 #[derive(Accounts)]
 pub struct AdminAction<'info> {
     #[account(
@@ -97,7 +98,7 @@ pub fn set_operator(ctx: Context<AdminAction>, new_operator: Pubkey) -> Result<(
     require!(new_operator != Pubkey::default(), GatewayError::ZeroAddress);
     let old_operator = ctx.accounts.config.operator;
     ctx.accounts.config.operator = new_operator;
-    emit!(crate::state::OperatorChanged { old_operator, new_operator });
+    emit_cpi!(crate::state::OperatorChanged { old_operator, new_operator });
     Ok(())
 }
 
@@ -147,7 +148,7 @@ pub fn set_caps_usd(ctx: Context<AdminAction>, min_cap_usd: u128, max_cap_usd: u
     config.max_cap_universal_tx_usd = max_cap_usd;
 
     // Emit caps updated event
-    emit!(crate::state::CapsUpdated {
+    emit_cpi!(crate::state::CapsUpdated {
         min_cap_usd,
         max_cap_usd,
     });
@@ -157,6 +158,7 @@ pub fn set_caps_usd(ctx: Context<AdminAction>, min_cap_usd: u128, max_cap_usd: u
 
 /// Admin action for fee vault operations (intentionally no `!config.paused` guard —
 /// the admin must be able to disable the fee even while paused).
+#[event_cpi]
 #[derive(Accounts)]
 pub struct FeeVaultAdminAction<'info> {
     #[account(
@@ -185,7 +187,7 @@ pub fn set_inbound_fee(ctx: Context<FeeVaultAdminAction>, fee_lamports: u64) -> 
     // Keep bump persisted so seeded constraints continue to validate consistently.
     ctx.accounts.fee_vault.bump = ctx.bumps.fee_vault;
     ctx.accounts.fee_vault.inbound_fee_lamports = fee_lamports;
-    emit!(InboundFeeUpdated {
+    emit_cpi!(InboundFeeUpdated {
         new_fee_lamports: fee_lamports
     });
     Ok(())
@@ -193,6 +195,7 @@ pub fn set_inbound_fee(ctx: Context<FeeVaultAdminAction>, fee_lamports: u64) -> 
 
 /// Recover accumulated inbound fee surplus from the fee vault to a recipient address.
 /// Only lamports above rent-exemption are withdrawable — the account stays alive.
+#[event_cpi]
 #[derive(Accounts)]
 pub struct WithdrawInboundFees<'info> {
     #[account(
@@ -230,7 +233,7 @@ pub fn withdraw_inbound_fees(ctx: Context<WithdrawInboundFees>, amount: u64) -> 
     **fee_vault_info.try_borrow_mut_lamports()? -= amount;
     **ctx.accounts.recipient.try_borrow_mut_lamports()? += amount;
 
-    emit!(InboundFeesWithdrawn {
+    emit_cpi!(InboundFeesWithdrawn {
         recipient: ctx.accounts.recipient.key(),
         amount,
     });
@@ -262,6 +265,7 @@ pub fn set_pyth_max_age_seconds(ctx: Context<AdminAction>, max_age_seconds: u64)
 // =========================
 
 /// Set block-based USD cap for rate limiting (matching EVM setBlockUsdCap)
+#[event_cpi]
 #[derive(Accounts)]
 pub struct RateLimitConfigAction<'info> {
     #[account(
@@ -292,7 +296,7 @@ pub fn set_block_usd_cap(ctx: Context<RateLimitConfigAction>, block_usd_cap: u12
     rate_limit_config.bump = ctx.bumps.rate_limit_config;
 
     // Emit event
-    emit!(BlockUsdCapUpdated { block_usd_cap });
+    emit_cpi!(BlockUsdCapUpdated { block_usd_cap });
 
     Ok(())
 }
@@ -309,12 +313,13 @@ pub fn update_epoch_duration(
     rate_limit_config.bump = ctx.bumps.rate_limit_config;
 
     // Emit event
-    emit!(EpochDurationUpdated { epoch_duration_sec });
+    emit_cpi!(EpochDurationUpdated { epoch_duration_sec });
 
     Ok(())
 }
 
 /// Set token-specific rate limit threshold (matching EVM setTokenToLimitThreshold)
+#[event_cpi]
 #[derive(Accounts)]
 pub struct TokenRateLimitAction<'info> {
     #[account(
@@ -383,7 +388,7 @@ pub fn set_token_rate_limit(
     // threshold update from inadvertently clearing the current-epoch counter (EVM parity).
 
     // Emit event
-    emit!(TokenRateLimitUpdated {
+    emit_cpi!(TokenRateLimitUpdated {
         token_mint: token_mint_key,
         limit_threshold,
     });

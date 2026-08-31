@@ -31,6 +31,7 @@ import {
   generateUniversalTxId,
 } from "./helpers/tss";
 import { ensureTestSetup } from "./helpers/test-setup";
+import { extractEventCpi } from "./helpers/test-utils";
 import { createHash } from "crypto";
 
 // Helper to compute Anchor-style discriminator (first 8 bytes of SHA-256)
@@ -3726,27 +3727,10 @@ describe("Universal Gateway - Execute Tests", () => {
         .rpc();
 
       // Verify FUNDS event was emitted (CEA drained back to vault)
-      const txDetails = await provider.connection.getTransaction(tx, {
-        commitment: "confirmed",
-        maxSupportedTransactionVersion: 0,
-      });
-
-      if (txDetails && txDetails.meta && txDetails.meta.logMessages) {
-        const eventCoder = new anchor.BorshEventCoder(gatewayProgram.idl);
-        const events = txDetails.meta.logMessages
-          .filter((log) => log.includes("Program data:"))
-          .map((log) => {
-            const data = log.split("Program data: ")[1];
-            try {
-              return eventCoder.decode(data);
-            } catch {
-              return null;
-            }
-          })
-          .filter((e) => e !== null);
-
+      {
+        const events = await extractEventCpi(provider.connection, gatewayProgram, tx);
         const fundsEvents = events.filter(
-          (e) => e.name === "UniversalTx" && e.data.txType.funds !== undefined
+          (e) => e.name === "universalTx" && e.data.txType.funds !== undefined
         );
 
         if (fundsEvents.length > 0) {
@@ -4223,27 +4207,10 @@ describe("Universal Gateway - Execute Tests", () => {
       expect(ceaAtaInfo).to.not.be.null; // CEA ATA persists (pull model, not auto-drain)
 
       // Verify FUNDS event was emitted for SPL tokens
-      const txDetails = await provider.connection.getTransaction(tx, {
-        commitment: "confirmed",
-        maxSupportedTransactionVersion: 0,
-      });
-
-      if (txDetails && txDetails.meta && txDetails.meta.logMessages) {
-        const eventCoder = new anchor.BorshEventCoder(gatewayProgram.idl);
-        const events = txDetails.meta.logMessages
-          .filter((log) => log.includes("Program data:"))
-          .map((log) => {
-            const data = log.split("Program data: ")[1];
-            try {
-              return eventCoder.decode(data);
-            } catch {
-              return null;
-            }
-          })
-          .filter((e) => e !== null);
-
+      {
+        const events = await extractEventCpi(provider.connection, gatewayProgram, tx);
         const fundsEvents = events.filter(
-          (e) => e.name === "UniversalTx" && e.data.txType.funds !== undefined
+          (e) => e.name === "universalTx" && e.data.txType.funds !== undefined
         );
 
         if (fundsEvents.length > 0) {

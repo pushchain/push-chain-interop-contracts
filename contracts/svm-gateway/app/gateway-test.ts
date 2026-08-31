@@ -282,28 +282,44 @@ async function getDynamicGasAmount(
   }
 }
 
-// Helper: parse and print program data logs (Anchor events) from a transaction
+// Helper: parse and print emit_cpi events from a transaction's inner instructions.
+// emit_cpi encodes the event as a self-CPI to the program's event_authority PDA;
+// the encoded bytes live in the inner-instruction data (not in program logs).
+// Layout: [EVENT_IX_TAG_LE: 8 bytes] || [event_discriminator: 8 bytes] || [borsh(event)].
 async function parseAndPrintEvents(txSignature: string, label: string) {
   try {
     const tx = await connection.getTransaction(txSignature, {
       commitment: "confirmed",
       maxSupportedTransactionVersion: 0,
     });
-    if (!tx?.meta?.logMessages) {
-      console.log(`${label}: No logs found`);
+    if (!tx?.meta) {
+      console.log(`${label}: No tx metadata found`);
       return;
     }
-    const dataLogs = tx.meta.logMessages.filter((log) =>
-      log.startsWith("Program data: ")
-    );
-    if (dataLogs.length === 0) {
-      console.log(`${label}: No program data logs (events) found`);
+    const accountKeys = tx.transaction.message
+      .getAccountKeys({ accountKeysFromLookups: tx.meta.loadedAddresses })
+      .keySegments()
+      .flat();
+    const programIdx = accountKeys.findIndex((k) => k.equals(PROGRAM_ID));
+    if (programIdx === -1) {
+      console.log(`${label}: gateway program not in tx account keys`);
       return;
     }
-    console.log(`${label}: Found ${dataLogs.length} event log(s)`);
-    dataLogs.forEach((log, idx) => {
-      const base64Data = log.replace("Program data: ", "");
-      const buf = Buffer.from(base64Data, "base64");
+    const eventBufs: Buffer[] = [];
+    for (const inner of tx.meta.innerInstructions ?? []) {
+      for (const ix of inner.instructions) {
+        if (ix.programIdIndex !== programIdx) continue;
+        const raw = Buffer.from(anchor.utils.bytes.bs58.decode(ix.data));
+        if (raw.length < 16) continue; // 8-byte tag + 8-byte event disc
+        eventBufs.push(raw.slice(8));
+      }
+    }
+    if (eventBufs.length === 0) {
+      console.log(`${label}: No emit_cpi events found`);
+      return;
+    }
+    console.log(`${label}: Found ${eventBufs.length} event(s)`);
+    eventBufs.forEach((buf, idx) => {
       const disc = buf.slice(0, 8).toString("hex");
       const data = buf.slice(8);
       console.log(`  [${idx}] discriminator=${disc} data_len=${data.length}`);

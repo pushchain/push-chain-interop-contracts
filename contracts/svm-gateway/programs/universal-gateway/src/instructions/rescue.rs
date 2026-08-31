@@ -18,6 +18,7 @@ use anchor_spl::token::{Mint, Token, TokenAccount};
 //   SOL: amount || [sub_tx_id, universal_tx_id, recipient, gas_fee]
 //   SPL: amount || [sub_tx_id, universal_tx_id, mint, recipient, gas_fee]
 
+#[event_cpi]
 #[derive(Accounts)]
 #[instruction(sub_tx_id: [u8; 32])]
 pub struct RescueFunds<'info> {
@@ -146,7 +147,7 @@ pub fn rescue_funds(
         )?;
     }
 
-    emit!(crate::state::FundsRescued {
+    emit_cpi!(crate::state::FundsRescued {
         sub_tx_id,
         universal_tx_id,
         token: ctx.accounts.token_mint.as_ref().map_or(Pubkey::default(), |m| m.key()),
@@ -160,9 +161,15 @@ pub fn rescue_funds(
     reimburse_relayer_from_fee_vault(
         &ctx.accounts.fee_vault,
         &ctx.accounts.caller.to_account_info(),
-        sub_tx_id,
         gas_fee,
     )?;
+    if gas_fee > 0 {
+        emit_cpi!(crate::state::InboundFeeReimbursed {
+            sub_tx_id,
+            relayer: ctx.accounts.caller.key(),
+            amount_lamports: gas_fee,
+        });
+    }
 
     Ok(())
 }

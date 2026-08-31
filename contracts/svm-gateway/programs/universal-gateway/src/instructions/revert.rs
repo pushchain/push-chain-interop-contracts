@@ -14,6 +14,7 @@ use anchor_spl::token::{Mint, Token, TokenAccount};
 //   SOL: amount || [sub_tx_id, universal_tx_id, recipient, gas_fee, revert_msg_hash]
 //   SPL: amount || [sub_tx_id, universal_tx_id, mint, recipient, gas_fee, revert_msg_hash]
 
+#[event_cpi]
 #[derive(Accounts)]
 #[instruction(sub_tx_id: [u8; 32])]
 pub struct RevertUniversalTx<'info> {
@@ -145,7 +146,7 @@ pub fn revert_universal_tx(
         )?;
     }
 
-    emit!(crate::state::RevertUniversalTx {
+    emit_cpi!(crate::state::RevertUniversalTx {
         sub_tx_id,
         universal_tx_id,
         revert_recipient: revert_instruction.revert_recipient,
@@ -157,9 +158,15 @@ pub fn revert_universal_tx(
     reimburse_relayer_from_fee_vault(
         &ctx.accounts.fee_vault,
         &ctx.accounts.caller.to_account_info(),
-        sub_tx_id,
         gas_fee,
     )?;
+    if gas_fee > 0 {
+        emit_cpi!(crate::state::InboundFeeReimbursed {
+            sub_tx_id,
+            relayer: ctx.accounts.caller.key(),
+            amount_lamports: gas_fee,
+        });
+    }
 
     Ok(())
 }

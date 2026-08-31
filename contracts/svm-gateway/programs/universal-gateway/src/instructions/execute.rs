@@ -27,6 +27,7 @@ const SPL_TOKEN_ACCOUNT_LEN: usize = 165;
 //  UNIFIED FINALIZE_UNIVERSAL_TX
 // =========================
 
+#[event_cpi]
 #[derive(Accounts)]
 #[instruction(instruction_id: u8, sub_tx_id: [u8; 32], universal_tx_id: [u8; 32], amount: u64, push_account: [u8; 20])]
 pub struct FinalizeUniversalTx<'info> {
@@ -317,7 +318,7 @@ pub fn finalize_universal_tx_common<'info>(
         &cea_seeds,
     )?;
 
-    emit!(UniversalTxFinalized {
+    emit_cpi!(UniversalTxFinalized {
         sub_tx_id,
         universal_tx_id,
         gas_fee,

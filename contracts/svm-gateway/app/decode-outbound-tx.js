@@ -315,11 +315,25 @@ async function decodeOutboundTx(sig) {
         console.log(`  └─`);
     }
 
-    // Decode events
-    const dataLogs = logs.filter(l => l.startsWith("Program data: "));
-    const events = dataLogs
-        .map(l => { try { return coder.decode(l.replace("Program data: ", "")); } catch { return null; } })
-        .filter(Boolean);
+    // Decode events from emit_cpi inner instructions.
+    // Layout: [EVENT_IX_TAG_LE: 8 bytes] || [event_discriminator: 8 bytes] || [borsh(event)].
+    // coder.decode accepts base64 of the last two fields; strip the 8-byte tag first.
+    const programIdx = allKeys.findIndex(k => k === PROGRAM_ID);
+    const events = [];
+    if (programIdx !== -1) {
+        const bs58 = anchor.utils.bytes.bs58;
+        for (const inner of tx.meta?.innerInstructions ?? []) {
+            for (const ix of inner.instructions) {
+                if (ix.programIdIndex !== programIdx) continue;
+                const raw = Buffer.from(bs58.decode(ix.data));
+                if (raw.length < 16) continue;
+                try {
+                    const ev = coder.decode(raw.slice(8).toString("base64"));
+                    if (ev) events.push(ev);
+                } catch { /* not an event */ }
+            }
+        }
+    }
 
     const gatewayEvents = events.filter(e =>
         ["UniversalTx", "UniversalTxFinalized", "RevertUniversalTx"].includes(e.name)

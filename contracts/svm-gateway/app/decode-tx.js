@@ -23,23 +23,36 @@ async function decodeTx(sig, label) {
             console.log(`${label}: Transaction failed with error:`, tx.meta.err);
             return;
         }
-        const dataLogs = tx.meta.logMessages.filter(l => l.startsWith("Program data: "));
-        if (dataLogs.length === 0) {
-            console.log(`${label}: No Anchor event logs in tx`);
+        // Events land in inner instructions (emit_cpi self-CPI), not in program logs.
+        // Layout per inner ix: [EVENT_IX_TAG_LE: 8 bytes] || [event_disc: 8 bytes] || [borsh(event)].
+        const staticKeys = (tx.transaction.message.staticAccountKeys ?? tx.transaction.message.accountKeys ?? []).map(k => k.toString());
+        const loadedWritable = (tx.meta?.loadedAddresses?.writable ?? []).map(k => k.toString());
+        const loadedReadonly = (tx.meta?.loadedAddresses?.readonly ?? []).map(k => k.toString());
+        const allKeys = [...staticKeys, ...loadedWritable, ...loadedReadonly];
+        const programIdx = allKeys.findIndex(k => k === PROGRAM_ID.toBase58());
+        const dataBufs = [];
+        if (programIdx !== -1) {
+            for (const inner of tx.meta?.innerInstructions ?? []) {
+                for (const ix of inner.instructions) {
+                    if (ix.programIdIndex !== programIdx) continue;
+                    const raw = Buffer.from(anchor.utils.bytes.bs58.decode(ix.data));
+                    if (raw.length < 16) continue;
+                    dataBufs.push(raw.slice(8)); // strip EVENT_IX_TAG_LE
+                }
+            }
+        }
+        if (dataBufs.length === 0) {
+            console.log(`${label}: No emit_cpi events in tx`);
             return;
         }
 
-        // Debug: Show all program logs and try to manually decode UniversalTx
-        console.log(`${label}: Found ${dataLogs.length} event log(s)`);
-        const UNIVERSAL_TX_DISCRIMINATOR = Buffer.from([0x6c, 0x9a, 0xd8, 0x29, 0xb5, 0xea, 0x1d, 0x7c]); // From the output
-        dataLogs.forEach((log, idx) => {
-            const b64 = log.replace("Program data: ", "");
-            const buf = Buffer.from(b64, "base64");
+        console.log(`${label}: Found ${dataBufs.length} event(s)`);
+        const UNIVERSAL_TX_DISCRIMINATOR = Buffer.from([0x6c, 0x9a, 0xd8, 0x29, 0xb5, 0xea, 0x1d, 0x7c]);
+        dataBufs.forEach((buf, idx) => {
             const disc = buf.slice(0, 8);
             const isUniversalTx = disc.equals(UNIVERSAL_TX_DISCRIMINATOR);
             console.log(`  [${idx}] discriminator=${disc.toString('hex')} data_len=${buf.length - 8} ${isUniversalTx ? '(UniversalTx)' : ''}`);
             if (isUniversalTx) {
-                // Show full event data for comparison
                 const eventData = buf.slice(8);
                 console.log(`    Raw event data (FULL, ${eventData.length} bytes): ${eventData.toString('hex')}`);
             }
@@ -119,10 +132,11 @@ async function decodeTx(sig, label) {
         }
 
         const decoded = [];
-        for (const log of dataLogs) {
-            const b64 = log.replace("Program data: ", "");
-            const ev = coder.decode(b64);
-            if (ev) decoded.push(ev);
+        for (const buf of dataBufs) {
+            try {
+                const ev = coder.decode(buf.toString("base64"));
+                if (ev) decoded.push(ev);
+            } catch { /* skip non-event bytes */ }
         }
 
         // Find ALL UniversalTx events (there might be multiple)
