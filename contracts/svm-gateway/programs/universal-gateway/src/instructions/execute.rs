@@ -105,9 +105,11 @@ pub struct FinalizeUniversalTx<'info> {
 
     pub associated_token_program: Option<Program<'info, AssociatedToken>>,
 
-    // --- Optional recipient ATA (required for SPL withdraw mode) ---
+    // --- Optional recipient ATA (required for SPL withdraw mode; created if missing) ---
+    /// CHECK: Recipient ATA — created via manual CPI if missing (mirrors CEA ATA).
+    /// Address, mint, and owner are validated in `internal_withdraw` after create.
     #[account(mut)]
-    pub recipient_ata: Option<Account<'info, TokenAccount>>,
+    pub recipient_ata: Option<UncheckedAccount<'info>>,
 
     // --- Optional rate limit accounts (CEA withdrawal path only) ---
     #[account(

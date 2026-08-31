@@ -6,7 +6,9 @@ use crate::utils::{
 };
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::hash::hash;
+use anchor_lang::solana_program::program::invoke_signed;
 use anchor_spl::associated_token::spl_associated_token_account;
+use anchor_spl::token::spl_token;
 
 /// Transfer funds from CEA to recipient (withdraw mode).
 /// SOL: system transfer CEA -> recipient.
@@ -54,14 +56,61 @@ pub fn internal_withdraw(
             .mint
             .as_ref()
             .ok_or(error!(GatewayError::InvalidAccount))?;
+        let token_program = ctx
+            .accounts
+            .token_program
+            .as_ref()
+            .ok_or(error!(GatewayError::InvalidAccount))?;
+        let rent = ctx
+            .accounts
+            .rent
+            .as_ref()
+            .ok_or(error!(GatewayError::InvalidAccount))?;
+        let ata_program = ctx
+            .accounts
+            .associated_token_program
+            .as_ref()
+            .ok_or(error!(GatewayError::InvalidAccount))?;
 
         let expected_recipient_ata =
             spl_associated_token_account::get_associated_token_address(&target, &token_mint.key());
         require!(recipient_ata.key() == expected_recipient_ata, GatewayError::InvalidAccount);
 
+        // Create recipient ATA if missing; caller pays rent (mirrors CEA ATA flow).
+        let recipient_ata_info = recipient_ata.to_account_info();
+        if recipient_ata_info.data_is_empty() {
+            let create_ata_ix =
+                spl_associated_token_account::instruction::create_associated_token_account(
+                    &ctx.accounts.caller.key(),
+                    &target,
+                    &token_mint.key(),
+                    &spl_token::ID,
+                );
+            invoke_signed(
+                &create_ata_ix,
+                &[
+                    ctx.accounts.caller.to_account_info(),
+                    recipient_ata_info.clone(),
+                    recipient.to_account_info(),
+                    token_mint.to_account_info(),
+                    ctx.accounts.system_program.to_account_info(),
+                    token_program.to_account_info(),
+                    ata_program.to_account_info(),
+                    rent.to_account_info(),
+                ],
+                &[],
+            )?;
+        }
+
+        // Validate mint + owner post-create (blocks a caller passing a same-address
+        // account that happens to be a token account for a different mint/owner).
+        let parsed = parse_token_account(&recipient_ata_info)?;
+        require!(parsed.mint == token_mint.key(), GatewayError::InvalidMint);
+        require!(parsed.owner == target, GatewayError::InvalidOwner);
+
         pda_spl_transfer(
             &cea_ata.to_account_info(),
-            &recipient_ata.to_account_info(),
+            &recipient_ata_info,
             &ctx.accounts.cea_authority.to_account_info(),
             amount,
             cea_seeds,

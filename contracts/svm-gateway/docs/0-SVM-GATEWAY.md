@@ -89,7 +89,7 @@ Vault → CEA → Recipient
 ```
 
 **SOL:** lamports transferred directly to recipient wallet.
-**SPL:** tokens transferred from vault ATA → recipient ATA (must exist).
+**SPL:** tokens transferred from vault ATA → recipient ATA (auto-created if missing; caller pays rent).
 **Special case:** if `recipient == CEA`, the second transfer is skipped (funds stay in CEA).
 
 Emits: `UniversalTxFinalized`

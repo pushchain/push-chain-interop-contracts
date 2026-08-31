@@ -621,6 +621,67 @@ describe("Universal Gateway - Withdraw Tests", () => {
             expect(callerBalanceChange).to.equal(metaDelta);
         });
 
+        it("auto-creates recipient ATA when missing (caller pays rent)", async () => {
+            // Mirrors the CEA ATA flow: if the recipient's ATA does not exist,
+            // finalize creates it via CPI and the caller (relayer) pays the rent.
+            const withdrawTokens = 50;
+            const withdrawRaw = BigInt(withdrawTokens) * TOKEN_MULTIPLIER;
+
+            const freshRecipient = Keypair.generate();
+            const freshRecipientAta = getAssociatedTokenAddressSync(
+                mockUSDT.mint.publicKey,
+                freshRecipient.publicKey
+            );
+
+            const preAtaInfo = await provider.connection.getAccountInfo(freshRecipientAta);
+            expect(preAtaInfo, "recipient ATA must not exist pre-tx").to.be.null;
+
+            const subTxId = generateTxId();
+            const universalTxId = generateUniversalTxId();
+            const pushAccount = generatePushAccount();
+            const ceaAuthority = getCeaAuthorityPda(pushAccount);
+            const ceaAta = getAssociatedTokenAddressSync(mockUSDT.mint.publicKey, ceaAuthority, true);
+
+            const tssAdditional = buildWithdrawAdditionalData(
+                new Uint8Array(universalTxId),
+                new Uint8Array(subTxId),
+                new Uint8Array(pushAccount),
+                mockUSDT.mint.publicKey,
+                freshRecipient.publicKey,
+                DEFAULT_GAS_FEE
+            );
+
+            const signature = await signTssMessageWithChainId({
+                instruction: TssInstruction.Withdraw,
+                amount: withdrawRaw,
+                additional: tssAdditional,
+            });
+
+            await finalizeUniversalTx({
+                instructionId: 1,
+                subTxId,
+                universalTxId,
+                amount: new anchor.BN(Number(withdrawRaw)),
+                pushAccount: pushAccount,
+                gasFee: new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                sig: signature,
+                caller: relayer.publicKey,
+                recipient: freshRecipient.publicKey,
+                vaultAta: vaultUsdtAccount,
+                ceaAta: ceaAta,
+                mint: mockUSDT.mint.publicKey,
+                tokenProgram: TOKEN_PROGRAM_ID,
+                rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+                associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+                recipientAta: freshRecipientAta,
+            })
+                .signers([relayer])
+                .rpc();
+
+            const postBalance = await mockUSDT.getBalance(freshRecipientAta);
+            expect(postBalance).to.equal(withdrawTokens);
+        });
+
         it("rejects SPL withdrawals with a tampered signature", async () => {
             const withdrawTokens = 200;
             const withdrawRaw = BigInt(withdrawTokens) * TOKEN_MULTIPLIER;
