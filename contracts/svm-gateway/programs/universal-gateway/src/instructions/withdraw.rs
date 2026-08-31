@@ -12,13 +12,15 @@ use anchor_spl::token::spl_token;
 
 /// Transfer funds from CEA to recipient (withdraw mode).
 /// SOL: system transfer CEA -> recipient.
-/// SPL: token transfer CEA ATA -> recipient ATA.
+/// SPL: token transfer CEA ATA -> recipient ATA. Returns `true` when this call
+/// had to create the recipient ATA (caller pays rent; parent settles it in
+/// `gas_used`).
 pub fn internal_withdraw(
     ctx: &Context<FinalizeUniversalTx>,
     amount: u64,
     token: Pubkey,
     cea_seeds: &[&[u8]],
-) -> Result<()> {
+) -> Result<bool> {
     let recipient = ctx
         .accounts
         .recipient
@@ -29,7 +31,7 @@ pub fn internal_withdraw(
 
     // If recipient == CEA, vault->CEA already completed in finalize flow.
     if target == ctx.accounts.cea_authority.key() {
-        return Ok(());
+        return Ok(false);
     }
 
     if is_native {
@@ -40,6 +42,7 @@ pub fn internal_withdraw(
             amount,
             cea_seeds,
         )?;
+        return Ok(false);
     } else {
         let cea_ata = ctx
             .accounts
@@ -77,8 +80,11 @@ pub fn internal_withdraw(
         require!(recipient_ata.key() == expected_recipient_ata, GatewayError::InvalidAccount);
 
         // Create recipient ATA if missing; caller pays rent (mirrors CEA ATA flow).
+        // The `recipient_ata_created` flag is propagated up so `settle_relayer_gas_cost`
+        // can fold the ATA rent into `gas_used` and reimburse the caller.
         let recipient_ata_info = recipient_ata.to_account_info();
-        if recipient_ata_info.data_is_empty() {
+        let recipient_ata_created = recipient_ata_info.data_is_empty();
+        if recipient_ata_created {
             let create_ata_ix =
                 spl_associated_token_account::instruction::create_associated_token_account(
                     &ctx.accounts.caller.key(),
@@ -115,9 +121,8 @@ pub fn internal_withdraw(
             amount,
             cea_seeds,
         )?;
+        Ok(recipient_ata_created)
     }
-
-    Ok(())
 }
 
 /// Args for the CEA -> UEA inbound route (target_program == gateway itself).

@@ -300,15 +300,10 @@ pub fn finalize_universal_tx_common<'info>(
     // Stage assets vault → CEA. Returns whether CEA ATA was created.
     let ata_created = stage_assets_to_cea(&ctx, &request, amount, &vault_seeds)?;
 
-    let (gas_used, gas_to_refund) = settle_relayer_gas_cost(
-        &ctx,
-        gas_fee,
-        ata_created,
-        store_upload_fee_lamports,
-        store_refund_recipient,
-    )?;
-
-    dispatch_finalize_action(
+    // Dispatch runs BEFORE settle so any ATAs created inside dispatch (e.g. the
+    // recipient ATA in `internal_withdraw`) can be folded into `gas_used` and
+    // the caller reimbursed for that rent.
+    let recipient_ata_created = dispatch_finalize_action(
         ctx,
         &request,
         execute_accounts,
@@ -318,6 +313,15 @@ pub fn finalize_universal_tx_common<'info>(
         &cea_seeds,
     )?;
 
+    let (gas_used, gas_to_refund) = settle_relayer_gas_cost(
+        &ctx,
+        gas_fee,
+        ata_created,
+        recipient_ata_created,
+        store_upload_fee_lamports,
+        store_refund_recipient,
+    )?;
+
     emit_cpi!(UniversalTxFinalized {
         sub_tx_id,
         universal_tx_id,
@@ -325,6 +329,7 @@ pub fn finalize_universal_tx_common<'info>(
         gas_used,
         gas_to_refund,
         ata_created,
+        recipient_ata_created,
         push_account,
         target: request.target,
         token: request.token,
@@ -343,16 +348,14 @@ pub fn finalize_universal_tx_common<'info>(
 fn settle_relayer_gas_cost<'info>(
     ctx: &Context<FinalizeUniversalTx<'info>>,
     gas_fee: u64,
-    ata_created: bool,
+    cea_ata_created: bool,
+    recipient_ata_created: bool,
     store_upload_fee_lamports: u64,
     store_refund_recipient: Option<&AccountInfo<'info>>,
 ) -> Result<(u64, u64)> {
     let sub_tx_rent = Rent::get()?.minimum_balance(ExecutedSubTx::LEN);
-    let ata_rent = if ata_created {
-        Rent::get()?.minimum_balance(SPL_TOKEN_ACCOUNT_LEN)
-    } else {
-        0
-    };
+    let per_ata_rent = Rent::get()?.minimum_balance(SPL_TOKEN_ACCOUNT_LEN);
+    let ata_rent = (cea_ata_created as u64 + recipient_ata_created as u64) * per_ata_rent;
     let base_finalize_gas = SIGNATURE_FEE_LAMPORTS + sub_tx_rent + ata_rent;
     let gas_used = base_finalize_gas + store_upload_fee_lamports;
     require!(gas_fee >= gas_used, GatewayError::InsufficientGasBudget);
@@ -568,6 +571,8 @@ fn stage_assets_to_cea(
     }
 }
 
+/// Returns `true` when the withdraw branch created the recipient ATA. Parent uses
+/// this to include the ATA rent in `gas_used` so the caller is reimbursed atomically.
 fn dispatch_finalize_action(
     ctx: &mut Context<FinalizeUniversalTx>,
     request: &FinalizeRequestContext,
@@ -576,15 +581,14 @@ fn dispatch_finalize_action(
     push_account: [u8; 20],
     ix_data: &[u8],
     cea_seeds: &[&[u8]],
-) -> Result<()> {
+) -> Result<bool> {
     if request.is_withdraw {
-        internal_withdraw(ctx, amount, request.token, cea_seeds)?;
-        return Ok(());
+        return internal_withdraw(ctx, amount, request.token, cea_seeds);
     }
 
     if request.target == *ctx.program_id {
         send_universal_tx_to_uea(ctx, push_account, ix_data, cea_seeds)?;
-        return Ok(());
+        return Ok(false);
     }
 
     let cea_key = ctx.accounts.cea_authority.key();
@@ -660,7 +664,7 @@ fn dispatch_finalize_action(
         check_cea_ata_invariants(&after, before, 0)?;
     }
 
-    Ok(())
+    Ok(false)
 }
 
 /// Post-CPI invariants on a CEA-owned SPL token account. Blocks

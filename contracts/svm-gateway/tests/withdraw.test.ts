@@ -18,6 +18,7 @@ import {
     makeTxIdGenerator, generateSender,
     getExecutedTxPda as _getExecutedTxPda, getCeaAuthorityPda as _getCeaAuthorityPda,
     getTokenRateLimitPda as _getTokenRateLimitPda,
+    extractEventCpi,
 } from "./helpers/test-utils";
 import { makeFinalizeUniversalTxBuilder, FinalizeUniversalTxArgs } from "./helpers/builders";
 
@@ -621,11 +622,16 @@ describe("Universal Gateway - Withdraw Tests", () => {
             expect(callerBalanceChange).to.equal(metaDelta);
         });
 
-        it("auto-creates recipient ATA when missing (caller pays rent)", async () => {
-            // Mirrors the CEA ATA flow: if the recipient's ATA does not exist,
-            // finalize creates it via CPI and the caller (relayer) pays the rent.
+        it("auto-creates recipient ATA when missing and reimburses caller for rent", async () => {
+            // Mirrors the CEA ATA flow end-to-end: recipient ATA is created, funds arrive,
+            // and — critically — the caller (relayer) is reimbursed the ATA rent via gas_used.
+            // Without the accounting fix, the caller silently eats ~2.04M lamports per fresh recipient.
             const withdrawTokens = 50;
             const withdrawRaw = BigInt(withdrawTokens) * TOKEN_MULTIPLIER;
+
+            // gas_fee needs to cover: sig fee (5k) + sub_tx_rent (~1M) + cea_ata_rent (~2.04M)
+            // + recipient_ata_rent (~2.04M) = ~5.1M. Signed by TSS above the floor.
+            const HIGH_GAS_FEE = BigInt(6_000_000);
 
             const freshRecipient = Keypair.generate();
             const freshRecipientAta = getAssociatedTokenAddressSync(
@@ -648,7 +654,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                 new Uint8Array(pushAccount),
                 mockUSDT.mint.publicKey,
                 freshRecipient.publicKey,
-                DEFAULT_GAS_FEE
+                HIGH_GAS_FEE
             );
 
             const signature = await signTssMessageWithChainId({
@@ -657,13 +663,15 @@ describe("Universal Gateway - Withdraw Tests", () => {
                 additional: tssAdditional,
             });
 
-            await finalizeUniversalTx({
+            const relayerBefore = await provider.connection.getBalance(relayer.publicKey);
+
+            const sig = await finalizeUniversalTx({
                 instructionId: 1,
                 subTxId,
                 universalTxId,
                 amount: new anchor.BN(Number(withdrawRaw)),
                 pushAccount: pushAccount,
-                gasFee: new anchor.BN(Number(DEFAULT_GAS_FEE)),
+                gasFee: new anchor.BN(Number(HIGH_GAS_FEE)),
                 sig: signature,
                 caller: relayer.publicKey,
                 recipient: freshRecipient.publicKey,
@@ -680,6 +688,42 @@ describe("Universal Gateway - Withdraw Tests", () => {
 
             const postBalance = await mockUSDT.getBalance(freshRecipientAta);
             expect(postBalance).to.equal(withdrawTokens);
+
+            // Accounting: relayer's net SOL change must match transaction meta (i.e. the
+            // reimbursement from vault plus fee/rent debits already netted). If the
+            // recipient ATA rent were not folded into gas_used, the relayer would be down
+            // ~2.04M lamports vs meta reports. The equality below proves the leak is closed.
+            await provider.connection.confirmTransaction(sig, "confirmed");
+            let tx = null as Awaited<ReturnType<typeof provider.connection.getTransaction>>;
+            for (let i = 0; i < 5 && !tx; i++) {
+                tx = await provider.connection.getTransaction(sig, {
+                    commitment: "confirmed",
+                    maxSupportedTransactionVersion: 0,
+                });
+                if (!tx) await new Promise((r) => setTimeout(r, 500));
+            }
+            if (!tx?.meta) throw new Error("Missing transaction metadata");
+
+            const accountKeys = tx.transaction.message
+                .getAccountKeys({ accountKeysFromLookups: tx.meta.loadedAddresses })
+                .keySegments()
+                .flat();
+            const relayerIdx = accountKeys.findIndex((k) => k.equals(relayer.publicKey));
+            if (relayerIdx === -1) throw new Error("Relayer not in tx keys");
+            const metaDelta = Number(tx.meta.postBalances[relayerIdx]) - Number(tx.meta.preBalances[relayerIdx]);
+            const relayerAfter = await provider.connection.getBalance(relayer.publicKey);
+            expect(relayerAfter - relayerBefore).to.equal(metaDelta);
+
+            // gas_used from the emitted event must include the recipient ATA rent.
+            // recipient_ata_created must be true in the event for off-chain reconciliation.
+            const events = await extractEventCpi(provider.connection, program as any, sig);
+            const finalized = events.find((e) => e.name === "universalTxFinalized");
+            expect(finalized, "UniversalTxFinalized not emitted").to.exist;
+            expect((finalized!.data as any).recipientAtaCreated, "recipient_ata_created should be true").to.equal(true);
+
+            const rent = await provider.connection.getMinimumBalanceForRentExemption(165); // SPL token account size
+            const gasUsed = Number((finalized!.data as any).gasUsed);
+            expect(gasUsed).to.be.at.least(rent, "gas_used must include recipient ATA rent");
         });
 
         it("rejects SPL withdrawals with a tampered signature", async () => {

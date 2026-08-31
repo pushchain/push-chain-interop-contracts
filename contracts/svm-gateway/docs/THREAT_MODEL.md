@@ -140,10 +140,10 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Control: every event is emitted via `emit_cpi!` (self-CPI to the program's `event_authority` PDA). The event bytes live in `meta.innerInstructions` under our program's id — only our program can produce them. UVs parse events from inner instructions, not from `Program data:` log lines, and validate the emitting program id.  
    Residual: parser correctness. If a UV falls back to log parsing, forgery becomes possible again; this is enforced off-chain in the UV codebase.
 
-15. **Recipient ATA rent farming (accepted risk)**  
-   Risk: on SPL withdraw, if the recipient's ATA does not exist, the gateway creates it via CPI with the caller (relayer) as rent-payer. An attacker can drive many small withdrawals to fresh recipient wallets, forcing the relayer to sponsor ATA rent each time.  
-   Control: none currently. Deliberately deferred. Rationale: ATA auto-create mirrors the CEA ATA path and preserves first-withdraw UX to fresh wallets. Mitigation candidates (recipient-pays via amount deduction; billing on Push Chain L1) are tracked as protocol changes for a future revision.  
-   Residual: relayer sponsors ATA rent (~0.002 SOL per new `(recipient, mint)`); recoverable only by the recipient closing the ATA.
+15. **Recipient ATA rent leakage on SPL withdraw**  
+   Risk: on SPL withdraw the gateway auto-creates the recipient ATA with the caller (relayer) as rent-payer. If that rent is not folded into `gas_used`, an attacker can drive many small withdrawals to fresh recipient wallets and force the relayer to sponsor ATA rent (~0.002 SOL per new `(recipient, mint)`) unreimbursed.  
+   Control: `internal_withdraw` returns a `recipient_ata_created` flag; `dispatch_finalize_action` propagates it; `settle_relayer_gas_cost` (called after dispatch) includes the ATA rent in `gas_used` alongside the CEA ATA rent, so the caller is reimbursed atomically. The `UniversalTxFinalized` event exposes `recipient_ata_created` for off-chain reconciliation. Push Chain still bears the cost via the signed `gas_fee` cap, so signing policy on the Push side must bound withdrawal frequency to fresh recipients to bound net protocol cost.  
+   Residual: Push-side gas budget still absorbs the ATA rent when the recipient is fresh; that's a signing-policy concern, not a relayer-farming vector.
 
 ---
 
