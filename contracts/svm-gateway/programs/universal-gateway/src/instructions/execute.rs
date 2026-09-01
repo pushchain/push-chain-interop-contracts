@@ -116,14 +116,22 @@ pub struct FinalizeUniversalTx<'info> {
     /// Address, mint, and owner are validated in `internal_withdraw` after create.
     pub recipient_ata: Option<UncheckedAccount<'info>>,
 
-    // --- Optional rate limit accounts (CEA withdrawal path only) ---
+    // --- Optional rate-limit accounts ---
+    // Consumed ONLY by the CEA → vault self-route (`send_universal_tx_to_uea`), which
+    // creates new bridged supply on the Push side and is therefore inbound-shaped. The
+    // outbound release paths reachable through this same instruction (`stage_assets_to_cea`
+    // and `internal_withdraw`) DO NOT consume these accounts by design: releases are
+    // authorized per-operation by TSS + replay-guarded by `ExecutedSubTx`, not throughput
+    // gated. See THREAT_MODEL.md entry 19 (F-2026-18981) before wiring these into any
+    // other path — doing so silently rate-limits a release flow against design intent.
     #[account(
         seeds = [RATE_LIMIT_CONFIG_SEED],
         bump,
     )]
     pub rate_limit_config: Option<Account<'info, RateLimitConfig>>,
 
-    /// Token-specific rate limit state (CEA withdrawal path only)
+    /// Token-specific rate limit state — consumed only by the CEA → vault self-route.
+    /// See THREAT_MODEL.md entry 19 (F-2026-18981); do not extend to release paths.
     #[account(mut)]
     pub token_rate_limit: Option<Account<'info, TokenRateLimit>>,
 

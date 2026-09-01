@@ -155,6 +155,14 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Control: every event is emitted via `emit_cpi!` (self-CPI to the program's `event_authority` PDA). The event bytes live in `meta.innerInstructions` under our program's id — only our program can produce them. UVs parse events from inner instructions, not from `Program data:` log lines, and validate the emitting program id.  
    Residual: parser correctness. If a UV falls back to log parsing, forgery becomes possible again; this is enforced off-chain in the UV codebase.
 
+19. **Rate-limiting scope: inbound-only by design (F-2026-18981)**  
+   Design: the per-block USD cap (`check_block_usd_cap`) and per-mint epoch threshold (`validate_token_and_consume_rate_limit`) are **inbound PRC20 mint caps**. They gate throughput on the two paths that create new bridged supply on Push:
+   - `send_universal_tx` (Solana → bridge deposit; SOL and SPL)
+   - `send_universal_tx_to_uea` (CEA → vault; the self-route "CEA back into vault" flow finalize takes when `destination_program == gateway`)
+   
+   The Solana-side **release** paths — `stage_assets_to_cea`, `internal_withdraw`, `revert_universal_tx`, `rescue_funds` — are **not throughput-gated**. Each release requires an ECDSA-secp256k1 TSS signature over the exact `(sub_tx_id, amount, recipient, …)` tuple and is replay-protected by an `ExecutedSubTx` PDA. Per-operation TSS authorization is the release-side control; a global throughput ceiling would layer nothing over a signature the attacker doesn't have anyway. The **release-side emergency control is `pause`** (halts every user-callable ix; only `operator` can unpause).  
+   Residual (code-shape trip-wire): `finalize_universal_tx` declares `rate_limit_config` and `token_rate_limit` as `Option<Account<'info, …>>` slots. Only the CEA-back-into-vault self-route (`send_universal_tx_to_uea`) actually consumes them; the CEA-out release paths (`stage_assets_to_cea`, `internal_withdraw`) leave them unused. A future refactor could plausibly "wire them up" thinking it closes a gap — this would inadvertently throughput-gate a release path against design. In-code doc comments on those account declarations point back to this entry.
+
 ---
 
 ## 5. Cross-Program / Operational Risks
