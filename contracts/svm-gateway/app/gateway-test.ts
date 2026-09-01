@@ -4097,6 +4097,8 @@ async function run() {
         recipientTokenAccount: null,
         tokenMint: null,
         tokenProgram: null,
+        associatedTokenProgram: null,
+        rent: null,
       })
       .signers([adminKeypair])
       .rpc();
@@ -4276,6 +4278,7 @@ async function run() {
           recipient: admin, executedSubTx: executedSubTx16c,
           caller: admin, systemProgram: SystemProgram.programId,
           tokenVault: null, recipientTokenAccount: null, tokenMint: null, tokenProgram: null,
+          associatedTokenProgram: null, rent: null,
         })
         .signers([adminKeypair]).rpc();
       throw new Error("Should have been rejected");
@@ -4713,6 +4716,8 @@ async function run() {
       recipientTokenAccount: null,
       tokenMint: pc20Mint,
       tokenProgram: spl.TOKEN_PROGRAM_ID,
+      associatedTokenProgram: null,
+      rent: null,
       caller: relayer,
       executedSubTx: getExecutedTxPda(pc20RevertSubTxId),
       systemProgram: SystemProgram.programId,
@@ -5020,6 +5025,8 @@ async function run() {
       recipientTokenAccount: null,
       tokenMint: pc20Mint,
       tokenProgram: spl.TOKEN_PROGRAM_ID,
+      associatedTokenProgram: null,
+      rent: null,
     })
     .remainingAccounts([
       { pubkey: pc20State, isWritable: false, isSigner: false },
