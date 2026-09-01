@@ -3920,6 +3920,8 @@ async function run() {
         recipientTokenAccount: null,
         tokenMint: null,
         tokenProgram: null,
+        associatedTokenProgram: null,
+        rent: null,
       })
       .signers([adminKeypair])
       .rpc();
@@ -4099,6 +4101,7 @@ async function run() {
           recipient: admin, executedSubTx: executedSubTx16c,
           caller: admin, systemProgram: SystemProgram.programId,
           tokenVault: null, recipientTokenAccount: null, tokenMint: null, tokenProgram: null,
+          associatedTokenProgram: null, rent: null,
         })
         .signers([adminKeypair]).rpc();
       throw new Error("Should have been rejected");
