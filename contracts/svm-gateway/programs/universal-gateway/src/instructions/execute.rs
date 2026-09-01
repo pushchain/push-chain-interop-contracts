@@ -625,7 +625,17 @@ fn dispatch_finalize_action(
         .transpose()?;
 
     let mut bystanders: Vec<(usize, spl_token::state::Account)> = Vec::new();
+    // Mint keys present in remaining_accounts. Used post-CPI to derive canonical
+    // CEA ATA addresses for G1 (retest) check: any CEA-owned SPL account that
+    // appeared during the CPI at a canonical ATA address for one of these mints
+    // is treated as a planted-delegate risk and rejected.
+    let mut mint_keys: Vec<Pubkey> = Vec::new();
     for (idx, info) in ctx.remaining_accounts.iter().enumerate() {
+        // Collect mint accounts (SPL Token owned, 82 bytes = Mint layout size).
+        const SPL_MINT_LEN: usize = 82;
+        if info.owner == &spl_token::ID && info.data_len() == SPL_MINT_LEN {
+            mint_keys.push(info.key());
+        }
         if Some(info.key()) == cea_ata_key {
             continue;
         }
@@ -664,17 +674,56 @@ fn dispatch_finalize_action(
         check_cea_ata_invariants(&after, before, 0)?;
     }
 
+    // G1 (retest): flag CEA-owned SPL token accounts that appeared during the
+    // CPI at a canonical CEA ATA address for any mint present in this tx. The
+    // target could have created such an account and installed a delegate; a
+    // later bridge for the same mint would derive the same address and fund
+    // it. Enforce strict-nothing invariants on newly-appeared canonical ATAs.
+    for (idx, info) in ctx.remaining_accounts.iter().enumerate() {
+        if Some(info.key()) == cea_ata_key {
+            continue;
+        }
+        if bystanders.iter().any(|(bi, _)| *bi == idx) {
+            continue; // pre-CPI bystander — already checked strictly-unchanged above
+        }
+        if info.owner != &spl_token::ID {
+            continue;
+        }
+        let Ok(parsed) = parse_token_account(info) else {
+            continue;
+        };
+        if parsed.owner != cea_key {
+            continue;
+        }
+        let is_canonical = mint_keys.iter().any(|mint_key| {
+            spl_associated_token_account::get_associated_token_address(&cea_key, mint_key)
+                == *info.key
+        });
+        if is_canonical {
+            require!(parsed.delegate.is_none(), GatewayError::InvalidAccount);
+            require!(parsed.delegated_amount == 0, GatewayError::InvalidAccount);
+            require!(parsed.close_authority.is_none(), GatewayError::InvalidAccount);
+        }
+    }
+
     Ok(false)
 }
 
 /// Post-CPI invariants on a CEA-owned SPL token account. Blocks
-/// `SetAuthority(AccountOwner)`, `SetAuthority(CloseAccount)`, and unbounded
-/// `Approve`. `budget` is the amount staged this tx for the current-mint ATA;
-/// bystanders pass 0 and must remain strictly unchanged (including `Revoke`).
+/// `SetAuthority(AccountOwner)`, `SetAuthority(CloseAccount)`, and any allowance
+/// left over funds the target doesn't have.
 ///
-/// For `budget > 0`, delegate identity may only change when the prior delegate
-/// was inactive (`None` or allowance 0) or when the new delegate is `None`
-/// (Revoke). This prevents an active allowance from being diverted.
+/// - Bystanders (`budget == 0`, i.e. accounts in `remaining_accounts` unrelated
+///   to the current mint): delegate identity and allowance must be strictly
+///   unchanged (including `Revoke`).
+/// - Current-mint ATA (`budget > 0`): identity-swap guard from an active prior
+///   delegate is preserved; and the surviving allowance must be backed by the
+///   surviving balance (`delegated_amount <= amount`). This is the coverage
+///   rule (F-2026-18980 retest / gaps G2 + G3): SPL owner-authority transfers
+///   do not decrement `delegated_amount`, so absent this check a target could
+///   `Approve(attacker, N)` and drain N tokens as owner in the same CPI,
+///   leaving a live allowance over an empty balance that later refills would
+///   satisfy.
 #[inline(never)]
 fn check_cea_ata_invariants(
     after: &spl_token::state::Account,
@@ -694,6 +743,8 @@ fn check_cea_ata_invariants(
         );
         return Ok(());
     }
+    // Identity-swap guard (T12): can't divert an active allowance to a new party
+    // by swapping the delegate at equal or lower balance.
     if after.delegate != before.delegate {
         require!(
             after.delegate.is_none()
@@ -701,11 +752,13 @@ fn check_cea_ata_invariants(
                 || before.delegated_amount == 0,
             GatewayError::InvalidAccount
         );
-        require!(after.delegated_amount <= budget, GatewayError::InvalidAccount);
-    } else if after.delegated_amount > before.delegated_amount {
-        let increase = after.delegated_amount - before.delegated_amount;
-        require!(increase <= budget, GatewayError::InvalidAccount);
     }
+    // Coverage rule: any surviving allowance must be backed by the surviving
+    // balance. Applies whether delegate changed or not.
+    require!(
+        after.delegated_amount <= after.amount,
+        GatewayError::InvalidAccount
+    );
     Ok(())
 }
 
