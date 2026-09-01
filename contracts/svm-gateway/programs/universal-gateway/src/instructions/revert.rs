@@ -271,7 +271,6 @@ pub fn revert_universal_tx(
         revert_recipient: revert_instruction.revert_recipient,
         token: ctx.accounts.token_mint.as_ref().map_or(Pubkey::default(), |m| m.key()),
         amount,
-        gas_used: reimbursement,
         revert_instruction: revert_instruction.clone(),
     });
 

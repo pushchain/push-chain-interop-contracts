@@ -12,14 +12,14 @@ Returns deposited funds to the user when a Push Chain transaction fails.
 
 1. Verify TSS signature
 2. Create `ExecutedSubTx` PDA (replay protection)
-3. `Vault → Recipient` (amount). On the legacy SPL path the gateway auto-creates the recipient's canonical ATA if it does not yet exist (caller pays rent; folded into `gas_used`).
+3. `Vault → Recipient` (amount). On the legacy SPL path the gateway auto-creates the recipient's canonical ATA if it does not yet exist (caller pays rent; folded into the measured `gas_used`).
 4. Compute measured `gas_used = SIGNATURE_FEE + ExecutedSubTx rent + recipient_ata_rent (0 unless just created)` and require `gas_fee >= gas_used`.
-5. Emit `RevertUniversalTx` with the measured `gas_used`.
-6. `FeeVault → Caller` (`gas_used`, UV reimbursement).
+5. Emit `RevertUniversalTx`.
+6. `FeeVault → Caller` (`gas_used`, UV reimbursement); emit `InboundFeeReimbursed { sub_tx_id, relayer, amount_lamports: gas_used }`.
 
 The funds transfer comes from the bridge `Vault`. The UV reimbursement comes from `FeeVault` — not from `Vault`. Revert is SVM-inbound-fee funded (the user paid the inbound fee into `FeeVault` when depositing), so `FeeVault` is the correct source. The signed `gas_fee` is a ceiling, not the payment amount; the on-chain program measures actual cost and reimburses that. If `FeeVault` cannot cover `gas_used` the tx fails with `InsufficientFeePool`; if `gas_fee < gas_used` it fails with `InsufficientGasBudget` before any lamports move.
 
-The event carries `gas_used` (the reimbursed amount) so Push can reconcile — an IDL-breaking layout addition; regenerate types.
+The measured `gas_used` is visible off-chain via `InboundFeeReimbursed.amount_lamports` — no schema change to `RevertUniversalTx` was required.
 
 ---
 
