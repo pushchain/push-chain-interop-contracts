@@ -5,7 +5,11 @@ import { RevertInstructions } from "../libraries/Types.sol";
 
 /**
  * @title  IVault
- * @notice Interface for ERC20 custody vault for outbound flows (withdraw / withdraw+call) managed by TSS.
+ * @notice Interface for the external-chain token custody vault managed by TSS.
+ * @dev    Handles two outbound finalization flows via a single entry point (finalizeUniversalTx):
+ *         - PRC20 path: unlocks tokens the Vault already holds and routes through CEA.
+ *         - PC20 path: detected when `data` starts with PC_20_SELECTOR (0x50433230). Mints
+ *           wrapped ERC-20 tokens via PC20Factory instead of transferring from Vault.
  */
 interface IVault {
     // =========================
@@ -22,18 +26,20 @@ interface IVault {
     /// @param newCEAFactory     New CEAFactory address
     event CEAFactoryUpdated(address indexed oldCEAFactory, address indexed newCEAFactory);
 
-    /// @notice                  Universal tx finalized event
+    /// @notice                  Universal tx finalized event (emitted for both PRC20 and PC20 paths)
     /// @param subTxId           Gateway transaction identifier
     /// @param universalTxId     Universal transaction identifier
+    /// @param wrapperAddress    PC20 wrapper address on this chain; address(0) for PRC20 path
     /// @param pushAccount       Push Chain account (UEA) this transaction is attributed to
     /// @param recipient         Destination address on the external chain; address(0) means park in CEA
-    /// @param token             Token address being sent
-    /// @param amount            Amount of token being sent
-    /// @param data              Calldata to be executed on target contract on external chain
+    /// @param token             PRC20: token address (address(0) for native). PC20: sourceAsset address.
+    /// @param amount            PRC20: amount unlocked. PC20: amount minted.
+    /// @param data              PRC20: Multicall calldata. PC20: userData (empty if none).
     event UniversalTxFinalized(
         bytes32 indexed subTxId,
         bytes32 indexed universalTxId,
-        address indexed pushAccount,
+        address indexed wrapperAddress,
+        address pushAccount,
         address recipient,
         address token,
         uint256 amount,
@@ -84,18 +90,21 @@ interface IVault {
     //  V_2: WITHDRAW & EXECUTION
     // =========================
 
-    /// @notice                  Unified entry point for both withdrawals and executions (TSS-only)
-    /// @dev                     Routes based on payload:
-    ///                          - Empty payload (data.length == 0): Withdrawal path via CEA
-    ///                          - Non-empty payload: Execution path via CEA.executeUniversalTx()
-    ///                          Both paths use CEA (Chain Execution Account) as intermediary.
+    /// @notice                  Unified entry point for PRC20 withdrawals/executions and PC20 exports.
+    /// @dev                     Routes based on the `data` parameter:
+    ///                          - If `data` starts with PC_20_SELECTOR: PC20 export path.
+    ///                            `token` is the Push Chain sourceAsset. `data` layout:
+    ///                            [PC_20_SELECTOR (4 B)][abi.encode(name, symbol, decimals, userData)]
+    ///                            Replay protection via isPC20Executed. msg.value must be 0.
+    ///                          - Otherwise: PRC20 path. Routes through CEA for token transfer
+    ///                            and/or execution. msg.value used for native token path.
     /// @param subTxId           Gateway transaction identifier
     /// @param universalTxId     Universal transaction identifier from Push Chain
     /// @param pushAccount       Push Chain account (UEA) this transaction is attributed to
     /// @param recipient         Destination address on the external chain; address(0) means park in CEA
-    /// @param token             Token address (address(0) for native)
-    /// @param amount            Amount of token/native
-    /// @param data              Calldata (empty for withdrawal, non-empty for execution)
+    /// @param token             PRC20: token address (address(0) for native). PC20: sourceAsset address.
+    /// @param amount            PRC20: amount to unlock/transfer. PC20: amount to mint.
+    /// @param data              PRC20: Multicall calldata. PC20: PC_20_SELECTOR-prefixed metadata.
     function finalizeUniversalTx(
         bytes32 subTxId,
         bytes32 universalTxId,
@@ -138,6 +147,17 @@ interface IVault {
         uint256 amount,
         RevertInstructions calldata revertInstruction
     ) external payable;
+
+    // =========================
+    //  V_2b: PC20 ADMIN
+    // =========================
+
+    event PC20FactoryUpdated(
+        address indexed oldFactory,
+        address indexed newFactory
+    );
+
+    function updatePC20Factory(address newFactory) external;
 
     // =========================
     //    V_3: MIGRATION

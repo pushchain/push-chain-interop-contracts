@@ -42,7 +42,8 @@ contract VaultTest is Test {
     event UniversalTxFinalized(
         bytes32 indexed subTxId,
         bytes32 indexed universalTxId,
-        address indexed pushAccount,
+        address indexed wrapperAddress,
+        address pushAccount,
         address recipient,
         address token,
         uint256 amount,
@@ -1292,7 +1293,7 @@ contract VaultTest is Test {
 
         vm.expectEmit(true, true, true, true);
         emit UniversalTxFinalized(
-            _tx(335), bytes32(uint256(3335)), uea, address(0), address(token), amount, data
+            _tx(335), bytes32(uint256(3335)), address(0), uea, address(0), address(token), amount, data
         );
 
         vm.prank(tss);
@@ -1311,7 +1312,7 @@ contract VaultTest is Test {
 
         vm.expectEmit(true, true, true, true);
         emit UniversalTxFinalized(
-            _tx(336), bytes32(uint256(3336)), uea, address(0), address(0), amount, data
+            _tx(336), bytes32(uint256(3336)), address(0), uea, address(0), address(0), amount, data
         );
 
         vm.prank(tss);
@@ -1327,7 +1328,7 @@ contract VaultTest is Test {
 
         vm.expectEmit(true, true, true, true);
         emit UniversalTxFinalized(
-            _tx(337), bytes32(uint256(3337)), uea, address(0), address(token), amount, data
+            _tx(337), bytes32(uint256(3337)), address(0), uea, address(0), address(token), amount, data
         );
 
         vm.prank(tss);
@@ -1344,7 +1345,7 @@ contract VaultTest is Test {
 
         vm.expectEmit(true, true, true, true);
         emit UniversalTxFinalized(
-            _tx(338), bytes32(uint256(3338)), uea, address(0), address(token), amount, data
+            _tx(338), bytes32(uint256(3338)), address(0), uea, address(0), address(token), amount, data
         );
 
         vm.prank(tss);
@@ -1943,7 +1944,7 @@ contract VaultTest is Test {
         for (uint256 i = 0; i < logs.length; i++) {
             // UniversalTxFinalized signature
             bytes32 eventSignature =
-                keccak256("UniversalTxFinalized(bytes32,bytes32,address,address,address,uint256,bytes)");
+                keccak256("UniversalTxFinalized(bytes32,bytes32,address,address,address,address,uint256,bytes)");
             assertFalse(logs[i].topics[0] == eventSignature, "UniversalTxFinalized should not emit on revert");
         }
     }
@@ -1983,7 +1984,7 @@ contract VaultTest is Test {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
             bytes32 eventSignature =
-                keccak256("UniversalTxFinalized(bytes32,bytes32,address,address,address,uint256,bytes)");
+                keccak256("UniversalTxFinalized(bytes32,bytes32,address,address,address,address,uint256,bytes)");
             assertFalse(logs[i].topics[0] == eventSignature, "UniversalTxFinalized should not emit on revert");
         }
     }

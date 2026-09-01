@@ -25,10 +25,13 @@ Rescue is distinct from revert:
 2. Verify TSS signature — recover Ethereum address, compare to `TssPda.tss_eth_address`
 3. Create `ExecutedSubTx` PDA (replay protection — init fails if `sub_tx_id` reused)
 4. `Vault → Recipient` (amount)
-5. Emit `FundsRescued`
-6. `FeeVault → Caller` (gas_fee, UV reimbursement)
+5. Measure `gas_used` (signature fee + `ExecutedSubTx` rent; the PC20 remint path adds recipient-ATA rent when created). Require signed `gas_fee >= gas_used`, else `InsufficientGasBudget`.
+6. Emit `FundsRescued` (includes `gas_used`)
+7. `Vault → Caller` (`gas_used`, UV reimbursement)
 
-The funds transfer comes from the bridge `Vault`. The UV reimbursement comes from `FeeVault` — not from `Vault`. This preserves the 1:1 bridge invariant. If `FeeVault` has insufficient balance, reimbursement fails with `InsufficientFeePool`.
+Both the rescued principal AND the UV gas reimbursement come from the bridge `Vault` — **not** `FeeVault`. Rescue is Push-initiated: `UniversalGatewayPC.rescueFundsOnSourceChain` burns the destination gas token on Push via `UniversalCore.swapAndBurnGas`, so the matching gas backing must be released from `Vault` to keep the 1:1 invariant. Reimbursing from `FeeVault` would double-charge (Push already burned) and strand vault backing. The signed `gas_fee` is a **cap**; Push refunds `gas_fee - gas_used` to the user. If `Vault` cannot cover `amount + gas_used`, the transfer fails.
+
+> Contrast with `revert_universal_tx`: revert is funded by the SVM-side inbound fee the user paid into `FeeVault`, so revert reimburses from `FeeVault` and its economics are unchanged from audit-main-fixes.
 
 ---
 
@@ -61,27 +64,29 @@ sub_tx_id[32] | universal_tx_id[32] | mint[32] | recipient[32] | gas_fee (8 BE)
 | Account | SOL route | SPL route |
 |---------|-----------|-----------|
 | `config` | Required | Required |
-| `vault` | Required | Required |
-| `fee_vault` | Required | Required |
+| `vault` | Required | Required (also funds the UV `gas_used` reimbursement) |
+| `fee_vault` | Required (unused) | Required (unused) |
 | `tss_pda` | Required | Required |
 | `recipient` | Required | Required (wallet, not ATA) |
 | `executed_sub_tx` | Required (created) | Required (created) |
 | `caller` | Required (signer) | Required (signer) |
 | `system_program` | Required | Required |
 | `token_vault` | None | Required (vault ATA for mint) |
-| `recipient_token_account` | None | Required (must exist) |
+| `recipient_token_account` | None | Required — canonical ATA for `(recipient, mint)`; auto-created if missing |
 | `token_mint` | None | Required |
 | `token_program` | None | Required |
+| `associated_token_program` | Ignored | Required (used to create recipient ATA if missing) |
+| `rent` | Ignored | Required (used to create recipient ATA if missing) |
 
-For SOL, pass `token_vault`, `recipient_token_account`, `token_mint`, `token_program` as `null`.
+For SOL, pass `token_vault`, `recipient_token_account`, `token_mint`, `token_program` as `null`. `associated_token_program` and `rent` are only consumed on the legacy SPL path; on native/PC20 they are ignored (Anchor JS may auto-populate).
 
 **Cross-account constraints (SPL):**
 - `token_vault` must be the canonical ATA for `(vault, token_mint)`
 - `token_vault.mint == token_mint.key()`
-- `recipient_token_account.mint == token_mint.key()`
-- `recipient_token_account.owner == recipient.key()`
+- `recipient_token_account` must be `get_associated_token_address(recipient, token_mint)` (checked inside `ensure_associated_token_account`)
+- After `ensure_associated_token_account` runs (create-if-missing), on-chain re-parses the account and requires `mint == token_mint.key()` and `owner == recipient.key()`.
 
-The `recipient` account in the TSS message is the wallet pubkey (owner), not the ATA. The recipient ATA must already exist — rescue does not create it.
+The `recipient` account in the TSS message is the wallet pubkey (owner), not the ATA. If the canonical ATA does not exist on-chain, the gateway creates it with `caller` (relayer) as rent-payer; the rent is folded into measured `gas_used` and reimbursed atomically from `vault` (which is 1:1 backed by the Push-side burn). The Push-side signer must size `gas_fee` to cover ATA rent when the ATA does not yet exist — otherwise `InsufficientGasBudget` trips and no state changes.
 
 ---
 
@@ -100,6 +105,7 @@ FundsRescued {
     universal_tx_id: [u8; 32],
     token: Pubkey,          // Pubkey::default() for SOL, mint for SPL
     amount: u64,
+    gas_used: u64,          // actual lamports reimbursed to the UV from `Vault` (cap = signed gas_fee)
     revert_instruction: RevertInstructions {
         revert_recipient: Pubkey,  // recipient
         revert_msg: Vec<u8>,       // always empty for rescue
@@ -107,8 +113,9 @@ FundsRescued {
 }
 ```
 
-### `InboundFeeReimbursed`
-Emitted after UV gas reimbursement from `FeeVault`.
+The backend reconciles the Push-side burn against `gas_used`: it refunds/accounts `gas_fee - gas_used` on Push. Adding `gas_used` is an IDL-breaking layout change — regenerate the IDL/types.
+
+> Note: rescue no longer emits `InboundFeeReimbursed` (that event belonged to the `FeeVault` reimbursement path). The UV reimbursement is now a direct `Vault → Caller` lamport transfer.
 
 ---
 
@@ -123,5 +130,5 @@ Emitted after UV gas reimbursement from `FeeVault`.
 | `InvalidRecipient` | Recipient is zero address |
 | `InvalidAccount` | SPL accounts missing or inconsistent (null/non-null mismatch) |
 | `InvalidMint` | ATA mint does not match `token_mint` |
-| `InsufficientFeePool` | `FeeVault` balance < `gas_fee` |
+| `InsufficientGasBudget` | signed `gas_fee` < measured `gas_used` |
 | `Paused` | Gateway is paused |

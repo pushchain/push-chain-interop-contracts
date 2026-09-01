@@ -3,10 +3,12 @@ pragma solidity 0.8.26;
 
 /**
  * @title  Vault
- * @notice Token custody vault for outbound flows (withdraw / withdraw+call) managed by TSS.
+ * @notice Token custody vault for outbound flows managed by TSS.
  * @dev    - TransparentUpgradeable (OZ Initializable pattern)
  *         - Handles both ERC20 and native tokens
- *         - Routes withdrawals (empty payload) and executions (non-empty payload) through CEA contracts
+ *         - finalizeUniversalTx is the single TSS entry point for both:
+ *           • PRC20 path: unlock tokens from Vault and route through CEA
+ *           • PC20 path: mint wrapped ERC-20 via PC20Factory (detected by PC_20_SELECTOR prefix)
  *         - Uses CEAFactory for deterministic CEA deployment
  */
 
@@ -15,7 +17,8 @@ import { IVault } from "./interfaces/IVault.sol";
 import { ICEA } from "./interfaces/ICEA.sol";
 import { ICEAFactory } from "./interfaces/ICEAFactory.sol";
 import { IUniversalGateway } from "./interfaces/IUniversalGateway.sol";
-import { RevertInstructions } from "./libraries/Types.sol";
+import { IPC20Factory } from "./interfaces/IPC20Factory.sol";
+import { RevertInstructions, PC_20_SELECTOR } from "./libraries/Types.sol";
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -39,6 +42,9 @@ contract Vault is
 
     IUniversalGateway public gateway;
     ICEAFactory public CEAFactory;
+    IPC20Factory public pc20Factory;
+    mapping(bytes32 => bool) public isPC20Executed;
+    mapping(bytes32 => bool) public isPC20RevertExecuted;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -107,6 +113,14 @@ contract Vault is
         emit CEAFactoryUpdated(old, newCEAFactory);
     }
 
+    /// @inheritdoc IVault
+    function updatePC20Factory(address newFactory) external onlyRole(OPERATOR_ROLE) {
+        if (newFactory == address(0)) revert Errors.ZeroAddress();
+        address old = address(pc20Factory);
+        pc20Factory = IPC20Factory(newFactory);
+        emit PC20FactoryUpdated(old, newFactory);
+    }
+
     /// @notice                Migrates ERC20 balances and any native ETH to a new vault.
     /// @dev                   BOTH this vault AND the gateway MUST be paused.
     ///                        Call this BEFORE gateway.updateVault(newVault).
@@ -155,14 +169,19 @@ contract Vault is
         uint256 amount,
         bytes calldata data
     ) external payable nonReentrant whenNotPaused onlyRole(TSS_ROLE) {
+        if (_isPC20Export(data)) {
+            _finalizePC20Export(subTxId, universalTxId, pushAccount, recipient, token, amount, data);
+            return;
+        }
+
         (address cea, bool isDeployed) = CEAFactory.getCEAForPushAccount(pushAccount);
         if (!isDeployed) {
             cea = CEAFactory.deployCEA(pushAccount);
         }
 
-        _finalizeUniversalTx(subTxId, universalTxId, pushAccount, recipient, token, amount, data, cea);
+        _finalizeUniversalTxPRC20(subTxId, universalTxId, pushAccount, recipient, token, amount, data, cea);
 
-        emit UniversalTxFinalized(subTxId, universalTxId, pushAccount, recipient, token, amount, data);
+        _emitUniversalTxFinalized(subTxId, universalTxId, address(0), pushAccount, recipient, token, amount, data);
     }
 
     /// @inheritdoc IVault
@@ -175,9 +194,30 @@ contract Vault is
     ) external payable nonReentrant whenNotPaused onlyRole(TSS_ROLE) {
         _validateRevertParams(amount, revertInstruction.revertRecipient);
 
-        if (token == address(0)) {
+        if (_isPC20Wrapper(token)) {
+            if (msg.value != 0) revert Errors.InvalidAmount();
+            if (isPC20RevertExecuted[subTxId]) {
+                revert Errors.PayloadExecuted();
+            }
+            isPC20RevertExecuted[subTxId] = true;
+            pc20Factory.revertMint(
+                token, revertInstruction.revertRecipient, amount
+            );
+            emit UniversalTxReverted(
+                subTxId, universalTxId, token, amount,
+                revertInstruction
+            );
+        } else if (token == address(0)) {
             if (msg.value != amount) revert Errors.InvalidAmount();
             gateway.revertUniversalTx{ value: amount }(
+                subTxId, universalTxId, token, amount, revertInstruction
+            );
+        } else if (_isPC20Wrapper(token)) {
+            if (msg.value != 0) revert Errors.InvalidAmount();
+            pc20Factory.revertMint(
+                token, address(gateway), amount
+            );
+            gateway.revertUniversalTx(
                 subTxId, universalTxId, token, amount, revertInstruction
             );
         } else {
@@ -189,11 +229,10 @@ contract Vault is
             gateway.revertUniversalTx(
                 subTxId, universalTxId, token, amount, revertInstruction
             );
+            emit UniversalTxReverted(
+                subTxId, universalTxId, token, amount, revertInstruction
+            );
         }
-
-        emit UniversalTxReverted(
-            subTxId, universalTxId, token, amount, revertInstruction
-        );
     }
 
     /// @inheritdoc IVault
@@ -206,9 +245,30 @@ contract Vault is
     ) external payable nonReentrant whenNotPaused onlyRole(TSS_ROLE) {
         _validateRevertParams(amount, revertInstruction.revertRecipient);
 
-        if (token == address(0)) {
+        if (_isPC20Wrapper(token)) {
+            if (msg.value != 0) revert Errors.InvalidAmount();
+            if (isPC20RevertExecuted[subTxId]) {
+                revert Errors.PayloadExecuted();
+            }
+            isPC20RevertExecuted[subTxId] = true;
+            pc20Factory.revertMint(
+                token, revertInstruction.revertRecipient, amount
+            );
+            emit FundsRescued(
+                subTxId, universalTxId, token, amount,
+                revertInstruction
+            );
+        } else if (token == address(0)) {
             if (msg.value != amount) revert Errors.InvalidAmount();
             gateway.rescueFunds{ value: amount }(
+                subTxId, universalTxId, token, amount, revertInstruction
+            );
+        } else if (_isPC20Wrapper(token)) {
+            if (msg.value != 0) revert Errors.InvalidAmount();
+            pc20Factory.revertMint(
+                token, address(gateway), amount
+            );
+            gateway.rescueFunds(
                 subTxId, universalTxId, token, amount, revertInstruction
             );
         } else {
@@ -220,21 +280,95 @@ contract Vault is
             gateway.rescueFunds(
                 subTxId, universalTxId, token, amount, revertInstruction
             );
+            emit FundsRescued(
+                subTxId, universalTxId, token, amount, revertInstruction
+            );
+        }
+    }
+
+    // ==============================
+    //    Vault_2b: PC20 EXPORT
+    // ==============================
+
+    /// @dev PC20 export finalization. Called internally when data starts with PC_20_SELECTOR.
+    ///      `token` carries the Push Chain sourceAsset address used as the wrapper key.
+    ///      `data` layout: [PC_20_SELECTOR (4 B)][abi.encode(destChainNamespace, name, symbol, decimals)][raw userData]
+    ///      destChainNamespace is discarded (Vault already lives on that chain).
+    ///      userData is the raw tail bytes after the ABI-encoded tuple (may be empty).
+    function _finalizePC20Export(
+        bytes32 subTxId,
+        bytes32 universalTxId,
+        address pushAccount,
+        address recipient,
+        address sourceAsset,
+        uint256 amount,
+        bytes calldata data
+    ) private {
+        if (msg.value != 0) revert Errors.InvalidAmount();
+        if (isPC20Executed[subTxId]) revert Errors.PayloadExecuted();
+        isPC20Executed[subTxId] = true;
+
+        if (pushAccount == address(0)) revert Errors.ZeroAddress();
+        if (sourceAsset == address(0)) revert Errors.ZeroAddress();
+        if (amount == 0) revert Errors.ZeroAmount();
+        if (recipient == address(0)) revert Errors.ZeroAddress();
+
+        (string memory destChain, string memory name, string memory symbol, uint8 decimals) =
+            abi.decode(data[4:], (string, string, string, uint8));
+
+        bytes memory userData;
+        uint256 tupleLen = abi.encode(destChain, name, symbol, decimals).length;
+        uint256 userDataStart = 4 + tupleLen;
+        if (data.length > userDataStart) {
+            userData = data[userDataStart:];
         }
 
-        emit FundsRescued(
-            subTxId, universalTxId, token, amount, revertInstruction
-        );
+        if (pc20Factory.getWrapper(sourceAsset) == address(0)) {
+            pc20Factory.deployWrapper(sourceAsset, name, symbol, decimals);
+        }
+
+        address wrapper = pc20Factory.getWrapper(sourceAsset);
+
+        (address cea, bool isDeployed) = CEAFactory.getCEAForPushAccount(pushAccount);
+        if (!isDeployed) {
+            cea = CEAFactory.deployCEA(pushAccount);
+        }
+        pc20Factory.mintFor(sourceAsset, cea, amount);
+
+        if (userData.length > 0) {
+            ICEA(cea).executeUniversalTx(subTxId, universalTxId, pushAccount, recipient, userData);
+        }
+
+        _emitUniversalTxFinalized(subTxId, universalTxId, wrapper, pushAccount, recipient, sourceAsset, amount, userData);
     }
 
     // ==============================
     //    Vault_3: INTERNAL HELPERS
     // ==============================
 
+    function _emitUniversalTxFinalized(
+        bytes32 subTxId,
+        bytes32 universalTxId,
+        address wrapperAddress,
+        address pushAccount,
+        address recipient,
+        address token,
+        uint256 amount,
+        bytes memory data
+    ) private {
+        emit UniversalTxFinalized(subTxId, universalTxId, wrapperAddress, pushAccount, recipient, token, amount, data);
+    }
+
     /// @dev Validates common revert/rescue parameters.
     function _validateRevertParams(uint256 amount, address revertRecipient) private pure {
         if (amount == 0) revert Errors.InvalidAmount();
         if (revertRecipient == address(0)) revert Errors.InvalidRecipient();
+    }
+
+    /// @dev Returns true when token is a PC20 wrapper deployed by the factory.
+    function _isPC20Wrapper(address token) private view returns (bool) {
+        if (address(pc20Factory) == address(0)) return false;
+        return pc20Factory.isPC20Wrapper(token);
     }
 
     /// @dev                   Validates push account and token/value invariants.
@@ -251,16 +385,14 @@ contract Vault is
         }
     }
 
-    /// @dev                   Unified execution handler — all operations route through CEA.
-    /// @param subTxId         Gateway transaction ID
-    /// @param universalTxId   Universal transaction ID
-    /// @param pushAccount     Push Chain account (UEA) this transaction is attributed to
-    /// @param recipient       Destination address on this chain; address(0) means park in CEA
-    /// @param token           Token address (address(0) for native)
-    /// @param amount          Amount of tokens to fund CEA with
-    /// @param data            Multicall payload (abi.encode(Multicall[]))
-    /// @param cea             CEA address (already deployed or newly created)
-    function _finalizeUniversalTx(
+    /// @dev Returns true when data starts with PC_20_SELECTOR (PC20 export path).
+    function _isPC20Export(bytes calldata data) private pure returns (bool) {
+        if (data.length < 4) return false;
+        return bytes4(data[:4]) == PC_20_SELECTOR;
+    }
+
+    /// @dev PRC20 execution handler — unlocks tokens from Vault and routes through CEA.
+    function _finalizeUniversalTxPRC20(
         bytes32 subTxId,
         bytes32 universalTxId,
         address pushAccount,

@@ -240,7 +240,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
             recipient: address(0), // address(0) for UEA credit
             token: address(0), // Native token (even though amount is 0)
             amount: gasAmount, // Zero amount
-            payload: nonEmptyPayload, // Payload is present
+            payload: _pp(nonEmptyPayload), // Payload is present
             revertRecipient: req.revertRecipient,
             signatureData: req.signatureData,
             fromCEA: false
@@ -537,7 +537,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
             recipient: address(0), // Always address(0) for gas routes (UEA credit)
             token: address(0), // Native token
             amount: gasAmount,
-            payload: bytes(""), // Empty for GAS
+            payload: _pp(bytes("")), // Empty for GAS
             revertRecipient: revertInst.revertRecipient,
             signatureData: sigData,
             fromCEA: false
@@ -574,7 +574,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
             recipient: address(0), // Always address(0) for gas routes (UEA credit)
             token: address(0), // Native token
             amount: gasAmount,
-            payload: encodedPayload, // Non-empty for GAS_AND_PAYLOAD
+            payload: _pp(encodedPayload), // Non-empty for GAS_AND_PAYLOAD
             revertRecipient: revertInst.revertRecipient,
             signatureData: sigData,
             fromCEA: false
@@ -604,7 +604,7 @@ contract GatewaySendUniversalTxWithGasTest is BaseTest {
             recipient: address(0),
             token: address(0),
             amount: gasAmount,
-            payload: bytes(""),
+            payload: _pp(bytes("")),
             revertRecipient: req.revertRecipient,
             signatureData: bytes(""), // Empty
             fromCEA: false

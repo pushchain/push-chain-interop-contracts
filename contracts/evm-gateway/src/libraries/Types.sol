@@ -46,3 +46,15 @@ enum VerificationType {
     signedVerification,
     universalTxVerification
 }
+
+/// @dev Magic prefix for PC20 export payloads. ASCII "PC20" (0x50433230).
+///      When the first 4 bytes of the data parameter match this selector,
+///      Vault.finalizeUniversalTx() routes to the PC20 export path (mint wrapped ERC-20)
+///      instead of the PRC20 path (unlock from Vault).
+bytes4 constant PC_20_SELECTOR = 0x50433230;
+
+/// @dev Magic prefix for PRC20 inbound payloads. ASCII "PRC2" (0x50524332).
+///      Applied by UniversalGateway to all non-PC20 UniversalTx payloads emitted on
+///      the inbound path so Push Chain relayers can distinguish PRC20 transactions
+///      from PC20 transactions.
+bytes4 constant PRC_20_SELECTOR = 0x50524332;

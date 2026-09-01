@@ -146,7 +146,7 @@ Caps apply only to the instant GAS / GAS_AND_PAYLOAD routes. FUNDS routes are go
 
 ## Inbound Fee
 
-Flat fee charged per `send_universal_tx` call, paid in SOL by the depositor. Collected into `FeeVault` to fund UV reimbursements for automated reverts and rescues.
+Flat fee charged per `send_universal_tx` call, paid in SOL by the depositor. Collected into `FeeVault` to fund UV reimbursements for SVM-originated reverts. Push-paid finalize/rescue gas reimbursement comes from `Vault`, not `FeeVault`.
 
 ```bash
 # Set fee (in lamports); this also creates FeeVault if needed
@@ -160,7 +160,7 @@ npm run config:fee-withdraw -- --admin-keypair <admin-keypair.json> --amount <la
 ```
 
 The inbound fee is deducted from `native_amount` before routing. It goes to `FeeVault`, not `Vault`, preserving the 1:1 bridge invariant.
-The fee is capped on-chain at `2_000_000` lamports (`0.002 SOL`). Only txs that are reverted on Push Chain consume from `FeeVault` — surplus from successful txs accumulates and can be swept via `withdraw_inbound_fees`.
+The fee is capped on-chain at `2_000_000` lamports (`0.002 SOL`). Only SVM-originated txs that revert on Push Chain consume from `FeeVault` — surplus from successful txs accumulates and can be swept via `withdraw_inbound_fees`.
 
 ---
 

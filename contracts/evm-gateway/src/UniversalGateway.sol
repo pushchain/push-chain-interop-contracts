@@ -35,8 +35,10 @@ import { Errors } from "./libraries/Errors.sol";
 import { ICEAFactory } from "./interfaces/ICEAFactory.sol";
 import { IUniversalGateway } from "./interfaces/IUniversalGateway.sol";
 import { IWETH } from "./interfaces/IWETH.sol";
-import { RevertInstructions, TX_TYPE, EpochUsage } from "./libraries/Types.sol";
+import { RevertInstructions, TX_TYPE, EpochUsage, PC_20_SELECTOR, PRC_20_SELECTOR } from "./libraries/Types.sol";
 import { UniversalTxRequest, UniversalTokenTxRequest } from "./libraries/TypesUG.sol";
+import { IPC20Factory } from "./interfaces/IPC20Factory.sol";
+import { PC20Wrapper } from "./PC20Wrapper.sol";
 
 import { AggregatorV3Interface } from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import { IUniswapV3Factory } from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
@@ -120,6 +122,8 @@ contract UniversalGateway is
     uint256 public inboundFee;
 
     uint256 public totalProtocolFeesCollected;
+
+    IPC20Factory public pc20Factory;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -347,6 +351,14 @@ contract UniversalGateway is
         ceaFactory = newFactory;
     }
 
+    /// @inheritdoc IUniversalGateway
+    function updatePC20Factory(address newFactory) external onlyRole(OPERATOR_ROLE) {
+        if (newFactory == address(0)) revert Errors.ZeroAddress();
+        address old = address(pc20Factory);
+        pc20Factory = IPC20Factory(newFactory);
+        emit PC20FactoryUpdated(old, newFactory);
+    }
+
     /// @notice                Set the flat protocol fee (in wei). 0 disables.
     /// @dev                   Must be <= MAX_INBOUND_FEE to prevent misconfiguration or governance
     ///                        abuse.
@@ -404,6 +416,53 @@ contract UniversalGateway is
         if (req.recipient != mappedUEA) revert Errors.InvalidRecipient();
 
         _routeUniversalTx(req, _msgSender(), msg.value, true);
+    }
+
+    // ==============================
+    //  UG_2b: PC20 BURN (INBOUND)
+    // ==============================
+
+    /// @dev PC20 inbound burn path. Called from _routeUniversalTx when req.token
+    ///      is a PC20 wrapper. Burns wrapper tokens and emits UniversalTx with
+    ///      PC_20_SELECTOR-prefixed payload so cosmos can distinguish PC20 from PRC20.
+    ///      When nativeValue > 0 (excess ETH after fee), routes it as a standard
+    ///      FUNDS transfer to the caller's UEA via _sendTxWithFunds.
+    function _routePC20Tx(UniversalTxRequest memory req, address caller, uint256 nativeValue, bool fromCEA) private {
+        if (req.amount == 0) revert Errors.ZeroAmount();
+
+        address sourceAsset = PC20Wrapper(req.token).SOURCE_ASSET();
+
+        pc20Factory.burnFrom(sourceAsset, caller, req.amount);
+
+        bytes memory prefixedPayload = abi.encodePacked(
+            PC_20_SELECTOR, req.payload
+        );
+
+        _emitUniversalTx(
+            caller,
+            req.recipient,
+            req.token,
+            req.amount,
+            prefixedPayload,
+            req.revertRecipient,
+            TX_TYPE.FUNDS_AND_PAYLOAD,
+            req.signatureData,
+            fromCEA
+        );
+
+        // Route excess native value as a standard FUNDS transfer to caller's UEA
+        if (nativeValue > 0) {
+            UniversalTxRequest memory nativeReq = UniversalTxRequest({
+                recipient: req.recipient,
+                token: address(0),
+                amount: nativeValue,
+                payload: bytes(""),
+                revertRecipient: req.revertRecipient,
+                signatureData: req.signatureData
+            });
+            TX_TYPE nativeTxType = _fetchTxType(nativeReq, nativeValue);
+            _sendTxWithFunds(nativeReq, nativeValue, nativeTxType, fromCEA);
+        }
     }
 
     // ==============================
@@ -791,6 +850,12 @@ contract UniversalGateway is
         return ICEAFactory(ceaFactory).isCEA(_msgSender());
     }
 
+    /// @dev Returns true when token is a PC20 wrapper deployed by the factory.
+    function _isPC20Wrapper(address token) private view returns (bool) {
+        if (address(pc20Factory) == address(0)) return false;
+        return pc20Factory.isPC20Wrapper(token);
+    }
+
     /// @dev                    Check if the amount is within the USD cap range.
     ///                         Cap ranges are defined in the initializer or updated by the admin.
     /// @param amount           Amount to check
@@ -1064,6 +1129,16 @@ contract UniversalGateway is
         }
 
         TX_TYPE txType = _fetchTxType(req, nativeValue);
+
+        // PC20 early exit: if token is a PC20 wrapper, route to burn path
+        if (_isPC20Wrapper(req.token)) {
+            _routePC20Tx(req, caller, nativeValue, fromCEA);
+            return;
+        }
+
+        // Prefix payload with PRC_20_SELECTOR so Push Chain can distinguish
+        // PRC20 transactions from PC20 transactions (PC20 path returns above).
+        req.payload = abi.encodePacked(PRC_20_SELECTOR, req.payload);
 
         // Route 1: GAS or GAS_AND_PAYLOAD → Instant route
         if (txType == TX_TYPE.GAS || txType == TX_TYPE.GAS_AND_PAYLOAD) {

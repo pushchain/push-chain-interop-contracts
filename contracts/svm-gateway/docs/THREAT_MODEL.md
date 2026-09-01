@@ -41,7 +41,7 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 
 **Boundary summary:**
 - UV cannot change signed outbound content without failing signature validation.
-- `Vault` stores bridge funds; `FeeVault` stores inbound fees and revert/rescue reimbursements.
+- `Vault` stores bridge funds and funds Push-paid finalize/rescue gas reimbursement; `FeeVault` stores inbound fees and funds SVM-originated revert reimbursement.
 - Replay protection is on-chain via `ExecutedSubTx` PDA (`sub_tx_id` uniqueness).
 
 ---
@@ -106,9 +106,9 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Risk: user supplies fake source/destination token accounts.  
    Control: `user_token_account` owner/mint checks plus canonical ATA enforcement on `gateway_token_account` for `(vault, token)`.
 
-9. **Fee vault depletion**  
-   Risk: revert/rescue fail due to reimbursement shortfall.  
-   Control: reimbursement checks available lamports above rent and fails safely (`InsufficientFeePool`).
+9. **Reimbursement pool depletion**
+   Risk: revert fails if `FeeVault` lacks inbound-fee surplus; rescue/finalize fail if `Vault` lacks lamports for measured gas reimbursement.
+   Control: `FeeVault` reimbursement checks available lamports above rent and fails safely (`InsufficientFeePool`); `Vault` reimbursement fails atomically if bridge lamports are insufficient.
 
 12. **Inbound fee misconfiguration**  
    Risk: admin sets an excessive inbound fee and griefs users.  
@@ -130,6 +130,39 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
    Risk: issuer retains `mint_authority` and/or `freeze_authority`, affecting collateral assumptions or freezing vault flows.  
    Control: `set_token_rate_limit` requires explicit acknowledgment flags for retained mint and freeze authorities before a non-zero threshold can be set.
 
+14. **PC20 emergency rescue minting**
+   Risk: PC20 rescue mints wrapped supply on Solana instead of transferring from a token vault. A bad TSS rescue signature can create uncollateralized wrapped supply unless the matching Push-side ledger action has already happened.
+   Control: PC20 rescue remains TSS-authorized, domain-separated with `"PC20" || source_asset`, and replay-protected by `ExecutedSubTx`; off-chain TSS policy must require Push-side confirmation before signing rescue.
+
+15. **PC20 CEA burn self-route interpretation**
+   Risk: `finalize_universal_tx` with `destination_program = gateway` can treat an inner generic `send_universal_tx` discriminator as a PC20 CEA burn when the signed remaining accounts match the PC20 account shape.
+   Control: TSS signs the destination program, inner instruction data, account list, and writable flags; signer policy must explicitly classify `target = gateway`, inner `send_universal_tx`, `outer amount = 0`, and PC20 remaining accounts as PC20 burn intent.
+
+16. **Malicious execute target installing persistent state on CEA**  
+   Risk: a target invoked via `finalize_universal_tx` receives the CEA as a CPI signer and could plant persistent authority mutations that survive the tx and drain funds bridged into the CEA afterwards or brick every future finalize. Concrete vectors: (a) `system_instruction::assign` to reassign the CEA; (b) `spl_token::SetAuthority(AccountOwner|CloseAccount)` on the CEA ATA; (c) `spl_token::Approve` planting a delegate, then owner-authority transfer draining the balance in the same CPI to leave a live allowance over an empty balance that later staging refills (auditor retest gaps G2/G3); (d) creating the canonical CEA ATA for a mint whose ATA doesn't yet exist and planting a delegate that a later staging will fund (auditor retest gap G1).  
+   Control: `dispatch_finalize_action` runs post-CPI invariants (F-2026-18980, hardened after auditor retest). CEA account must remain System-owned and empty. CEA ATA `owner` and `close_authority` must be unchanged from the pre-CPI snapshot. On the current-mint ATA the coverage rule enforces `delegated_amount <= amount` at end of CPI — any surviving allowance must be backed by the surviving balance. On bystander CEA-owned ATAs passed in `remaining_accounts`, delegate identity and allowance must be strictly unchanged. A post-CPI second scan flags any CEA-owned SPL account that appeared during the CPI at a canonical ATA address for a mint present in the tx: it must have zero delegate, zero allowance, and zero close_authority.  
+   Residual: two-tx composition (TSS-signed tx A installs a legitimate delegate; TSS-signed tx B spends the balance as owner) can still reach the "allowance over empty balance" state. TSS signing policy must refuse the composition. In-call spending of pre-existing CEA lamports or token balance is not sandboxed by these invariants (CEA-as-wallet by design). The coverage rule also blocks a legit case where a user has a pre-existing delegate for N tokens and a target spends part of that balance as owner in the same CPI — the user must revoke or reduce the delegate first; this is an intentional trade-off (see `4-CEA.md`).
+
+17. **Recipient ATA rent leakage on SPL withdraw / revert / rescue**  
+   Risk: on any SPL release path (withdraw, revert, rescue) the gateway auto-creates the recipient ATA when missing, with the caller (relayer) as rent-payer. If that rent is not folded into the on-chain reimbursement, an attacker (or a bad signing policy) can drive many small releases to fresh recipient wallets and force the relayer to sponsor ATA rent (~0.002 SOL per new `(recipient, mint)`) unreimbursed. Liveness: without auto-create, an SPL revert/rescue whose `revert_recipient` doesn't yet have an ATA reverts hard, stranding user funds in the vault.  
+   Control (withdraw): `internal_withdraw` returns a `recipient_ata_created` flag; `dispatch_finalize_action` propagates it; `settle_relayer_gas_cost` folds the ATA rent into measured `gas_used` alongside the CEA ATA rent. The `UniversalTxFinalized` event exposes `recipient_ata_created`.  
+   Control (revert, rescue): legacy SPL branch calls `ensure_associated_token_account` before transfer; the ATA rent lamports paid are folded into a uniform measured `gas_used = SIGNATURE_FEE + ExecutedSubTx rent + recipient_ata_rent`. The signed `gas_fee` is a ceiling: `require!(gas_fee >= gas_used)`. Revert reimburses `gas_used` from `fee_vault` (SVM-inbound-fee funded); rescue reimburses `gas_used` from `vault` (Push burned matching value via `swapAndBurnGas`). The `RevertUniversalTx` and `FundsRescued` events expose the measured `gas_used` for two-phase-commit refund accounting on the Push side.  
+   Signing-policy contract (one rule, both paths): the Push-side signer must `getAccountInfo` on the canonical ATA(`recipient`, `mint`) before signing and size `gas_fee` to cover ATA rent when it does not exist on-chain. Otherwise the on-chain cap check trips (`InsufficientGasBudget`) and no lamports move.  
+   Residual: on revert, ATA rent flows out of `fee_vault`; sustainability requires `Σ inbound_fee income ≥ Σ (revert + rescue) reimbursements`. On rescue, ATA rent flows out of `vault` — 1:1 backed by the Push-side burn, so no protocol drain.
+
+18. **Event forgery via co-executed program logs (F-2026-18198)**  
+   Risk: with `emit!`, an event lands in the shared program-log stream as `Program data: <base64>`. A parser that regexes log lines cannot cryptographically bind the emitting program, so any co-executed program in the same transaction can log a byte-identical string and forge a `UniversalTx` event, triggering a spurious mint on the Push Chain L1 that the UV credits to the attacker.  
+   Control: every event is emitted via `emit_cpi!` (self-CPI to the program's `event_authority` PDA). The event bytes live in `meta.innerInstructions` under our program's id — only our program can produce them. UVs parse events from inner instructions, not from `Program data:` log lines, and validate the emitting program id.  
+   Residual: parser correctness. If a UV falls back to log parsing, forgery becomes possible again; this is enforced off-chain in the UV codebase.
+
+19. **Rate-limiting scope: inbound-only by design (F-2026-18981)**  
+   Design: the per-block USD cap (`check_block_usd_cap`) and per-mint epoch threshold (`validate_token_and_consume_rate_limit`) are **inbound PRC20 mint caps**. They gate throughput on the two paths that create new bridged supply on Push:
+   - `send_universal_tx` (Solana → bridge deposit; SOL and SPL)
+   - `send_universal_tx_to_uea` (CEA → vault; the self-route "CEA back into vault" flow finalize takes when `destination_program == gateway`)
+   
+   The Solana-side **release** paths — `stage_assets_to_cea`, `internal_withdraw`, `revert_universal_tx`, `rescue_funds` — are **not throughput-gated**. Each release requires an ECDSA-secp256k1 TSS signature over the exact `(sub_tx_id, amount, recipient, …)` tuple and is replay-protected by an `ExecutedSubTx` PDA. Per-operation TSS authorization is the release-side control; a global throughput ceiling would layer nothing over a signature the attacker doesn't have anyway. The **release-side emergency control is `pause`** (halts every user-callable ix; only `operator` can unpause).  
+   Residual (code-shape trip-wire): `finalize_universal_tx` declares `rate_limit_config` and `token_rate_limit` as `Option<Account<'info, …>>` slots. Only the CEA-back-into-vault self-route (`send_universal_tx_to_uea`) actually consumes them; the CEA-out release paths (`stage_assets_to_cea`, `internal_withdraw`) leave them unused. A future refactor could plausibly "wire them up" thinking it closes a gap — this would inadvertently throughput-gate a release path against design. In-code doc comments on those account declarations point back to this entry.
+
 ---
 
 ## 5. Cross-Program / Operational Risks
@@ -143,9 +176,9 @@ Universal Validators (UVs) submit transactions, but outbound-critical values are
 3. **Upgradeable program operational risk**  
    Upgrade authority compromise or unsafe upgrade process can override all controls.
 
-4. **Fee model drift across paths**  
-   `finalize_universal_tx` gas reimbursement uses `Vault`; revert/rescue reimbursement uses `FeeVault`.  
-   This must stay intentional and explicitly monitored in ops/runbooks.
+4. **Fee model drift across paths**
+   `finalize_universal_tx` and `rescue_funds` gas reimbursement use `Vault` for Push-paid destination gas; `revert_universal_tx` uses `FeeVault` for SVM-originated inbound-fee-funded recovery.
+   This direction-aware split must stay intentional and explicitly monitored in ops/runbooks.
 
 ---
 

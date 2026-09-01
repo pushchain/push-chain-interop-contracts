@@ -26,3 +26,12 @@ pub fn serialize_ix_data(ix_data: &[u8]) -> Vec<u8> {
     buf.extend_from_slice(ix_data);
     buf
 }
+
+/// Serialize a UTF-8 string into a u32-length-prefixed buffer for signature binding.
+pub fn serialize_string(value: &str) -> Vec<u8> {
+    let bytes = value.as_bytes();
+    let mut buf = Vec::with_capacity(4 + bytes.len());
+    buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+    buf.extend_from_slice(bytes);
+    buf
+}

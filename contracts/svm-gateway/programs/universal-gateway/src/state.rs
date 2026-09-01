@@ -10,6 +10,10 @@ pub const RATE_LIMIT_SEED: &[u8] = b"rate_limit";
 pub const EXECUTED_SUB_TX_SEED: &[u8] = b"executed_sub_tx";
 pub const STORED_IX_DATA_SEED: &[u8] = b"stored_ix_data";
 pub const CEA_SEED: &[u8] = b"push_identity";
+pub const PC20_MINT_SEED: &[u8] = b"pc20_mint";
+pub const PC20_STATE_SEED: &[u8] = b"pc20_state";
+pub const PC20_SELECTOR: [u8; 4] = *b"PC20";
+pub const PRC20_SELECTOR: [u8; 4] = *b"PRC2";
 pub const MAX_INBOUND_FEE_LAMPORTS: u64 = 2_000_000;
 /// Base Solana transaction fee per signature (protocol constant, unchanged since genesis).
 ///
@@ -114,6 +118,21 @@ impl FeeVault {
     pub const LEN: usize = 8 + 8 + 1 + 50;
 }
 
+/// Reverse lookup for an SVM PC20 wrapped mint.
+/// EVM wrappers expose `SOURCE_ASSET()` at runtime; SPL mints do not, so generic
+/// PC20 routes use this canonical PDA to recover and validate the Push source asset.
+#[account]
+pub struct Pc20State {
+    pub source_asset: [u8; 20],
+    pub wrapped_mint: Pubkey,
+    pub decimals: u8,
+    pub bump: u8,
+}
+
+impl Pc20State {
+    pub const LEN: usize = 8 + 20 + 32 + 1 + 1;
+}
+
 /// Rate limiting configuration (separate account for backward compatibility)
 /// PDA: `[b"rate_limit_config"]`. Stores global rate limiting settings.
 #[account]
@@ -208,10 +227,12 @@ pub struct GatewayAccountMeta {
 pub struct UniversalTxFinalized {
     pub sub_tx_id: [u8; 32],
     pub universal_tx_id: [u8; 32], // Universal transaction ID from source chain
+    pub wrapper_address: Pubkey,   // PC20 wrapped mint; Pubkey::default() for non-PC20 paths
     pub gas_fee: u64,              // Signed gas budget (lamports) — what TSS authorized
     pub gas_used: u64,             // Actual relayer reimbursement (lamports)
     pub gas_to_refund: u64,        // Unused gas returned to user on Push Chain
     pub ata_created: bool,         // Whether CEA ATA was created in this finalize
+    pub recipient_ata_created: bool, // Whether recipient ATA was created (SPL withdraw path)
     pub push_account: [u8; 20],    // EVM address
     pub target: Pubkey,            // Target program
     pub token: Pubkey,             // Token (Pubkey::default() for SOL)
@@ -307,5 +328,6 @@ pub struct FundsRescued {
     pub universal_tx_id: [u8; 32],
     pub token: Pubkey,
     pub amount: u64,
+    pub gas_used: u64, // Actual lamports reimbursed to the relayer from vault (Push-paid rescue gas)
     pub revert_instruction: RevertInstructions,
 }

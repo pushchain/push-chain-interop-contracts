@@ -3,21 +3,36 @@ pragma solidity 0.8.26;
 
 /**
  * @title  UniversalGatewayPC
- * @notice Outbound gateway on Push Chain for bridging funds and payloads to external EVM chains.
+ * @notice Outbound gateway on Push Chain for bridging PRC20 and PC20 tokens to external EVM chains.
  *
- * @dev    Deployed on Push Chain only. Routes three outbound TX_TYPEs: FUNDS, FUNDS_AND_PAYLOAD,
- *         and GAS_AND_PAYLOAD. PRC20 tokens are burned at request time; gas fees paid in native PC
- *         are swapped via UniversalCore — the gas-cost portion is burned (freeing backing tokens
- *         for TSS relayers). The protocol fee is collected as native PC and sent directly to VaultPC.
+ * @dev    Deployed on Push Chain only. Supports two outbound token flows via a single entry point
+ *         (`sendUniversalTxOutbound`):
+ *
+ *         1. **PRC20 outbound** — Burns PRC20 tokens on Push Chain; TSS unlocks the corresponding
+ *            ERC-20 (or native) on the origin chain. TX_TYPE is inferred from request structure:
+ *            FUNDS, FUNDS_AND_PAYLOAD, or GAS_AND_PAYLOAD.
+ *
+ *         2. **PC20 export** — Locks Push-native PC20 tokens in VaultPC20; TSS deploys/mints a
+ *            wrapped ERC-20 representation on the destination chain. Identified by a PC_20_SELECTOR
+ *            prefix in req.payload. Always emits TX_TYPE.FUNDS_AND_PAYLOAD.
+ *
+ *         Gas fees paid in native PC are swapped via UniversalCore — the gas-cost portion is burned
+ *         (freeing backing tokens for TSS relayers). The protocol fee is collected as native PC and
+ *         sent directly to VaultPC.
  */
 
 import { Errors } from "./libraries/Errors.sol";
 import { IPRC20 } from "./interfaces/IPRC20.sol";
 import { IVaultPC } from "./interfaces/IVaultPC.sol";
+import { IVaultPC20 } from "./interfaces/IVaultPC20.sol";
 import { IUniversalCore } from "./interfaces/IUniversalCore.sol";
 import { IUniversalGatewayPC } from "./interfaces/IUniversalGatewayPC.sol";
 import { TX_TYPE } from "./libraries/Types.sol";
-import { UniversalOutboundTxRequest } from "./libraries/TypesUGPC.sol";
+import { UniversalOutboundTxRequest, PC_20_SELECTOR } from "./libraries/TypesUGPC.sol";
+
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 
 import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
@@ -30,15 +45,19 @@ contract UniversalGatewayPC is
     PausableUpgradeable,
     IUniversalGatewayPC
 {
+    using SafeERC20 for IERC20;
+
     bytes32 public constant ROLE_MANAGER_ROLE = keccak256("ROLE_MANAGER_ROLE");
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
-    /// @notice MUTABLE — admin-updatable via updateUniversalCore.
+        /// @notice MUTABLE — admin-updatable via updateUniversalCore.
     address public universalCore;
-    /// @notice MUTABLE — admin-updatable via setVaultPC.
+    /// @notice MUTABLE — admin-updatable via updateVaultPC.
     IVaultPC public vaultPC;
     uint256 public nonce;
+    /// @notice MUTABLE — admin-updatable via updateVaultPC20.
+    IVaultPC20 public vaultPC20;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -100,11 +119,25 @@ contract UniversalGatewayPC is
         emit UniversalCoreUpdated(oldUniversalCore, _universalCore);
     }
 
+    /// @inheritdoc IUniversalGatewayPC
+    function updateVaultPC20(address _vaultPC20) external onlyRole(OPERATOR_ROLE) whenNotPaused {
+        if (_vaultPC20 == address(0)) revert Errors.ZeroAddress();
+        address oldVaultPC20 = address(vaultPC20);
+        vaultPC20 = IVaultPC20(_vaultPC20);
+        emit VaultPC20Updated(oldVaultPC20, _vaultPC20);
+    }
+
     // ==============================
     //    UGPC_2: OUTBOUND TX
     // ==============================
 
-    /// @inheritdoc IUniversalGatewayPC
+    /// @notice Send a universal outbound transaction from Push Chain to an external chain.
+    /// @dev    Unified entry point for PRC20 outbound and PC20 export flows.
+    ///         - **PRC20**: Burns tokens; TX_TYPE inferred from amount/payload presence.
+    ///         - **PC20**: Detected when payload starts with PC_20_SELECTOR. Locks tokens in
+    ///           VaultPC20 and always emits TX_TYPE.FUNDS_AND_PAYLOAD. gasPrice override is
+    ///           not supported on the PC20 path.
+    /// @param req UniversalOutboundTxRequest with all transaction parameters.
     function sendUniversalTxOutbound(UniversalOutboundTxRequest calldata req)
         external
         payable
@@ -113,42 +146,66 @@ contract UniversalGatewayPC is
     {
         _validateParams(req.token, req.revertRecipient);
 
-        TX_TYPE txType = _fetchTxType(req);
+        bool isPC20 = _isPC20Export(req.payload);
 
-        (
-            address gasToken,
-            uint256 gasFee,
-            uint256 gasLimitUsed,
-            uint256 protocolFee,
-            uint256 gasPrice,
-            string memory chainNamespace
-        ) = _fetchOutboundTxGasAndFees(req.token, req.gasLimit);
+        TX_TYPE txType;
+        address gasToken;
+        uint256 gasFee;
+        uint256 gasLimitUsed;
+        uint256 protocolFee;
+        uint256 gasPrice;
+        string memory chainNamespace;
 
-        if (req.gasPrice > 0) {
-            if (req.gasPrice < gasPrice) revert Errors.GasPriceBelowBase();
-            gasPrice = req.gasPrice;
-            gasFee = gasPrice * gasLimitUsed;
-        }
+        if (isPC20) {
+            if (req.amount == 0) revert Errors.ZeroAmount();
 
-        if (req.amount > 0) {
-            _burnPRC20(msg.sender, req.token, req.amount);
+            string memory destChainNamespace = _decodePC20ChainNamespace(req.payload);
+            if (bytes(destChainNamespace).length == 0) revert Errors.InvalidData();
+
+            _validateERC20Metadata(req.token);
+
+            (gasToken, gasFee, protocolFee, gasPrice, gasLimitUsed) =
+                _fetchPC20ExportGasAndFees(destChainNamespace, req.gasLimit, req.token);
+
+            chainNamespace = destChainNamespace;
+            txType = TX_TYPE.FUNDS_AND_PAYLOAD;
+
+            IERC20(req.token).safeTransferFrom(msg.sender, address(vaultPC20), req.amount);
+            vaultPC20.recordLock(req.token, req.amount);
+        } else {
+            txType = _fetchTxType(req);
+
+            (gasToken, gasFee, gasLimitUsed, protocolFee, gasPrice, chainNamespace) =
+                _fetchOutboundTxGasAndFees(req.token, req.gasLimit);
+
+            if (req.gasPrice > 0) {
+                if (req.gasPrice < gasPrice) revert Errors.GasPriceBelowBase();
+                gasPrice = req.gasPrice;
+                gasFee = gasPrice * gasLimitUsed;
+            }
+
+            if (req.amount > 0) {
+                _burnPRC20(msg.sender, req.token, req.amount);
+            }
         }
 
         if (msg.value < protocolFee) revert Errors.InvalidInput();
         if (protocolFee > 0) {
-            (bool ok,) = address(vaultPC).call{ value: protocolFee }("");
+            (bool ok,) = address(vaultPC).call{value: protocolFee}("");
             if (!ok) revert Errors.InvalidInput();
         }
         uint256 pcForSwap = msg.value - protocolFee;
+
         if (req.maxPCForGas != 0) {
             if (req.maxPCForGas > pcForSwap) revert Errors.InvalidAmount();
             uint256 excess = pcForSwap - req.maxPCForGas;
             pcForSwap = req.maxPCForGas;
             if (excess > 0) {
-                (bool refundOk,) = msg.sender.call{ value: excess }("");
+                (bool refundOk,) = msg.sender.call{value: excess}("");
                 if (!refundOk) revert Errors.WithdrawFailed();
             }
         }
+
         _swapAndCollectFees(gasToken, pcForSwap, gasFee);
 
         uint256 currentNonce = nonce;
@@ -156,7 +213,8 @@ contract UniversalGatewayPC is
 
         bytes32 subTxId = keccak256(
             abi.encode(
-                msg.sender, req.recipient, req.token, req.amount, keccak256(req.payload), chainNamespace, currentNonce
+                msg.sender, req.recipient, req.token, req.amount,
+                keccak256(req.payload), chainNamespace, currentNonce
             )
         );
 
@@ -229,6 +287,63 @@ contract UniversalGatewayPC is
         revert Errors.InvalidInput();
     }
 
+    /// @dev Returns true when the first 4 bytes of payload match PC_20_SELECTOR.
+    ///      Payloads shorter than 4 bytes are never PC20 exports.
+    function _isPC20Export(bytes calldata payload) internal pure returns (bool) {
+        if (payload.length < 4) return false;
+        return bytes4(payload[:4]) == PC_20_SELECTOR;
+    }
+
+    /// @dev Extracts destChainNamespace from a PC20-encoded payload.
+    ///      Expected layout: [PC_20_SELECTOR (4 B)][abi.encode(destChainNamespace, name, symbol, decimals)][user calldata…]
+    ///      Only the first ABI-encoded string is decoded; name, symbol and decimals are passed through
+    ///      opaquely to the destination chain, which bounds name/symbol length when deploying the wrapper.
+    function _decodePC20ChainNamespace(bytes calldata payload)
+        internal
+        pure
+        returns (string memory destChainNamespace)
+    {
+        (destChainNamespace) = abi.decode(payload[4:], (string));
+    }
+
+    /// @dev            Basic sanity checks on a PC20 source token, performed without requiring the
+    ///                 token to implement any Push-specific interface.
+    ///
+    ///                 Primary probe is allowance(address,address): it is mandatory for every ERC-20,
+    ///                 is absent from ERC-721/ERC-1155, and is the exact capability the export path
+    ///                 relies on via safeTransferFrom. balanceOf and approve are NOT usable as
+    ///                 discriminators — their selectors are identical across ERC-20 and ERC-721
+    ///                 (balanceOf(address) is 0x70a08231 in both), so an NFT would pass.
+    ///
+    ///                 Secondary probe rejects anything advertising ERC-721 via ERC-165. ERC-20s do
+    ///                 not implement ERC-165, so a revert or false here is the normal passing case.
+    ///
+    ///                 Deliberately does NOT require name()/symbol()/decimals(): EIP-20 marks them
+    ///                 OPTIONAL, and some tokens (e.g. MKR) return bytes32 rather than string.
+    ///                 Requiring them would reject valid tokens. Metadata forwarded to the
+    ///                 destination comes from the export payload, not from the token.
+    ///
+    ///                 This is a type check, not a trust check: any contract can implement these
+    ///                 functions and lie. Fund-safety rests on VaultPC20's balance accounting.
+    ///
+    /// @param token    PC20 source token on Push Chain.
+    function _validateERC20Metadata(address token) internal view {
+        if (token.code.length == 0) revert Errors.NotSupported();
+
+        (bool ok, bytes memory data) =
+            token.staticcall(abi.encodeWithSelector(IERC20.allowance.selector, address(this), address(this)));
+        if (!ok || data.length < 32) revert Errors.NotSupported();
+
+        // ERC-165 interface id for IERC721.
+        bytes4 erc721InterfaceId = 0x80ac58cd;
+
+        (bool isERC165, bytes memory erc721Data) =
+            token.staticcall(abi.encodeWithSelector(IERC165.supportsInterface.selector, erc721InterfaceId));
+        if (isERC165 && erc721Data.length >= 32 && abi.decode(erc721Data, (bool))) {
+            revert Errors.NotSupported();
+        }
+    }
+
     /// @dev                    Validates token and revertRecipient are non-zero.
     /// @param token            Token address to validate.
     /// @param revertRecipient  Address to receive funds in case of revert.
@@ -279,6 +394,33 @@ contract UniversalGatewayPC is
         if (pcAmount == 0) revert Errors.ZeroAmount();
 
         IUniversalCore(universalCore).swapAndBurnGas{ value: pcAmount }(gasToken, 0, gasFee, 0, msg.sender);
+    }
+
+    /// @dev                    Fetch gas fee quote for a PC20 export from UniversalCore.
+    /// @param destChainNamespace Destination chain (CAIP-2)
+    /// @param gasLimit          Caller-requested gas limit (0 = default)
+    /// @param pc20Token         PC20 token address (for protocol fee lookup)
+    function _fetchPC20ExportGasAndFees(
+        string memory destChainNamespace,
+        uint256 gasLimit,
+        address pc20Token
+    )
+        internal
+        view
+        returns (
+            address gasToken,
+            uint256 gasFee,
+            uint256 protocolFee,
+            uint256 gasPrice,
+            uint256 gasLimitUsed
+        )
+    {
+        (gasToken, gasFee, protocolFee, gasPrice,, gasLimitUsed,) =
+            IUniversalCore(universalCore).getPC20ExportGasAndFees(destChainNamespace, gasLimit, pc20Token);
+
+        if (gasToken == address(0) || gasFee + protocolFee == 0) {
+            revert Errors.InvalidData();
+        }
     }
 
     /// @dev                    Pulls PRC20 from `from` into this contract, then burns them.

@@ -132,6 +132,7 @@ function decodeUniversalTxFinalizedEvent(e) {
         event: "UniversalTxFinalized",
         sub_tx_id: fmt32(e.sub_tx_id ?? e.subTxId),
         universal_tx_id: fmt32(e.universal_tx_id ?? e.universalTxId),
+        wrapper_address: (e.wrapper_address ?? e.wrapperAddress)?.toString(),
         gas_fee: Number(e.gas_fee ?? e.gasFee ?? 0),
         gas_used: Number(e.gas_used ?? e.gasUsed ?? 0),
         gas_to_refund: Number(e.gas_to_refund ?? e.gasToRefund ?? 0),
@@ -208,6 +209,7 @@ function printUniversalTxFinalized(d, idx, total) {
     console.log(`  ┌─ Event ${idx} / ${total}  [UniversalTxFinalized]`);
     console.log(`  │  sub_tx_id:       ${d.sub_tx_id}`);
     console.log(`  │  universal_tx_id: ${d.universal_tx_id}`);
+    console.log(`  │  wrapper_address: ${d.wrapper_address}`);
     console.log(`  │  gas_fee:         ${d.gas_fee} (${lamportsToSol(d.gas_fee)})`);
     console.log(`  │  gas_used:        ${d.gas_used} (${lamportsToSol(d.gas_used)})`);
     console.log(`  │  gas_to_refund:   ${d.gas_to_refund} (${lamportsToSol(d.gas_to_refund)})`);
@@ -315,11 +317,25 @@ async function decodeOutboundTx(sig) {
         console.log(`  └─`);
     }
 
-    // Decode events
-    const dataLogs = logs.filter(l => l.startsWith("Program data: "));
-    const events = dataLogs
-        .map(l => { try { return coder.decode(l.replace("Program data: ", "")); } catch { return null; } })
-        .filter(Boolean);
+    // Decode events from emit_cpi inner instructions.
+    // Layout: [EVENT_IX_TAG_LE: 8 bytes] || [event_discriminator: 8 bytes] || [borsh(event)].
+    // coder.decode accepts base64 of the last two fields; strip the 8-byte tag first.
+    const programIdx = allKeys.findIndex(k => k === PROGRAM_ID);
+    const events = [];
+    if (programIdx !== -1) {
+        const bs58 = anchor.utils.bytes.bs58;
+        for (const inner of tx.meta?.innerInstructions ?? []) {
+            for (const ix of inner.instructions) {
+                if (ix.programIdIndex !== programIdx) continue;
+                const raw = Buffer.from(bs58.decode(ix.data));
+                if (raw.length < 16) continue;
+                try {
+                    const ev = coder.decode(raw.slice(8).toString("base64"));
+                    if (ev) events.push(ev);
+                } catch { /* not an event */ }
+            }
+        }
+    }
 
     const gatewayEvents = events.filter(e =>
         ["UniversalTx", "UniversalTxFinalized", "RevertUniversalTx"].includes(e.name)

@@ -10,6 +10,8 @@ export enum TssInstruction {
   Execute = 2, // Unified execute (vault→CEA→CPI)
   Revert = 3,  // Unified revert (SOL or SPL)
   Rescue = 4,  // Emergency rescue (SOL or SPL)
+  Pc20Finalize = 5, // PC20 export finalize (mint wrapped)
+  Pc20BurnRevert = 6, // PC20 burn revert (remint)
 }
 
 // Default to Devnet cluster pubkey if not specified
@@ -39,6 +41,7 @@ const PRIVATE_KEY = Buffer.from(privateKeyHex, "hex");
 const PUBLIC_KEY = secp.getPublicKey(PRIVATE_KEY, false).slice(1); // remove 0x04 prefix
 const ETH_ADDRESS_HEX = keccak_256(PUBLIC_KEY).slice(-40);
 const ETH_ADDRESS_BYTES = Buffer.from(ETH_ADDRESS_HEX, "hex");
+const PC20_SELECTOR = Buffer.from("PC20", "ascii");
 
 export function getTssEthAddress(): number[] {
   return Array.from(ETH_ADDRESS_BYTES);
@@ -248,13 +251,15 @@ export function buildRescueAdditionalData(
   universalTxId: BytesLike,
   recipient: PublicKey,
   gasFee: bigint = BigInt(0),
-  tokenMint?: PublicKey
+  tokenMint?: PublicKey,
+  pc20SourceAsset?: BytesLike
 ): BytesLike[] {
   const gasFeeBuf = Buffer.alloc(8);
   gasFeeBuf.writeBigUInt64BE(gasFee, 0);
 
   if (tokenMint) {
-    return [subTxId, universalTxId, tokenMint.toBuffer(), recipient.toBuffer(), gasFeeBuf];
+    const base = [subTxId, universalTxId, tokenMint.toBuffer(), recipient.toBuffer(), gasFeeBuf];
+    return pc20SourceAsset ? [...base, PC20_SELECTOR, pc20SourceAsset] : base;
   }
   return [subTxId, universalTxId, recipient.toBuffer(), gasFeeBuf];
 }
@@ -269,14 +274,15 @@ export function buildRevertAdditionalData(
   recipient: PublicKey,
   revertMsg: Uint8Array,
   gasFee: bigint = BigInt(0),
-  tokenMint?: PublicKey
+  tokenMint?: PublicKey,
+  pc20SourceAsset?: BytesLike
 ): BytesLike[] {
   const gasFeeBuf = Buffer.alloc(8);
   gasFeeBuf.writeBigUInt64BE(gasFee, 0);
   const revertMsgHash = Buffer.from(keccak_256.arrayBuffer(Buffer.from(revertMsg)));
 
   if (tokenMint) {
-    return [
+    const base = [
       subTxId,
       universalTxId,
       tokenMint.toBuffer(),
@@ -284,7 +290,74 @@ export function buildRevertAdditionalData(
       gasFeeBuf,
       revertMsgHash,
     ];
+    return pc20SourceAsset ? [...base, PC20_SELECTOR, pc20SourceAsset] : base;
   }
 
   return [subTxId, universalTxId, recipient.toBuffer(), gasFeeBuf, revertMsgHash];
+}
+
+export function serializeStringForSignature(value: string): Buffer {
+  const bytes = Buffer.from(value, "utf8");
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(bytes.length, 0);
+  return Buffer.concat([len, bytes]);
+}
+
+export function serializeBytesForSignature(value: Uint8Array | Buffer): Buffer {
+  const bytes = Buffer.from(value);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(bytes.length, 0);
+  return Buffer.concat([len, bytes]);
+}
+
+export function buildPc20FinalizeAdditionalData(params: {
+  universalTxId: BytesLike;
+  subTxId: BytesLike;
+  sourceAsset: BytesLike;
+  pushAccount: BytesLike;
+  recipient: PublicKey;
+  name: string;
+  symbol: string;
+  decimals: number;
+  gasFee: bigint;
+  userData?: Uint8Array | Buffer;
+}): BytesLike[] {
+  const gasFeeBuf = Buffer.alloc(8);
+  gasFeeBuf.writeBigUInt64BE(params.gasFee, 0);
+  const nameBuf = serializeStringForSignature(params.name);
+  const symbolBuf = serializeStringForSignature(params.symbol);
+  const base: BytesLike[] = [
+    params.subTxId,
+    params.universalTxId,
+    params.pushAccount,
+    params.sourceAsset,
+    params.recipient.toBuffer(),
+    nameBuf,
+    symbolBuf,
+    Buffer.from([params.decimals]),
+    gasFeeBuf,
+  ];
+
+  if (!params.userData) {
+    return base;
+  }
+  return [...base, serializeBytesForSignature(params.userData)];
+}
+
+export function buildPc20BurnRevertAdditionalData(
+  subTxId: BytesLike,
+  originalBurnSubTxId: BytesLike,
+  sourceAsset: BytesLike,
+  revertRecipient: PublicKey,
+  gasFee: bigint
+): BytesLike[] {
+  const gasFeeBuf = Buffer.alloc(8);
+  gasFeeBuf.writeBigUInt64BE(gasFee, 0);
+  return [
+    subTxId,
+    originalBurnSubTxId,
+    sourceAsset,
+    revertRecipient.toBuffer(),
+    gasFeeBuf,
+  ];
 }

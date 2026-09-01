@@ -98,6 +98,11 @@ interface IUniversalGateway {
         RevertInstructions revertInstruction
     );
 
+    /// @notice                  PC20Factory updated event
+    /// @param oldFactory        Previous PC20Factory address
+    /// @param newFactory        New PC20Factory address
+    event PC20FactoryUpdated(address indexed oldFactory, address indexed newFactory);
+
     // ==============================
     //  UG_2: UNIVERSAL TRANSACTION
     // ==============================
@@ -191,6 +196,10 @@ interface IUniversalGateway {
         uint256 amount,
         RevertInstructions calldata revertInstruction
     ) external payable;
+
+    /// @notice                  Update the PC20Factory address.
+    /// @param newFactory        New PC20Factory address
+    function updatePC20Factory(address newFactory) external;
 
     // ==============================
     //    UG_4: PUBLIC HELPERS

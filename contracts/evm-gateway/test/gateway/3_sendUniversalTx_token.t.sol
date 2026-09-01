@@ -330,7 +330,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             address(0),
             address(0),
             gasAmount, // nativeValue from unwrap
-            bytes(""),
+            _pp(bytes("")),
             req.revertRecipient,
             TX_TYPE.GAS,
             bytes(""),
@@ -409,7 +409,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             address(0),
             address(0),
             expectedETH, // nativeValue from swap = 1 ETH
-            bytes(""),
+            _pp(bytes("")),
             req.revertRecipient,
             TX_TYPE.GAS,
             bytes(""),
@@ -452,7 +452,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             address(0),
             address(0),
             expectedETH,
-            payloadBytes,
+            _pp(payloadBytes),
             req.revertRecipient,
             TX_TYPE.GAS_AND_PAYLOAD,
             bytes(""),
@@ -492,7 +492,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             address(0),
             address(usdc), // ERC20 bridge token
             fundsAmount, // Funds amount, not gas amount
-            bytes(""),
+            _pp(bytes("")),
             req.revertRecipient,
             TX_TYPE.FUNDS,
             bytes(""),
@@ -534,7 +534,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             address(0),
             address(usdc),
             fundsAmount,
-            payloadBytes,
+            _pp(payloadBytes),
             req.revertRecipient,
             TX_TYPE.FUNDS_AND_PAYLOAD,
             bytes(""),
@@ -681,7 +681,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
         // Act: Should succeed with default deadline
         vm.expectEmit(true, true, false, true, address(gatewayTemp));
         emit UniversalTx(
-            user1, address(0), address(0), expectedETH, bytes(""), req.revertRecipient, TX_TYPE.GAS, bytes(""), false
+            user1, address(0), address(0), expectedETH, _pp(bytes("")), req.revertRecipient, TX_TYPE.GAS, bytes(""), false
         );
 
         vm.prank(user1);
@@ -748,7 +748,7 @@ contract GatewaySendUniversalTxTokenGasTest is BaseTest {
             address(0),
             address(0),
             expectedETH,
-            bytes(""),
+            _pp(bytes("")),
             req.revertRecipient,
             TX_TYPE.GAS,
             customSignature, // Preserved
