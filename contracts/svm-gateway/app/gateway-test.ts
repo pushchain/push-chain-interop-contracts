@@ -4012,8 +4012,18 @@ async function run() {
 
     // Create real message hash for revert withdraw (instruction_id = 3)
     const instructionId = 3;
-    const amount = 1000000; // 0.001 SOL
-    const revertGasFee = 1000000; // 0.001 SOL gas fee for revert
+    const amount = 1000000; // 0.001 SOL — user funds being returned
+    // gas_fee is a signed CEILING, not the payment. On-chain measures the actual cost:
+    //   gas_used = SIGNATURE_FEE (5000) + ExecutedSubTx rent (~890,880)
+    //            + (recipient ATA rent ~2,039,280 IF the legacy SPL path had to create it)
+    //            + (PC20 remint recipient ATA rent IF the PC20 path had to create it)
+    // The signer must size gas_fee ≥ measured; excess stays in FeeVault. For legacy SPL
+    // or PC20 remint, pre-flight `getAccountInfo(canonical ATA)` and add ATA rent when null.
+    const SIGNATURE_FEE = 5_000;
+    const executedSubTxRent = await connection.getMinimumBalanceForRentExemption(8);
+    // This tx is a native SOL revert (no ATA); no ATA-rent term needed.
+    const revertMeasuredMin = SIGNATURE_FEE + executedSubTxRent;
+    const revertGasFee = revertMeasuredMin + 100_000; // 100k lamports of headroom
     const chainIdString = tssAccount.chainId; // String: Solana cluster pubkey
 
     // Generate universal_tx_id for revert
@@ -4244,6 +4254,12 @@ async function run() {
     const tssAccount16: any = await (program.account as any).tssPda.fetch(tssPda);
     const revertMsg16c = Buffer.from("deadline-test-revert");
 
+    // gas_fee sized as the same signed ceiling shown above (SIG_FEE + ExecutedSubTx rent +
+    // headroom). This test never reaches the gas-cap check — deadline validation fires first
+    // — but we keep the value consistent with the reference pattern.
+    const deadlineTestRent16 = await connection.getMinimumBalanceForRentExemption(8);
+    const deadlineTestGasFee = 5_000 + deadlineTestRent16 + 100_000;
+
     const sig16c = await signTssMessage({
       instruction: TssInstruction.Revert,
       amount: BigInt(1_000_000),
@@ -4254,7 +4270,7 @@ async function run() {
         new Uint8Array(universalTxId16c),
         adminKeypair.publicKey,
         revertMsg16c,
-        BigInt(1_000_000)
+        BigInt(deadlineTestGasFee)
       ),
     });
 
@@ -4269,7 +4285,7 @@ async function run() {
           subTxId16c, Array.from(universalTxId16c),
           new anchor.BN(1_000_000),
           { revertRecipient: adminKeypair.publicKey, revertMsg: revertMsg16c },
-          new anchor.BN(1_000_000),
+          new anchor.BN(deadlineTestGasFee),
           new anchor.BN(PAST_DEADLINE.toString()),
           Array.from(sig16c.signature), sig16c.recoveryId, Array.from(sig16c.messageHash)
         )

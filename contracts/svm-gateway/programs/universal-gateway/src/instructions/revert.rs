@@ -353,7 +353,6 @@ pub fn revert_universal_tx<'info>(
             .as_ref()
             .map_or(Pubkey::default(), |m| m.key()),
         amount,
-        gas_used: reimbursement,
         revert_instruction: revert_instruction.clone(),
     });
 

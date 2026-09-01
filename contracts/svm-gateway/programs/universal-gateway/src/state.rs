@@ -263,7 +263,6 @@ pub struct RevertUniversalTx {
     pub revert_recipient: Pubkey,  // Recipient of reverted funds
     pub token: Pubkey,             // Token address (Pubkey::default() for native SOL)
     pub amount: u64,               // Amount
-    pub gas_used: u64,             // Actual lamports reimbursed to the relayer from fee_vault
     pub revert_instruction: RevertInstructions,
 }
 
