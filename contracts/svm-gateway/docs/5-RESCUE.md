@@ -72,19 +72,21 @@ sub_tx_id[32] | universal_tx_id[32] | mint[32] | recipient[32] | gas_fee (8 BE)
 | `caller` | Required (signer) | Required (signer) |
 | `system_program` | Required | Required |
 | `token_vault` | None | Required (vault ATA for mint) |
-| `recipient_token_account` | None | Required (must exist) |
+| `recipient_token_account` | None | Required — canonical ATA for `(recipient, mint)`; auto-created if missing |
 | `token_mint` | None | Required |
 | `token_program` | None | Required |
+| `associated_token_program` | Ignored | Required (used to create recipient ATA if missing) |
+| `rent` | Ignored | Required (used to create recipient ATA if missing) |
 
-For SOL, pass `token_vault`, `recipient_token_account`, `token_mint`, `token_program` as `null`.
+For SOL, pass `token_vault`, `recipient_token_account`, `token_mint`, `token_program` as `null`. `associated_token_program` and `rent` are only consumed on the legacy SPL path; on native/PC20 they are ignored (Anchor JS may auto-populate).
 
 **Cross-account constraints (SPL):**
 - `token_vault` must be the canonical ATA for `(vault, token_mint)`
 - `token_vault.mint == token_mint.key()`
-- `recipient_token_account.mint == token_mint.key()`
-- `recipient_token_account.owner == recipient.key()`
+- `recipient_token_account` must be `get_associated_token_address(recipient, token_mint)` (checked inside `ensure_associated_token_account`)
+- After `ensure_associated_token_account` runs (create-if-missing), on-chain re-parses the account and requires `mint == token_mint.key()` and `owner == recipient.key()`.
 
-The `recipient` account in the TSS message is the wallet pubkey (owner), not the ATA. The recipient ATA must already exist — rescue does not create it.
+The `recipient` account in the TSS message is the wallet pubkey (owner), not the ATA. If the canonical ATA does not exist on-chain, the gateway creates it with `caller` (relayer) as rent-payer; the rent is folded into measured `gas_used` and reimbursed atomically from `vault` (which is 1:1 backed by the Push-side burn). The Push-side signer must size `gas_fee` to cover ATA rent when the ATA does not yet exist — otherwise `InsufficientGasBudget` trips and no state changes.
 
 ---
 

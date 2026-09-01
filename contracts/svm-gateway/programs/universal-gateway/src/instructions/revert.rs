@@ -9,7 +9,7 @@ use crate::utils::{
 use crate::{errors::*, state::*};
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::keccak::hash;
-use anchor_spl::associated_token::spl_associated_token_account;
+use anchor_spl::associated_token::{spl_associated_token_account, AssociatedToken};
 use anchor_spl::token::{Mint, Token, TokenAccount};
 
 const SPL_TOKEN_ACCOUNT_LEN: usize = 165;
@@ -75,13 +75,22 @@ pub struct RevertUniversalTx<'info> {
     )]
     pub token_vault: Option<Account<'info, TokenAccount>>,
 
-    /// Recipient token account — must be owned by recipient and match token_mint.
+    /// Recipient token account — created via manual CPI if missing (legacy SPL path).
+    /// Address, mint, and owner are validated in the handler after create.
     #[account(mut)]
-    pub recipient_token_account: Option<Account<'info, TokenAccount>>,
+    /// CHECK: validated in handler via `parse_token_account` post-create.
+    pub recipient_token_account: Option<UncheckedAccount<'info>>,
 
     pub token_mint: Option<Account<'info, Mint>>,
 
     pub token_program: Option<Program<'info, Token>>,
+
+    /// Required on the legacy SPL path (create recipient ATA if missing). Must be None on
+    /// native and PC20 paths (PC20 sources atp/rent from `remaining_accounts`).
+    pub associated_token_program: Option<Program<'info, AssociatedToken>>,
+
+    /// Required on the legacy SPL path. Must be None on native and PC20 paths.
+    pub rent: Option<Sysvar<'info, Rent>>,
 }
 
 pub fn revert_universal_tx<'info>(
@@ -120,6 +129,10 @@ pub fn revert_universal_tx<'info>(
         .unwrap_or(false);
 
     // --- Account presence + cross-account consistency ---
+    // Note: atp and rent are typed as `Option<Program<AssociatedToken>>` / `Option<Sysvar<Rent>>`
+    // — Anchor validates the program id / sysvar id when Some, and the Anchor JS client
+    // auto-populates these slots. We therefore don't gate on `is_none()` for non-SPL paths
+    // (they may arrive as Some from auto-population and are simply unused).
     if is_native {
         require!(
             ctx.accounts.token_vault.is_none()
@@ -145,23 +158,23 @@ pub fn revert_universal_tx<'info>(
             GatewayError::AccountListLengthMismatch
         );
     } else {
+        // Legacy SPL: token_vault + recipient_token_account + token_program + atp + rent all required.
+        // Recipient ATA mint/owner are validated below, after ensure_associated_token_account,
+        // so the check works uniformly whether the ATA already existed or was created.
         let token_vault = ctx
             .accounts
             .token_vault
             .as_ref()
             .ok_or(error!(GatewayError::InvalidAccount))?;
-        let recipient_ta = ctx
-            .accounts
-            .recipient_token_account
-            .as_ref()
-            .ok_or(error!(GatewayError::InvalidAccount))?;
+        require!(
+            ctx.accounts.recipient_token_account.is_some()
+                && ctx.accounts.token_program.is_some()
+                && ctx.accounts.associated_token_program.is_some()
+                && ctx.accounts.rent.is_some(),
+            GatewayError::InvalidAccount
+        );
         let mint_key = ctx.accounts.token_mint.as_ref().unwrap().key(); // Safe: !is_native ⟹ token_mint.is_some()
         require!(token_vault.mint == mint_key, GatewayError::InvalidMint);
-        require!(recipient_ta.mint == mint_key, GatewayError::InvalidMint);
-        require!(
-            recipient_ta.owner == recipient,
-            GatewayError::InvalidRecipient
-        );
     }
     let pc20_source_asset = if is_pc20 {
         Some(read_pc20_source_asset(
@@ -240,7 +253,7 @@ pub fn revert_universal_tx<'info>(
 
     let seeds: &[&[u8]] = &[VAULT_SEED, &[ctx.accounts.config.vault_bump]];
 
-    let pc20_recipient_ata_lamports_paid = if is_native {
+    let recipient_ata_lamports_paid = if is_native {
         pda_system_transfer(
             &ctx.accounts.vault.to_account_info(),
             &ctx.accounts.recipient.to_account_info(),
@@ -258,36 +271,77 @@ pub fn revert_universal_tx<'info>(
             amount,
         )?
     } else {
+        // Legacy SPL: ensure recipient ATA exists (create-if-missing) before transferring.
+        // Rent is folded into measured gas_used below so the caller is reimbursed atomically.
+        let recipient_ta = ctx
+            .accounts
+            .recipient_token_account
+            .as_ref()
+            .unwrap()
+            .to_account_info();
+        let mint_info = ctx.accounts.token_mint.as_ref().unwrap().to_account_info();
+        let token_program_info = ctx
+            .accounts
+            .token_program
+            .as_ref()
+            .unwrap()
+            .to_account_info();
+        let atp_info = ctx
+            .accounts
+            .associated_token_program
+            .as_ref()
+            .unwrap()
+            .to_account_info();
+        let rent_info = ctx.accounts.rent.as_ref().unwrap().to_account_info();
+
+        let recipient_ata_lamports_before = recipient_ta.lamports();
+        let ata_created = ensure_associated_token_account(
+            &ctx.accounts.caller.to_account_info(),
+            &recipient_ta,
+            &ctx.accounts.recipient.to_account_info(),
+            &mint_info,
+            &ctx.accounts.system_program.to_account_info(),
+            &token_program_info,
+            &atp_info,
+            &rent_info,
+        )?;
+        let ata_rent_paid = if ata_created {
+            Rent::get()?
+                .minimum_balance(SPL_TOKEN_ACCOUNT_LEN)
+                .saturating_sub(recipient_ata_lamports_before)
+        } else {
+            0
+        };
+
+        // Post-create validation: matches the previous typed-slot invariants uniformly.
+        let parsed = parse_token_account(&recipient_ta)?;
+        require!(parsed.mint == mint_info.key(), GatewayError::InvalidMint);
+        require!(parsed.owner == recipient, GatewayError::InvalidRecipient);
+
         pda_spl_transfer(
             &ctx.accounts.token_vault.as_ref().unwrap().to_account_info(),
-            &ctx.accounts
-                .recipient_token_account
-                .as_ref()
-                .unwrap()
-                .to_account_info(),
+            &recipient_ta,
             &ctx.accounts.vault.to_account_info(),
             amount,
             seeds,
         )?;
-        0
+        ata_rent_paid
     };
 
-    // Reimbursement source stays fee_vault (SVM-originated inbound failure; the user already paid
-    // the inbound fee into fee_vault). Amount is unchanged from audit-main-fixes: full signed
-    // gas_fee for the legacy native/SPL/PRC20 paths, measured cost for the PC20 remint path.
-    let reimbursement = if is_pc20 {
-        let measured_gas_used = SIGNATURE_FEE_LAMPORTS
-            .checked_add(Rent::get()?.minimum_balance(ExecutedSubTx::LEN))
-            .and_then(|n| n.checked_add(pc20_recipient_ata_lamports_paid))
-            .ok_or(error!(GatewayError::InvalidAmount))?;
-        require!(
-            gas_fee >= measured_gas_used,
-            GatewayError::InsufficientGasBudget
-        );
-        measured_gas_used
-    } else {
-        gas_fee
-    };
+    // Reimbursement source stays fee_vault (SVM-originated inbound failure; the user already
+    // paid the inbound fee into fee_vault). The signed `gas_fee` is a ceiling for the
+    // two-phase commit with Push; the on-chain program measures actual cost and reimburses
+    // that, so the delta stays in fee_vault instead of being silently overpaid to the caller.
+    // Measured cost is uniform: signature fee + ExecutedSubTx rent, plus recipient ATA rent
+    // when this call had to create it (0 for native; may be non-zero for legacy SPL and PC20).
+    let reimbursement = SIGNATURE_FEE_LAMPORTS
+        .checked_add(Rent::get()?.minimum_balance(ExecutedSubTx::LEN))
+        .and_then(|n| n.checked_add(recipient_ata_lamports_paid))
+        .ok_or(error!(GatewayError::InvalidAmount))?;
+    require!(
+        gas_fee >= reimbursement,
+        GatewayError::InsufficientGasBudget
+    );
 
     emit_cpi!(crate::state::RevertUniversalTx {
         sub_tx_id,

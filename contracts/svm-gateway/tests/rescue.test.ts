@@ -804,14 +804,17 @@ describe("Universal Gateway - Rescue Tests", () => {
             );
         });
 
-        it("rejects SPL rescue with wrong recipient (token account owner mismatch)", async () => {
+        it("rejects SPL rescue when recipientTokenAccount is not the canonical ATA for recipient", async () => {
+            // Under the auto-create model, the on-chain program derives the canonical ATA from
+            // (recipient wallet, mint) and requires the passed slot to match. Passing an ATA
+            // owned by a different wallet no longer trips a typed-owner check — it trips the
+            // ATA-address check inside `ensure_associated_token_account`.
             const rescueRaw = BigInt(100) * TOKEN_MULTIPLIER;
             const subTxId = generateTxId();
             const executedSubTxPda = getExecutedTxPda(subTxId);
             const universalTxId = generateUniversalTxId();
             const wrongRecipient = Keypair.generate();
 
-            // Sign for the correct recipient
             const additional = buildRescueAdditionalData(
                 subTxId,
                 universalTxId,
@@ -825,7 +828,6 @@ describe("Universal Gateway - Rescue Tests", () => {
                 additional,
             });
 
-            // Pass a token account owned by wrongRecipient — owner check fires
             await expectRejection(
                 program.methods
                     .rescueFunds(
@@ -854,7 +856,7 @@ describe("Universal Gateway - Rescue Tests", () => {
                     })
                     .signers([relayer])
                     .rpc(),
-                "InvalidRecipient"
+                "InvalidAccount"
             );
         });
 
@@ -1057,6 +1059,150 @@ describe("Universal Gateway - Rescue Tests", () => {
                     .signers([relayer])
                     .rpc(),
                 "SignatureExpired"
+            );
+        });
+
+        it("auto-creates recipient ATA on SPL rescue to a fresh wallet and reimburses ATA rent", async () => {
+            // Rescue to a wallet whose canonical ATA does not exist. Program creates it,
+            // folds rent into measured gas_used, and pays the caller from `vault` (rescue is
+            // Push-paid via swapAndBurnGas; the signed gas_fee is the ceiling).
+            const rescueTokens = 100;
+            const rescueRaw = BigInt(rescueTokens) * TOKEN_MULTIPLIER;
+
+            const freshRecipient = Keypair.generate();
+            const recipientAta = getAssociatedTokenAddressSync(
+                mockUSDT.mint.publicKey,
+                freshRecipient.publicKey
+            );
+            const preAtaInfo = await provider.connection.getAccountInfo(recipientAta);
+            expect(preAtaInfo, "precondition: canonical ATA must not exist yet").to.be.null;
+
+            const ataRent = await provider.connection.getMinimumBalanceForRentExemption(165);
+            const measuredGasUsed = SIGNATURE_FEE_LAMPORTS + executedSubTxRent + ataRent;
+            const signedGasFee = BigInt(measuredGasUsed + 500_000); // generous cap
+
+            const subTxId = generateTxId();
+            const executedSubTxPda = getExecutedTxPda(subTxId);
+            const universalTxId = generateUniversalTxId();
+
+            const additional = buildRescueAdditionalData(
+                subTxId,
+                universalTxId,
+                freshRecipient.publicKey,
+                signedGasFee,
+                mockUSDT.mint.publicKey
+            );
+            const sig = await signTssMessageWithChainId({
+                instruction: TssInstruction.Rescue,
+                amount: rescueRaw,
+                additional,
+            });
+
+            const vaultSolBefore = await provider.connection.getBalance(vaultPda);
+            const callerBefore = await provider.connection.getBalance(relayer.publicKey);
+
+            await program.methods
+                .rescueFunds(
+                    Array.from(subTxId),
+                    Array.from(universalTxId),
+                    new anchor.BN(Number(rescueRaw)),
+                    new anchor.BN(signedGasFee.toString()),
+                    new anchor.BN(4102444800),
+                    sig.signature,
+                    sig.recoveryId,
+                    sig.messageHash,
+                )
+                .accountsPartial({
+                    config: configPda,
+                    vault: vaultPda,
+                    feeVault: feeVaultPda,
+                    tssPda,
+                    recipient: freshRecipient.publicKey,
+                    executedSubTx: executedSubTxPda,
+                    caller: relayer.publicKey,
+                    systemProgram: SystemProgram.programId,
+                    tokenVault: vaultUsdtAccount,
+                    recipientTokenAccount: recipientAta,
+                    tokenMint: mockUSDT.mint.publicKey,
+                    tokenProgram: TOKEN_PROGRAM_ID,
+                    associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+                    rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+                })
+                .signers([relayer])
+                .rpc();
+
+            const postAtaInfo = await provider.connection.getAccountInfo(recipientAta);
+            expect(postAtaInfo, "recipient ATA must exist after rescue").to.not.be.null;
+            expect(await mockUSDT.getBalance(recipientAta)).to.equal(rescueTokens);
+
+            const vaultSolAfter = await provider.connection.getBalance(vaultPda);
+            const callerAfter = await provider.connection.getBalance(relayer.publicKey);
+            // Vault paid rescue amount is SPL; only the measured gas_used comes out of SOL vault.
+            expect(vaultSolBefore - vaultSolAfter).to.equal(measuredGasUsed);
+            expect(callerAfter - callerBefore).to.be.closeTo(0, 50_000);
+        });
+
+        it("rejects SPL rescue to a fresh wallet when gas_fee cannot cover ATA rent (InsufficientGasBudget)", async () => {
+            const rescueRaw = BigInt(100) * TOKEN_MULTIPLIER;
+
+            const freshRecipient = Keypair.generate();
+            const recipientAta = getAssociatedTokenAddressSync(
+                mockUSDT.mint.publicKey,
+                freshRecipient.publicKey
+            );
+
+            // Size gas_fee to cover only base measured cost, not the ATA rent term. On-chain
+            // measured cost will exceed gas_fee → InsufficientGasBudget trips before any lamport moves.
+            const undersizedGasFee = BigInt(SIGNATURE_FEE_LAMPORTS + executedSubTxRent + 1);
+
+            const subTxId = generateTxId();
+            const executedSubTxPda = getExecutedTxPda(subTxId);
+            const universalTxId = generateUniversalTxId();
+
+            const additional = buildRescueAdditionalData(
+                subTxId,
+                universalTxId,
+                freshRecipient.publicKey,
+                undersizedGasFee,
+                mockUSDT.mint.publicKey
+            );
+            const sig = await signTssMessageWithChainId({
+                instruction: TssInstruction.Rescue,
+                amount: rescueRaw,
+                additional,
+            });
+
+            await expectRejection(
+                program.methods
+                    .rescueFunds(
+                        Array.from(subTxId),
+                        Array.from(universalTxId),
+                        new anchor.BN(Number(rescueRaw)),
+                        new anchor.BN(undersizedGasFee.toString()),
+                        new anchor.BN(4102444800),
+                        sig.signature,
+                        sig.recoveryId,
+                        sig.messageHash,
+                    )
+                    .accountsPartial({
+                        config: configPda,
+                        vault: vaultPda,
+                        feeVault: feeVaultPda,
+                        tssPda,
+                        recipient: freshRecipient.publicKey,
+                        executedSubTx: executedSubTxPda,
+                        caller: relayer.publicKey,
+                        systemProgram: SystemProgram.programId,
+                        tokenVault: vaultUsdtAccount,
+                        recipientTokenAccount: recipientAta,
+                        tokenMint: mockUSDT.mint.publicKey,
+                        tokenProgram: TOKEN_PROGRAM_ID,
+                        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+                        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+                    })
+                    .signers([relayer])
+                    .rpc(),
+                "InsufficientGasBudget"
             );
         });
     });

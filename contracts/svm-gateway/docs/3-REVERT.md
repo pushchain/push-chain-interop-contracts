@@ -12,15 +12,16 @@ Returns deposited funds to the user when a Push Chain transaction fails.
 
 1. Verify TSS signature
 2. Create `ExecutedSubTx` PDA (replay protection)
-3. `Vault → Recipient` (amount)
-4. Emit `RevertUniversalTx` (now includes `gas_used` = the amount actually reimbursed)
-5. `FeeVault → Caller` (UV reimbursement)
+3. `Vault → Recipient` (amount). On the legacy SPL path, the gateway auto-creates the recipient's canonical ATA if it does not yet exist (caller pays rent; folded into `gas_used`).
+4. Compute measured `gas_used = SIGNATURE_FEE + ExecutedSubTx rent + recipient_ata_rent (0 unless just created)` and require `gas_fee >= gas_used`.
+5. Emit `RevertUniversalTx` with the measured `gas_used`.
+6. `FeeVault → Caller` (UV reimbursement of `gas_used`).
 
-The funds transfer comes from the bridge `Vault`. The UV reimbursement comes from `FeeVault` — not from `Vault`. Revert is SVM-inbound-fee funded (the user paid the inbound fee into `FeeVault` when depositing), so this is the correct source and is **unchanged** from audit-main-fixes: the reimbursed amount is the full signed `gas_fee` for the legacy native/SPL/PRC20 paths, and the measured cost for the PC20 remint path. If `FeeVault` has insufficient balance, the reimbursement fails with `InsufficientFeePool`.
+The funds transfer comes from the bridge `Vault`. The UV reimbursement comes from `FeeVault` — not from `Vault`. Revert is SVM-inbound-fee funded (the user paid the inbound fee into `FeeVault` when depositing), so this is the correct source. The reimbursement model is uniformly **measured** across native, legacy SPL, and PC20 paths: the signed `gas_fee` is a ceiling, not the payment amount. If `FeeVault` cannot cover `gas_used`, the tx fails with `InsufficientFeePool`; if `gas_fee < gas_used`, it fails with `InsufficientGasBudget` before any lamports move.
 
 > Contrast with `rescue_funds`, which is Push-initiated (gas burned on Push via `swapAndBurnGas`) and therefore reimburses from `Vault`, not `FeeVault`. See `5-RESCUE.md`.
 
-The event now carries `gas_used` (the reimbursed amount) — an IDL-breaking layout addition; regenerate types. It is emitted after the funds transfer but before the UV reimbursement.
+The event carries `gas_used` (the reimbursed amount) — an IDL-breaking layout addition; regenerate types. It is emitted after the funds transfer but before the UV reimbursement so Push can reconcile the two-phase commit (Push refunds `gas_fee - gas_used` on its side).
 
 ---
 
@@ -62,6 +63,9 @@ The `recipient` must match the flat `revert_recipient: Pubkey` from the original
 | `TssAuthFailed` | Signature invalid or TSS address mismatch |
 | `MessageHashMismatch` | Message reconstruction mismatch |
 | account init failure | `sub_tx_id` reused — `ExecutedSubTx` PDA already exists |
-| `InvalidRecipient` | Recipient is zero address; or doesn't match original `revert_recipient`; or (SPL) recipient ATA owner doesn't match `revert_recipient` |
+| `InvalidRecipient` | Recipient is zero address; or doesn't match original `revert_recipient`; or (SPL) post-create recipient ATA owner doesn't match `revert_recipient` |
 | `InvalidMint` | Recipient ATA mint doesn't match `token_mint` |
+| `InvalidAccount` | Legacy SPL: passed `recipient_token_account` is not the canonical ATA for `(recipient, mint)`; or a required optional slot is missing |
+| `InsufficientGasBudget` | Signed `gas_fee` is less than the measured `gas_used` |
+| `InsufficientFeePool` | `FeeVault` cannot cover `gas_used` above rent-exempt minimum |
 | `Paused` | Gateway is paused |
