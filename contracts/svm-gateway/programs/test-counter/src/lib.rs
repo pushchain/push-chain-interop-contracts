@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
-use anchor_spl::associated_token::AssociatedToken;
+use anchor_lang::solana_program::program_pack::Pack;
+use anchor_spl::associated_token::{spl_associated_token_account, AssociatedToken};
 use anchor_spl::token::{self, spl_token, Token, TokenAccount};
 
 declare_id!("6Hqn3x7nih8SsReHTfDeZzkQDTBXUhp43NZhbQeL3iG1");
@@ -452,6 +453,97 @@ pub mod test_counter {
                 )?;
             }
 
+            // G1: create a canonical CEA-owned ATA inside the CPI (for a mint whose
+            // canonical CEA ATA does not exist), then delegate it.
+            1 => {
+                let create_ix =
+                    spl_associated_token_account::instruction::create_associated_token_account(
+                        cea.key,
+                        cea.key,
+                        ctx.accounts.mint.key,
+                        token_program.key,
+                    );
+                invoke(
+                    &create_ix,
+                    &[
+                        cea.to_account_info(),
+                        cea_ata.to_account_info(),
+                        ctx.accounts.mint.to_account_info(),
+                        system_program.to_account_info(),
+                        token_program.to_account_info(),
+                        ctx.accounts.associated_token_program.to_account_info(),
+                    ],
+                )?;
+                let approve_ix = spl_token::instruction::approve(
+                    token_program.key,
+                    cea_ata.key,
+                    aux.key,
+                    cea.key,
+                    &[],
+                    amount,
+                )?;
+                invoke(
+                    &approve_ix,
+                    &[
+                        cea_ata.to_account_info(),
+                        aux.to_account_info(),
+                        cea.to_account_info(),
+                        token_program.to_account_info(),
+                    ],
+                )?;
+            }
+
+            // G2/G3: approve `amount`, then drain the current balance as OWNER.
+            // Owner-authority transfers do not decrement delegated_amount, so the
+            // allowance survives over a zero balance.
+            6 => {
+                let approve_ix = spl_token::instruction::approve(
+                    token_program.key,
+                    cea_ata.key,
+                    aux.key,
+                    cea.key,
+                    &[],
+                    amount,
+                )?;
+                invoke(
+                    &approve_ix,
+                    &[
+                        cea_ata.to_account_info(),
+                        aux.to_account_info(),
+                        cea.to_account_info(),
+                        token_program.to_account_info(),
+                    ],
+                )?;
+                let bal = {
+                    let data = cea_ata.try_borrow_data()?;
+                    spl_token::state::Account::unpack(&data)?.amount
+                };
+                if bal > 0 {
+                    let transfer_ix = spl_token::instruction::transfer(
+                        token_program.key,
+                        cea_ata.key,
+                        ctx.accounts.dest_ata.key,
+                        cea.key,
+                        &[],
+                        bal,
+                    )?;
+                    invoke(
+                        &transfer_ix,
+                        &[
+                            cea_ata.to_account_info(),
+                            ctx.accounts.dest_ata.to_account_info(),
+                            cea.to_account_info(),
+                            token_program.to_account_info(),
+                        ],
+                    )?;
+                }
+            }
+
+            // No-op refill helper for G2/G3 refill+drain scenarios: bridges tokens
+            // into the CEA through a target that provably does not touch delegate
+            // state, so a later drain cannot be attributed to the hostile path.
+            7 => {}
+
             _ => return err!(CounterError::InvalidDataSize),
         }
 
@@ -731,6 +823,16 @@ pub struct HostileCeaOp<'info> {
     /// Auxiliary account meaningful for op 2 (delegate). Must equal `target` in tests.
     /// CHECK: readable passthrough.
     pub aux: UncheckedAccount<'info>,
+
+    /// CHECK: mint for op 1 (create-and-delegate); placeholder otherwise.
+    pub mint: UncheckedAccount<'info>,
+
+    /// CHECK: ATA program for op 1; placeholder otherwise.
+    pub associated_token_program: UncheckedAccount<'info>,
+
+    /// CHECK: transfer destination for op 6 (approve+drain); placeholder otherwise.
+    #[account(mut)]
+    pub dest_ata: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,

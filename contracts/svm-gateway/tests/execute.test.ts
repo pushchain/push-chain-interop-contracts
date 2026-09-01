@@ -4700,6 +4700,10 @@ describe("Universal Gateway - Execute Tests", () => {
       amount: anchor.BN; // SPL delegate amount for op=2; ignored otherwise
       stagedAmount: anchor.BN; // amount staged into CEA via finalize
       mint: PublicKey | null; // null → SOL path (no cea_ata)
+      // G1/G2/G3 overrides:
+      ceaAtaOverride?: PublicKey; // for G1 — the fresh canonical ATA to be created
+      opMint?: PublicKey;         // for G1 — the mint whose canonical CEA ATA is being created
+      destAtaOverride?: PublicKey; // for G2/G3 — where op=6 transfers the drained balance
     }) => {
       const {
         pushAccount,
@@ -4708,11 +4712,15 @@ describe("Universal Gateway - Execute Tests", () => {
         amount,
         stagedAmount,
         mint,
+        ceaAtaOverride,
+        opMint,
+        destAtaOverride,
       } = params;
 
       const isSpl = mint !== null;
       const ceaAuthority = getCeaAuthorityPda(pushAccount);
-      const ceaAta = isSpl ? await getCeaAta(pushAccount, mint!) : ceaAuthority; // placeholder for SOL
+      const ceaAta = ceaAtaOverride
+        ?? (isSpl ? await getCeaAta(pushAccount, mint!) : ceaAuthority); // placeholder for SOL
       const auxAccount = target; // for op=2, aux acts as the delegate pubkey
 
       const hostileIx = await counterProgram.methods
@@ -4721,6 +4729,9 @@ describe("Universal Gateway - Execute Tests", () => {
           cea: ceaAuthority,
           ceaAta,
           aux: auxAccount,
+          mint: opMint ?? SystemProgram.programId, // placeholder for ops other than 1 (read-only)
+          associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID, // placeholder for ops other than 1 (read-only)
+          destAta: destAtaOverride ?? ceaAta, // op=6 needs real ATA; others: same as cea_ata (already writable)
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
@@ -5184,6 +5195,9 @@ describe("Universal Gateway - Execute Tests", () => {
           cea: ceaAuthority,
           ceaAta: bystanderAta, // <-- bystander, passed to hostile op
           aux: attacker,
+          mint: SystemProgram.programId,
+          associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
+          destAta: bystanderAta,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
@@ -5294,6 +5308,9 @@ describe("Universal Gateway - Execute Tests", () => {
           cea: ceaAuthority,
           ceaAta: bystanderAta,
           aux: attacker,
+          mint: SystemProgram.programId,
+          associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
+          destAta: bystanderAta,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
@@ -5371,6 +5388,124 @@ describe("Universal Gateway - Execute Tests", () => {
       const after = await readCeaDelegate(bystanderAta);
       expect(after.delegate?.toBase58()).to.equal(delegate.toBase58());
       expect(after.amount).to.equal(BigInt(stagedFirst.toString()));
+    });
+
+    // ==================================================================
+    //  G1: canonical CEA ATA created + delegated INSIDE the CPI
+    //       (auditor retest — pre-CPI snapshot doesn't see accounts
+    //       that don't yet exist, so post-CPI second scan is required)
+    // ==================================================================
+    it("T15 (G1): rejects a CEA-owned canonical ATA created and delegated inside the CPI", async () => {
+      const pushAccount = generateSender();
+      const cea = getCeaAuthorityPda(pushAccount);
+      const delegatee = Keypair.generate().publicKey;
+
+      // Fresh mint whose canonical CEA ATA does not exist yet.
+      const freshMint = await spl.createMint(
+        provider.connection,
+        admin,
+        admin.publicKey,
+        null,
+        6
+      );
+      const freshAta = spl.getAssociatedTokenAddressSync(freshMint, cea, true);
+      const preInfo = await provider.connection.getAccountInfo(freshAta);
+      expect(preInfo, "precondition: canonical ATA must not exist pre-CPI").to.be.null;
+
+      await expectRejection(
+        runHostileExecute({
+          pushAccount,
+          op: 1, // create ATA + delegate in one call
+          target: delegatee,
+          amount: new anchor.BN("18446744073709551615"), // u64::MAX
+          stagedAmount: asLamports(0.005), // native lamports so ATA rent can be paid via CEA
+          mint: null, // native flow — no typed cea_ata slot
+          ceaAtaOverride: freshAta,
+          opMint: freshMint,
+        }),
+        "InvalidAccount"
+      );
+
+      // Attack must not leave the canonical ATA with a planted delegate.
+      const postInfo = await provider.connection.getAccountInfo(freshAta);
+      if (postInfo && postInfo.data.length === spl.AccountLayout.span) {
+        const parsed = spl.AccountLayout.decode(postInfo.data);
+        expect(parsed.delegateOption).to.equal(0, "no delegate should persist");
+        expect(BigInt(parsed.delegatedAmount.toString())).to.equal(0n);
+      }
+    });
+
+    // ==================================================================
+    //  G2: allowance left standing over a balance drained as owner
+    //       (auditor retest — SPL owner-authority transfers don't
+    //       decrement delegated_amount; Option B coverage rule requires
+    //       delegated_amount <= amount at end of CPI)
+    // ==================================================================
+    it("T16 (G2): rejects approve + owner-drain leaving allowance > balance", async () => {
+      const pushAccount = generateSender();
+      const ceaAta = await getCeaAta(pushAccount, mockUSDT.mint.publicKey);
+      const staged = asTokenAmount(10);
+
+      // Attacker's ATA to receive the drained balance.
+      const attackerKp = Keypair.generate();
+      const attackerAta = await spl.createAssociatedTokenAccount(
+        provider.connection,
+        admin, // payer
+        mockUSDT.mint.publicKey,
+        attackerKp.publicKey
+      );
+
+      // op=6: approve(attacker, staged) then transfer as owner draining balance.
+      // End state would be: allowance=staged, balance=0 → violates coverage rule.
+      await expectRejection(
+        runHostileExecute({
+          pushAccount,
+          op: 6,
+          target: attackerKp.publicKey,
+          amount: staged,
+          stagedAmount: staged,
+          mint: mockUSDT.mint.publicKey,
+          destAtaOverride: attackerAta,
+        }),
+        "InvalidAccount"
+      );
+    });
+
+    // ==================================================================
+    //  G3: repeated approve+drain to accumulate allowance across calls
+    //       (auditor retest — under Option B the very first call fails,
+    //       so accumulation can't even start)
+    // ==================================================================
+    it("T17 (G3): rejects the first call in an approve+drain accumulation loop", async () => {
+      const pushAccount = generateSender();
+      const attackerKp = Keypair.generate();
+      const attackerAta = await spl.createAssociatedTokenAccount(
+        provider.connection,
+        admin,
+        mockUSDT.mint.publicKey,
+        attackerKp.publicKey
+      );
+      const perCall = asTokenAmount(10);
+
+      // Under Option B, call 1 already leaves allowance>balance and fails.
+      // Accumulation (auditor's G3) cannot progress because state doesn't persist.
+      await expectRejection(
+        runHostileExecute({
+          pushAccount,
+          op: 6,
+          target: attackerKp.publicKey,
+          amount: perCall,
+          stagedAmount: perCall,
+          mint: mockUSDT.mint.publicKey,
+          destAtaOverride: attackerAta,
+        }),
+        "InvalidAccount"
+      );
+
+      // Verify no delegate was left behind (tx reverted atomically).
+      const ceaAta = await getCeaAta(pushAccount, mockUSDT.mint.publicKey);
+      const s = await readCeaDelegate(ceaAta);
+      expect(s.delegate).to.equal(null, "no delegate should persist after rejected call");
     });
 
     it("T10: native-only path (no cea_ata) unaffected by ATA invariants", async () => {
