@@ -282,28 +282,44 @@ async function getDynamicGasAmount(
   }
 }
 
-// Helper: parse and print program data logs (Anchor events) from a transaction
+// Helper: parse and print emit_cpi events from a transaction's inner instructions.
+// emit_cpi encodes the event as a self-CPI to the program's event_authority PDA;
+// the encoded bytes live in the inner-instruction data (not in program logs).
+// Layout: [EVENT_IX_TAG_LE: 8 bytes] || [event_discriminator: 8 bytes] || [borsh(event)].
 async function parseAndPrintEvents(txSignature: string, label: string) {
   try {
     const tx = await connection.getTransaction(txSignature, {
       commitment: "confirmed",
       maxSupportedTransactionVersion: 0,
     });
-    if (!tx?.meta?.logMessages) {
-      console.log(`${label}: No logs found`);
+    if (!tx?.meta) {
+      console.log(`${label}: No tx metadata found`);
       return;
     }
-    const dataLogs = tx.meta.logMessages.filter((log) =>
-      log.startsWith("Program data: ")
-    );
-    if (dataLogs.length === 0) {
-      console.log(`${label}: No program data logs (events) found`);
+    const accountKeys = tx.transaction.message
+      .getAccountKeys({ accountKeysFromLookups: tx.meta.loadedAddresses })
+      .keySegments()
+      .flat();
+    const programIdx = accountKeys.findIndex((k) => k.equals(PROGRAM_ID));
+    if (programIdx === -1) {
+      console.log(`${label}: gateway program not in tx account keys`);
       return;
     }
-    console.log(`${label}: Found ${dataLogs.length} event log(s)`);
-    dataLogs.forEach((log, idx) => {
-      const base64Data = log.replace("Program data: ", "");
-      const buf = Buffer.from(base64Data, "base64");
+    const eventBufs: Buffer[] = [];
+    for (const inner of tx.meta.innerInstructions ?? []) {
+      for (const ix of inner.instructions) {
+        if (ix.programIdIndex !== programIdx) continue;
+        const raw = Buffer.from(anchor.utils.bytes.bs58.decode(ix.data));
+        if (raw.length < 16) continue; // 8-byte tag + 8-byte event disc
+        eventBufs.push(raw.slice(8));
+      }
+    }
+    if (eventBufs.length === 0) {
+      console.log(`${label}: No emit_cpi events found`);
+      return;
+    }
+    console.log(`${label}: Found ${eventBufs.length} event(s)`);
+    eventBufs.forEach((buf, idx) => {
       const disc = buf.slice(0, 8).toString("hex");
       const data = buf.slice(8);
       console.log(`  [${idx}] discriminator=${disc} data_len=${data.length}`);
@@ -3819,8 +3835,18 @@ async function run() {
 
     // Create real message hash for revert withdraw (instruction_id = 3)
     const instructionId = 3;
-    const amount = 1000000; // 0.001 SOL
-    const revertGasFee = 1000000; // 0.001 SOL gas fee for revert
+    const amount = 1000000; // 0.001 SOL — user funds being returned
+    // gas_fee is a signed CEILING, not the payment. On-chain measures the actual cost:
+    //   gas_used = SIGNATURE_FEE (5000) + ExecutedSubTx rent (~890,880)
+    //            + (recipient ATA rent ~2,039,280 IF the legacy SPL path had to create it)
+    // The signer must size gas_fee ≥ measured; excess stays in FeeVault. For legacy SPL
+    // pre-flight `getAccountInfo(getAssociatedTokenAddress(recipient, mint))` and add the
+    // ATA rent term when the ATA does not exist yet.
+    const SIGNATURE_FEE = 5_000;
+    const executedSubTxRent = await connection.getMinimumBalanceForRentExemption(8);
+    // This tx is a native SOL revert (no ATA); no ATA-rent term needed.
+    const revertMeasuredMin = SIGNATURE_FEE + executedSubTxRent;
+    const revertGasFee = revertMeasuredMin + 100_000; // 100k lamports of headroom
     const chainIdString = tssAccount.chainId; // String: Solana cluster pubkey
 
     // Generate universal_tx_id for revert
@@ -3904,6 +3930,8 @@ async function run() {
         recipientTokenAccount: null,
         tokenMint: null,
         tokenProgram: null,
+        associatedTokenProgram: null,
+        rent: null,
       })
       .signers([adminKeypair])
       .rpc();
@@ -4049,6 +4077,12 @@ async function run() {
     const tssAccount16: any = await (program.account as any).tssPda.fetch(tssPda);
     const revertMsg16c = Buffer.from("deadline-test-revert");
 
+    // gas_fee sized as the same signed ceiling shown above (SIG_FEE + ExecutedSubTx rent +
+    // headroom). This test never reaches the gas-cap check — deadline validation fires first
+    // — but we keep the value consistent with the reference pattern.
+    const deadlineTestRent16 = await connection.getMinimumBalanceForRentExemption(8);
+    const deadlineTestGasFee = 5_000 + deadlineTestRent16 + 100_000;
+
     const sig16c = await signTssMessage({
       instruction: TssInstruction.Revert,
       amount: BigInt(1_000_000),
@@ -4059,7 +4093,7 @@ async function run() {
         new Uint8Array(universalTxId16c),
         adminKeypair.publicKey,
         revertMsg16c,
-        BigInt(1_000_000)
+        BigInt(deadlineTestGasFee)
       ),
     });
 
@@ -4074,7 +4108,7 @@ async function run() {
           subTxId16c, Array.from(universalTxId16c),
           new anchor.BN(1_000_000),
           { revertRecipient: adminKeypair.publicKey, revertMsg: revertMsg16c },
-          new anchor.BN(1_000_000),
+          new anchor.BN(deadlineTestGasFee),
           new anchor.BN(PAST_DEADLINE.toString()),
           Array.from(sig16c.signature), sig16c.recoveryId, Array.from(sig16c.messageHash)
         )
@@ -4083,6 +4117,7 @@ async function run() {
           recipient: admin, executedSubTx: executedSubTx16c,
           caller: admin, systemProgram: SystemProgram.programId,
           tokenVault: null, recipientTokenAccount: null, tokenMint: null, tokenProgram: null,
+          associatedTokenProgram: null, rent: null,
         })
         .signers([adminKeypair]).rpc();
       throw new Error("Should have been rejected");

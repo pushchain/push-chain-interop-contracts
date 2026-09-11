@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
-use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token::{self, Token, TokenAccount};
+use anchor_lang::solana_program::program_pack::Pack;
+use anchor_spl::associated_token::{spl_associated_token_account, AssociatedToken};
+use anchor_spl::token::{self, spl_token, Token, TokenAccount};
 
 declare_id!("4mpHkerNsaJPp35fyT5bkoXxuEBczGq6HUKTtrzFcptx");
 
@@ -340,6 +341,214 @@ pub mod test_counter {
 
         Ok(())
     }
+
+    /// Hostile helper used exclusively by post-CPI invariant regression tests
+    /// (F-2026-18980). When invoked as an execute target with the CEA as CPI
+    /// signer, it attempts a caller-selected authority mutation against the
+    /// CEA account or its ATA. Not intended for any production flow.
+    ///
+    /// `op`:
+    ///   0 = system_instruction::assign(CEA, target)          → reassign CEA
+    ///   2 = spl_token::approve(CEA_ATA, target, amount)      → install delegate
+    ///   3 = spl_token::set_authority(CEA_ATA, AccountOwner)  → seize ATA
+    ///   4 = spl_token::set_authority(CEA_ATA, CloseAccount)  → set close_auth
+    ///   5 = spl_token::revoke(CEA_ATA)                       → positive-case revoke
+    pub fn hostile_cea_op(
+        ctx: Context<HostileCeaOp>,
+        op: u8,
+        target: Pubkey,
+        amount: u64,
+    ) -> Result<()> {
+        use anchor_lang::solana_program::{program::invoke, system_instruction};
+
+        let cea = &ctx.accounts.cea;
+        let cea_ata = &ctx.accounts.cea_ata;
+        let aux = &ctx.accounts.aux;
+        let token_program = &ctx.accounts.token_program;
+        let system_program = &ctx.accounts.system_program;
+
+        match op {
+            // Assign: reassign CEA account owner away from System Program.
+            0 => invoke(
+                &system_instruction::assign(cea.key, &target),
+                &[cea.to_account_info(), system_program.to_account_info()],
+            )?,
+
+            // Approve: install `target` as delegate on CEA ATA for `amount`.
+            2 => {
+                let ix = spl_token::instruction::approve(
+                    token_program.key,
+                    cea_ata.key,
+                    aux.key, // delegate pubkey (aux must equal target for the tests)
+                    cea.key,
+                    &[],
+                    amount,
+                )?;
+                invoke(
+                    &ix,
+                    &[
+                        cea_ata.to_account_info(),
+                        aux.to_account_info(),
+                        cea.to_account_info(),
+                        token_program.to_account_info(),
+                    ],
+                )?;
+            }
+
+            // SetAuthority(AccountOwner): transfer CEA ATA ownership to `target`.
+            3 => {
+                let ix = spl_token::instruction::set_authority(
+                    token_program.key,
+                    cea_ata.key,
+                    Some(&target),
+                    spl_token::instruction::AuthorityType::AccountOwner,
+                    cea.key,
+                    &[],
+                )?;
+                invoke(
+                    &ix,
+                    &[
+                        cea_ata.to_account_info(),
+                        cea.to_account_info(),
+                        token_program.to_account_info(),
+                    ],
+                )?;
+            }
+
+            // SetAuthority(CloseAccount): install `target` as close authority.
+            4 => {
+                let ix = spl_token::instruction::set_authority(
+                    token_program.key,
+                    cea_ata.key,
+                    Some(&target),
+                    spl_token::instruction::AuthorityType::CloseAccount,
+                    cea.key,
+                    &[],
+                )?;
+                invoke(
+                    &ix,
+                    &[
+                        cea_ata.to_account_info(),
+                        cea.to_account_info(),
+                        token_program.to_account_info(),
+                    ],
+                )?;
+            }
+
+            // Revoke: clear any delegate on CEA ATA (positive-case regression).
+            5 => {
+                let ix = spl_token::instruction::revoke(
+                    token_program.key,
+                    cea_ata.key,
+                    cea.key,
+                    &[],
+                )?;
+                invoke(
+                    &ix,
+                    &[
+                        cea_ata.to_account_info(),
+                        cea.to_account_info(),
+                        token_program.to_account_info(),
+                    ],
+                )?;
+            }
+
+            // G1: create a canonical CEA-owned ATA inside the CPI (for a mint whose
+            // canonical CEA ATA does not exist), then delegate it.
+            1 => {
+                let create_ix =
+                    spl_associated_token_account::instruction::create_associated_token_account(
+                        cea.key,
+                        cea.key,
+                        ctx.accounts.mint.key,
+                        token_program.key,
+                    );
+                invoke(
+                    &create_ix,
+                    &[
+                        cea.to_account_info(),
+                        cea_ata.to_account_info(),
+                        ctx.accounts.mint.to_account_info(),
+                        system_program.to_account_info(),
+                        token_program.to_account_info(),
+                        ctx.accounts.associated_token_program.to_account_info(),
+                    ],
+                )?;
+                let approve_ix = spl_token::instruction::approve(
+                    token_program.key,
+                    cea_ata.key,
+                    aux.key,
+                    cea.key,
+                    &[],
+                    amount,
+                )?;
+                invoke(
+                    &approve_ix,
+                    &[
+                        cea_ata.to_account_info(),
+                        aux.to_account_info(),
+                        cea.to_account_info(),
+                        token_program.to_account_info(),
+                    ],
+                )?;
+            }
+
+            // G2/G3: approve `amount`, then drain the current balance as OWNER.
+            // Owner-authority transfers do not decrement delegated_amount, so the
+            // allowance survives over a zero balance.
+            6 => {
+                let approve_ix = spl_token::instruction::approve(
+                    token_program.key,
+                    cea_ata.key,
+                    aux.key,
+                    cea.key,
+                    &[],
+                    amount,
+                )?;
+                invoke(
+                    &approve_ix,
+                    &[
+                        cea_ata.to_account_info(),
+                        aux.to_account_info(),
+                        cea.to_account_info(),
+                        token_program.to_account_info(),
+                    ],
+                )?;
+                let bal = {
+                    let data = cea_ata.try_borrow_data()?;
+                    spl_token::state::Account::unpack(&data)?.amount
+                };
+                if bal > 0 {
+                    let transfer_ix = spl_token::instruction::transfer(
+                        token_program.key,
+                        cea_ata.key,
+                        ctx.accounts.dest_ata.key,
+                        cea.key,
+                        &[],
+                        bal,
+                    )?;
+                    invoke(
+                        &transfer_ix,
+                        &[
+                            cea_ata.to_account_info(),
+                            ctx.accounts.dest_ata.to_account_info(),
+                            cea.to_account_info(),
+                            token_program.to_account_info(),
+                        ],
+                    )?;
+                }
+            }
+
+            // No-op refill helper for G2/G3 refill+drain scenarios: bridges tokens
+            // into the CEA through a target that provably does not touch delegate
+            // state, so a later drain cannot be attributed to the hostile path.
+            7 => {}
+
+            _ => return err!(CounterError::InvalidDataSize),
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -594,6 +803,39 @@ pub struct CounterUpdated {
     pub old_value: u64,
     pub new_value: u64,
     pub operation: String,
+}
+
+/// Accounts for `hostile_cea_op`. All non-CEA accounts are `UncheckedAccount`
+/// because they're only meaningful for a subset of ops; the invoked SPL / System
+/// programs handle their own validation on whatever we pass through.
+#[derive(Accounts)]
+pub struct HostileCeaOp<'info> {
+    /// CEA authority — promoted to signer by the gateway via `invoke_signed`.
+    /// CHECK: authority passthrough for hostile CPI probes.
+    #[account(mut)]
+    pub cea: UncheckedAccount<'info>,
+
+    /// CEA ATA (used by ops 2/3/4/5). Placeholder allowed for op 0.
+    /// CHECK: token account passthrough; SPL Token validates.
+    #[account(mut)]
+    pub cea_ata: UncheckedAccount<'info>,
+
+    /// Auxiliary account meaningful for op 2 (delegate). Must equal `target` in tests.
+    /// CHECK: readable passthrough.
+    pub aux: UncheckedAccount<'info>,
+
+    /// CHECK: mint for op 1 (create-and-delegate); placeholder otherwise.
+    pub mint: UncheckedAccount<'info>,
+
+    /// CHECK: ATA program for op 1; placeholder otherwise.
+    pub associated_token_program: UncheckedAccount<'info>,
+
+    /// CHECK: transfer destination for op 6 (approve+drain); placeholder otherwise.
+    #[account(mut)]
+    pub dest_ata: UncheckedAccount<'info>,
+
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
 }
 
 #[error_code]

@@ -36,6 +36,8 @@ The program uses PDAs for all protocol state. No external signers or owner keys 
 
 **CEA vs EVM:** On EVM, CEA is a deployed contract per user. On SVM, CEA is a system-owned PDA. No deployment step is needed — the Solana runtime creates it on first lamport transfer.
 
+**Event transport (`emit_cpi`):** every event this program emits (`UniversalTx`, `UniversalTxFinalized`, `RevertUniversalTx`, `FundsRescued`, `InboundFeeCollected`, `InboundFeeReimbursed`, and admin config-change events) is emitted via Anchor's `emit_cpi!` macro, not `emit!`. The event bytes land in the transaction's inner instructions (as a self-CPI to the program's `event_authority` PDA), not in program logs. Off-chain consumers (Universal Validators) MUST parse events from `getTransaction(...).meta.innerInstructions` rather than regexing `Program data:` lines — a plain log parser is vulnerable to forgery by any co-executed program in the same transaction. See [F-2026-18198 mitigation](THREAT_MODEL.md).
+
 ---
 
 ## Instruction Surface
@@ -89,7 +91,7 @@ Vault → CEA → Recipient
 ```
 
 **SOL:** lamports transferred directly to recipient wallet.
-**SPL:** tokens transferred from vault ATA → recipient ATA (must exist).
+**SPL:** tokens transferred from vault ATA → recipient ATA (auto-created if missing; caller pays rent).
 **Special case:** if `recipient == CEA`, the second transfer is skipped (funds stay in CEA).
 
 Emits: `UniversalTxFinalized`

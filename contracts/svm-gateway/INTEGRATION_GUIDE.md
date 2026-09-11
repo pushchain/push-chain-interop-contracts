@@ -1077,75 +1077,54 @@ Before production:
 
 ## 12. Address Lookup Tables (ALTs) for Transaction Size Optimization
 
-**Building Versioned Transactions:**
+The gateway ships one Address Lookup Table per deployed program. Its scope is the `send_universal_tx` (inbound) path, where the SPL FUNDS_AND_PAYLOAD variant would otherwise exceed the 1232-byte legacy limit. The `finalize_universal_tx` (outbound) path does not use an ALT; large execute payloads use the tx-size ref route (`store_execute_ix_data` + `finalize_universal_tx_with_ix_data_ref`) instead.
 
-**For SOL transaction:**
-```typescript
-const instruction = await program.methods
-  .finalizeUniversalTx(/* ... params ... */)
-  .accounts(/* ... */)
-  .instruction();
+**Static addresses packed into the ALT** (all constant per program):
 
-// Build versioned tx with Protocol ALT (estimated ~92 bytes saved; actual depends on instruction size)
-const tx = await altHelper.buildVersionedTransaction(
-  [instruction],
-  uvPublicKey,
-  null // mint = null for SOL
-);
+| Address | Purpose |
+|---------|---------|
+| `config` PDA | Gateway config |
+| `vault` PDA | SOL vault |
+| `fee_vault` PDA | Inbound fee vault |
+| `rate_limit_config` PDA | Block/epoch caps |
+| Pyth SOL/USD price account | Oracle |
+| SPL Token program | `Tokenkeg...` |
+| System program | `1111...` |
+| `event_authority` PDA | `emit_cpi!` self-CPI target |
+| Program id (self) | `emit_cpi!` requires it as a passed account |
 
-// Sign and send
-tx.sign([uvKeypair]);
-const signature = await connection.sendTransaction(tx);
+The deployed ALT address per program is persisted in `universal-alt.json`, keyed by program label (`main` at the top level, `dummy` under a nested `dummy` key). `app/gateway-test.ts` resolves the ALT via `resolveAltAddress()` and consumes it only in the `send_universal_tx` block.
+
+**Deploying a fresh ALT for a new program:**
+```bash
+npx ts-node app/create-universal-alt.ts main    # or: dummy
 ```
 
-**For SPL transaction:**
-```typescript
-const usdcMint = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
-
-const instruction = await program.methods
-  .finalizeUniversalTx(/* ... params ... */)
-  .accounts({
-    /* ... */
-    mint: usdcMint,
-    vaultAta: /* ... */,
-    ceaAta: /* ... */,
-    /* ... */
-  })
-  .instruction();
-
-// Build versioned tx with Protocol ALT + Token ALT (estimated ~215 bytes saved; actual depends on instruction size)
-const tx = await altHelper.buildVersionedTransaction(
-  [instruction],
-  uvPublicKey,
-  usdcMint // Pass token mint
-);
-
-// Sign and send
-tx.sign([uvKeypair]);
-const signature = await connection.sendTransaction(tx);
+**Adding new addresses to an existing deployed ALT** (e.g. after migrating events to `emit_cpi`, the two event accounts must be added if the ALT was created before the migration):
+```bash
+npx ts-node scripts/extend-alt.ts \
+  --alt <ALT_ADDRESS_FROM_universal-alt.json> \
+  --accounts <EVENT_AUTHORITY_PDA>,<PROGRAM_ID>
 ```
 
-**Manual ALT Management (if not using AltHelper):**
+**Deactivating a stale ALT (recover rent):**
+```bash
+npx ts-node scripts/deactivate-alt.ts --alt <ALT_ADDRESS>
+```
+
+**Building a versioned transaction against the ALT (inbound path):**
 ```typescript
 import { TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 
-// Fetch ALT accounts
-const protocolAlt = await connection.getAddressLookupTable(protocolAltAddress);
-const tokenAlt = await connection.getAddressLookupTable(tokenAltAddress);
-if (!protocolAlt.value) throw new Error("Protocol ALT not found");
-// Only required for SPL:
-if (tokenAltAddress && !tokenAlt.value) throw new Error("Token ALT not found");
+const { value: alt } = await connection.getAddressLookupTable(ALT_ADDRESS);
+if (!alt) throw new Error("Lookup table not found on-chain");
 
-// Build v0 message with ALTs
 const { blockhash } = await connection.getLatestBlockhash();
 const messageV0 = new TransactionMessage({
-  payerKey: uvPublicKey,
+  payerKey: userPublicKey,
   recentBlockhash: blockhash,
-  instructions: [instruction],
-}).compileToV0Message([
-  protocolAlt.value,  // Always include Protocol ALT
-  tokenAlt.value,     // Include Token ALT for SPL transactions
-]);
+  instructions: [sendUniversalTxInstruction],
+}).compileToV0Message([alt]);
 
 const tx = new VersionedTransaction(messageV0);
 ```

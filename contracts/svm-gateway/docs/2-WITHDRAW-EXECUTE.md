@@ -53,7 +53,7 @@ sub_tx_id[32] | universal_tx_id[32] | push_account[20] | token[32] | gas_fee_be[
 
 ## Withdraw Mode
 
-Transfers funds from CEA to the recipient. If `recipient == cea_authority`, funds stay in CEA (no second transfer). SPL: requires `recipient_ata` to exist.
+Transfers funds from CEA to the recipient. If `recipient == cea_authority`, funds stay in CEA (no second transfer). SPL: `recipient_ata` is auto-created via CPI if missing (caller pays rent, mirroring the CEA ATA flow). Post-create, mint and owner are validated against the signed recipient wallet. When the recipient ATA is created, its rent is folded into `gas_used` and reimbursed to the caller in the same tx (see `THREAT_MODEL.md` entry 15); the `UniversalTxFinalized` event exposes a `recipient_ata_created` flag for off-chain reconciliation.
 
 ---
 
@@ -104,7 +104,7 @@ This path emits:
 | `vault_ata` | None | Required (canonical vault ATA for mint) |
 | `cea_ata` | None | Required (auto-created if missing) |
 | `mint` | None | Required |
-| `recipient_ata` | None | Required (withdraw mode) |
+| `recipient_ata` | None | Required (withdraw mode; auto-created if missing) |
 
 ---
 

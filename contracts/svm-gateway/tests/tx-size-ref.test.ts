@@ -26,6 +26,7 @@ import {
   TssInstruction,
 } from "./helpers/tss";
 import { makeFinalizeUniversalTxBuilder } from "./helpers/builders";
+import { extractEventCpi } from "./helpers/test-utils";
 import {
   accountsToWritableFlagsOnly,
   calculateSplExecuteFees,
@@ -89,29 +90,8 @@ describe("Universal Gateway - Tx Size Ref Finalize Tests", () => {
     return pda;
   };
 
-  const decodeGatewayEvents = async (signature: string) => {
-    let tx = null;
-    for (let i = 0; i < 10; i++) {
-      tx = await provider.connection.getTransaction(signature, {
-        commitment: "confirmed",
-        maxSupportedTransactionVersion: 0,
-      });
-      if (tx?.meta?.logMessages) break;
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    const logs = tx?.meta?.logMessages ?? [];
-    const eventCoder = new anchor.BorshEventCoder(gatewayProgram.idl);
-    return logs
-      .filter((log) => log.includes("Program data:"))
-      .map((log) => {
-        try {
-          return eventCoder.decode(log.split("Program data: ")[1]);
-        } catch {
-          return null;
-        }
-      })
-      .filter((event): event is NonNullable<typeof event> => event !== null);
-  };
+  const decodeGatewayEvents = (signature: string) =>
+    extractEventCpi(provider.connection, gatewayProgram, signature);
 
   const generateTxId = (): number[] => {
     const buffer = Buffer.alloc(32);

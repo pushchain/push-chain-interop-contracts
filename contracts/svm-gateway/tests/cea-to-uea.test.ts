@@ -20,6 +20,7 @@ import {
   generateUniversalTxId,
 } from "./helpers/tss";
 import { ensureTestSetup } from "./helpers/test-setup";
+import { extractEventCpi } from "./helpers/test-utils";
 import {
   USDT_DECIMALS,
   TOKEN_MULTIPLIER,
@@ -482,29 +483,7 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
         .signers([admin])
         .rpc();
 
-      // Verify events — retry getTransaction since local validator can lag
-      let txDetails = null;
-      for (let attempt = 0; attempt < 10; attempt++) {
-        txDetails = await provider.connection.getTransaction(tx, {
-          commitment: "confirmed",
-          maxSupportedTransactionVersion: 0,
-        });
-        if (txDetails) break;
-        await new Promise((r) => setTimeout(r, 500));
-      }
-      expect(txDetails, "getTransaction returned null after retries").to.exist;
-
-      const eventCoder = new anchor.BorshEventCoder(gatewayProgram.idl);
-      const events = (txDetails.meta?.logMessages ?? [])
-        .filter((log) => log.includes("Program data:"))
-        .map((log) => {
-          try {
-            return eventCoder.decode(log.split("Program data: ")[1]);
-          } catch {
-            return null;
-          }
-        })
-        .filter((e) => e !== null);
+      const events = await extractEventCpi(provider.connection, gatewayProgram, tx);
 
       // UniversalTx: FundsAndPayload + from_cea
       // Note: Anchor TS IDL converts PascalCase event names to camelCase (UniversalTx → universalTx)
@@ -617,24 +596,7 @@ describe("Universal Gateway - CEA to UEA Tests", () => {
         .signers([admin])
         .rpc();
 
-      let txDetails = null;
-      for (let attempt = 0; attempt < 10; attempt++) {
-        txDetails = await provider.connection.getTransaction(tx, {
-          commitment: "confirmed",
-          maxSupportedTransactionVersion: 0,
-        });
-        if (txDetails) break;
-        await new Promise((r) => setTimeout(r, 500));
-      }
-      expect(txDetails, "getTransaction returned null after retries").to.exist;
-
-      const eventCoder = new anchor.BorshEventCoder(gatewayProgram.idl);
-      const events = (txDetails.meta?.logMessages ?? [])
-        .filter((log) => log.includes("Program data:"))
-        .map((log) => {
-          try { return eventCoder.decode(log.split("Program data: ")[1]); } catch { return null; }
-        })
-        .filter((e) => e !== null);
+      const events = await extractEventCpi(provider.connection, gatewayProgram, tx);
 
       const universalTxEvent = events.find((e) => e.name === "universalTx");
       expect(universalTxEvent, "UniversalTx event not found").to.exist;

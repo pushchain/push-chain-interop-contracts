@@ -27,6 +27,7 @@ const SPL_TOKEN_ACCOUNT_LEN: usize = 165;
 //  UNIFIED FINALIZE_UNIVERSAL_TX
 // =========================
 
+#[event_cpi]
 #[derive(Accounts)]
 #[instruction(instruction_id: u8, sub_tx_id: [u8; 32], universal_tx_id: [u8; 32], amount: u64, push_account: [u8; 20])]
 pub struct FinalizeUniversalTx<'info> {
@@ -105,18 +106,28 @@ pub struct FinalizeUniversalTx<'info> {
 
     pub associated_token_program: Option<Program<'info, AssociatedToken>>,
 
-    // --- Optional recipient ATA (required for SPL withdraw mode) ---
+    // --- Optional recipient ATA (required for SPL withdraw mode; created if missing) ---
+    /// CHECK: Recipient ATA — created via manual CPI if missing (mirrors CEA ATA).
+    /// Address, mint, and owner are validated in `internal_withdraw` after create.
     #[account(mut)]
-    pub recipient_ata: Option<Account<'info, TokenAccount>>,
+    pub recipient_ata: Option<UncheckedAccount<'info>>,
 
-    // --- Optional rate limit accounts (CEA withdrawal path only) ---
+    // --- Optional rate-limit accounts ---
+    // Consumed ONLY by the CEA → vault self-route (`send_universal_tx_to_uea`), which
+    // creates new bridged supply on the Push side and is therefore inbound-shaped. The
+    // outbound release paths reachable through this same instruction (`stage_assets_to_cea`
+    // and `internal_withdraw`) DO NOT consume these accounts by design: releases are
+    // authorized per-operation by TSS + replay-guarded by `ExecutedSubTx`, not throughput
+    // gated. See THREAT_MODEL.md entry 17 (F-2026-18981) before wiring these into any
+    // other path — doing so silently rate-limits a release flow against design intent.
     #[account(
         seeds = [RATE_LIMIT_CONFIG_SEED],
         bump,
     )]
     pub rate_limit_config: Option<Account<'info, RateLimitConfig>>,
 
-    /// Token-specific rate limit state (CEA withdrawal path only)
+    /// Token-specific rate limit state — consumed only by the CEA → vault self-route.
+    /// See THREAT_MODEL.md entry 17 (F-2026-18981); do not extend to release paths.
     #[account(mut)]
     pub token_rate_limit: Option<Account<'info, TokenRateLimit>>,
 
@@ -297,15 +308,10 @@ pub fn finalize_universal_tx_common<'info>(
     // Stage assets vault → CEA. Returns whether CEA ATA was created.
     let ata_created = stage_assets_to_cea(&ctx, &request, amount, &vault_seeds)?;
 
-    let (gas_used, gas_to_refund) = settle_relayer_gas_cost(
-        &ctx,
-        gas_fee,
-        ata_created,
-        store_upload_fee_lamports,
-        store_refund_recipient,
-    )?;
-
-    dispatch_finalize_action(
+    // Dispatch runs BEFORE settle so any ATAs created inside dispatch (e.g. the
+    // recipient ATA in `internal_withdraw`) can be folded into `gas_used` and
+    // the caller reimbursed for that rent.
+    let recipient_ata_created = dispatch_finalize_action(
         ctx,
         &request,
         execute_accounts,
@@ -315,13 +321,23 @@ pub fn finalize_universal_tx_common<'info>(
         &cea_seeds,
     )?;
 
-    emit!(UniversalTxFinalized {
+    let (gas_used, gas_to_refund) = settle_relayer_gas_cost(
+        &ctx,
+        gas_fee,
+        ata_created,
+        recipient_ata_created,
+        store_upload_fee_lamports,
+        store_refund_recipient,
+    )?;
+
+    emit_cpi!(UniversalTxFinalized {
         sub_tx_id,
         universal_tx_id,
         gas_fee,
         gas_used,
         gas_to_refund,
         ata_created,
+        recipient_ata_created,
         push_account,
         target: request.target,
         token: request.token,
@@ -340,16 +356,14 @@ pub fn finalize_universal_tx_common<'info>(
 fn settle_relayer_gas_cost<'info>(
     ctx: &Context<FinalizeUniversalTx<'info>>,
     gas_fee: u64,
-    ata_created: bool,
+    cea_ata_created: bool,
+    recipient_ata_created: bool,
     store_upload_fee_lamports: u64,
     store_refund_recipient: Option<&AccountInfo<'info>>,
 ) -> Result<(u64, u64)> {
     let sub_tx_rent = Rent::get()?.minimum_balance(ExecutedSubTx::LEN);
-    let ata_rent = if ata_created {
-        Rent::get()?.minimum_balance(SPL_TOKEN_ACCOUNT_LEN)
-    } else {
-        0
-    };
+    let per_ata_rent = Rent::get()?.minimum_balance(SPL_TOKEN_ACCOUNT_LEN);
+    let ata_rent = (cea_ata_created as u64 + recipient_ata_created as u64) * per_ata_rent;
     let base_finalize_gas = SIGNATURE_FEE_LAMPORTS + sub_tx_rent + ata_rent;
     let gas_used = base_finalize_gas + store_upload_fee_lamports;
     require!(gas_fee >= gas_used, GatewayError::InsufficientGasBudget);
@@ -565,6 +579,8 @@ fn stage_assets_to_cea(
     }
 }
 
+/// Returns `true` when the withdraw branch created the recipient ATA. Parent uses
+/// this to include the ATA rent in `gas_used` so the caller is reimbursed atomically.
 fn dispatch_finalize_action(
     ctx: &mut Context<FinalizeUniversalTx>,
     request: &FinalizeRequestContext,
@@ -573,15 +589,14 @@ fn dispatch_finalize_action(
     push_account: [u8; 20],
     ix_data: &[u8],
     cea_seeds: &[&[u8]],
-) -> Result<()> {
+) -> Result<bool> {
     if request.is_withdraw {
-        internal_withdraw(ctx, amount, request.token, cea_seeds)?;
-        return Ok(());
+        return internal_withdraw(ctx, amount, request.token, cea_seeds);
     }
 
     if request.target == *ctx.program_id {
         send_universal_tx_to_uea(ctx, push_account, ix_data, cea_seeds)?;
-        return Ok(());
+        return Ok(false);
     }
 
     let cea_key = ctx.accounts.cea_authority.key();
@@ -604,7 +619,154 @@ fn dispatch_finalize_action(
         data: ix_data.to_vec(),
     };
 
+    // F-2026-18980 — Pre-CPI snapshot of every CEA-owned SPL token account this
+    // tx exposes. Current-mint ATA (typed slot) has budget = `amount`. Bystanders
+    // in remaining_accounts have budget = 0 (strictly unchanged). Token-2022
+    // accounts are not currently supported; extend the SPL-Token owner check if
+    // added later.
+    let cea_ata_key = ctx.accounts.cea_ata.as_ref().map(|a| a.key());
+    let current_snapshot = ctx
+        .accounts
+        .cea_ata
+        .as_ref()
+        .map(|a| parse_token_account(&a.to_account_info()))
+        .transpose()?;
+
+    let mut bystanders: Vec<(usize, spl_token::state::Account)> = Vec::new();
+    // Mint keys present in remaining_accounts. Used post-CPI to derive canonical
+    // CEA ATA addresses for G1 (retest) check: any CEA-owned SPL account that
+    // appeared during the CPI at a canonical ATA address for one of these mints
+    // is treated as a planted-delegate risk and rejected.
+    let mut mint_keys: Vec<Pubkey> = Vec::new();
+    for (idx, info) in ctx.remaining_accounts.iter().enumerate() {
+        // Collect mint accounts (SPL Token owned, 82 bytes = Mint layout size).
+        const SPL_MINT_LEN: usize = 82;
+        if info.owner == &spl_token::ID && info.data_len() == SPL_MINT_LEN {
+            mint_keys.push(info.key());
+        }
+        if Some(info.key()) == cea_ata_key {
+            continue;
+        }
+        if info.owner != &spl_token::ID {
+            continue;
+        }
+        let Ok(parsed) = parse_token_account(info) else {
+            continue;
+        };
+        if parsed.owner != cea_key {
+            continue;
+        }
+        bystanders.push((idx, parsed));
+    }
+
     invoke_signed(&cpi_ix, ctx.remaining_accounts, &[cea_seeds])?;
+
+    // CEA account must remain System-owned and empty (blocks `assign` brick).
+    let cea = ctx.accounts.cea_authority.to_account_info();
+    require!(
+        cea.owner == &anchor_lang::system_program::ID && cea.data_is_empty(),
+        GatewayError::InvalidAccount
+    );
+
+    // Current-mint ATA: budget = `amount`.
+    if let (Some(cea_ata), Some(before)) =
+        (ctx.accounts.cea_ata.as_ref(), current_snapshot)
+    {
+        let after = parse_token_account(&cea_ata.to_account_info())?;
+        check_cea_ata_invariants(&after, &before, amount)?;
+    }
+
+    // Bystander CEA-owned ATAs: budget = 0 (strictly unchanged).
+    for (idx, before) in &bystanders {
+        let after = parse_token_account(&ctx.remaining_accounts[*idx])?;
+        check_cea_ata_invariants(&after, before, 0)?;
+    }
+
+    // G1 (retest): flag CEA-owned SPL token accounts that appeared during the
+    // CPI at a canonical CEA ATA address for any mint present in this tx. The
+    // target could have created such an account and installed a delegate; a
+    // later bridge for the same mint would derive the same address and fund
+    // it. Enforce strict-nothing invariants on newly-appeared canonical ATAs.
+    for (idx, info) in ctx.remaining_accounts.iter().enumerate() {
+        if Some(info.key()) == cea_ata_key {
+            continue;
+        }
+        if bystanders.iter().any(|(bi, _)| *bi == idx) {
+            continue; // pre-CPI bystander — already checked strictly-unchanged above
+        }
+        if info.owner != &spl_token::ID {
+            continue;
+        }
+        let Ok(parsed) = parse_token_account(info) else {
+            continue;
+        };
+        if parsed.owner != cea_key {
+            continue;
+        }
+        let is_canonical = mint_keys.iter().any(|mint_key| {
+            spl_associated_token_account::get_associated_token_address(&cea_key, mint_key)
+                == *info.key
+        });
+        if is_canonical {
+            require!(parsed.delegate.is_none(), GatewayError::InvalidAccount);
+            require!(parsed.delegated_amount == 0, GatewayError::InvalidAccount);
+            require!(parsed.close_authority.is_none(), GatewayError::InvalidAccount);
+        }
+    }
+
+    Ok(false)
+}
+
+/// Post-CPI invariants on a CEA-owned SPL token account. Blocks
+/// `SetAuthority(AccountOwner)`, `SetAuthority(CloseAccount)`, and any allowance
+/// left over funds the target doesn't have.
+///
+/// - Bystanders (`budget == 0`, i.e. accounts in `remaining_accounts` unrelated
+///   to the current mint): delegate identity and allowance must be strictly
+///   unchanged (including `Revoke`).
+/// - Current-mint ATA (`budget > 0`): identity-swap guard from an active prior
+///   delegate is preserved; and the surviving allowance must be backed by the
+///   surviving balance (`delegated_amount <= amount`). This is the coverage
+///   rule (F-2026-18980 retest / gaps G2 + G3): SPL owner-authority transfers
+///   do not decrement `delegated_amount`, so absent this check a target could
+///   `Approve(attacker, N)` and drain N tokens as owner in the same CPI,
+///   leaving a live allowance over an empty balance that later refills would
+///   satisfy.
+#[inline(never)]
+fn check_cea_ata_invariants(
+    after: &spl_token::state::Account,
+    before: &spl_token::state::Account,
+    budget: u64,
+) -> Result<()> {
+    require!(after.owner == before.owner, GatewayError::InvalidOwner);
+    require!(
+        after.close_authority == before.close_authority,
+        GatewayError::InvalidAccount
+    );
+    if budget == 0 {
+        require!(after.delegate == before.delegate, GatewayError::InvalidAccount);
+        require!(
+            after.delegated_amount == before.delegated_amount,
+            GatewayError::InvalidAccount
+        );
+        return Ok(());
+    }
+    // Identity-swap guard (T12): can't divert an active allowance to a new party
+    // by swapping the delegate at equal or lower balance.
+    if after.delegate != before.delegate {
+        require!(
+            after.delegate.is_none()
+                || before.delegate.is_none()
+                || before.delegated_amount == 0,
+            GatewayError::InvalidAccount
+        );
+    }
+    // Coverage rule: any surviving allowance must be backed by the surviving
+    // balance. Applies whether delegate changed or not.
+    require!(
+        after.delegated_amount <= after.amount,
+        GatewayError::InvalidAccount
+    );
     Ok(())
 }
 

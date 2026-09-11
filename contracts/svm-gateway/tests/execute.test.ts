@@ -31,6 +31,7 @@ import {
   generateUniversalTxId,
 } from "./helpers/tss";
 import { ensureTestSetup } from "./helpers/test-setup";
+import { extractEventCpi } from "./helpers/test-utils";
 import { createHash } from "crypto";
 
 // Helper to compute Anchor-style discriminator (first 8 bytes of SHA-256)
@@ -3726,27 +3727,10 @@ describe("Universal Gateway - Execute Tests", () => {
         .rpc();
 
       // Verify FUNDS event was emitted (CEA drained back to vault)
-      const txDetails = await provider.connection.getTransaction(tx, {
-        commitment: "confirmed",
-        maxSupportedTransactionVersion: 0,
-      });
-
-      if (txDetails && txDetails.meta && txDetails.meta.logMessages) {
-        const eventCoder = new anchor.BorshEventCoder(gatewayProgram.idl);
-        const events = txDetails.meta.logMessages
-          .filter((log) => log.includes("Program data:"))
-          .map((log) => {
-            const data = log.split("Program data: ")[1];
-            try {
-              return eventCoder.decode(data);
-            } catch {
-              return null;
-            }
-          })
-          .filter((e) => e !== null);
-
+      {
+        const events = await extractEventCpi(provider.connection, gatewayProgram, tx);
         const fundsEvents = events.filter(
-          (e) => e.name === "UniversalTx" && e.data.txType.funds !== undefined
+          (e) => e.name === "universalTx" && e.data.txType.funds !== undefined
         );
 
         if (fundsEvents.length > 0) {
@@ -4223,27 +4207,10 @@ describe("Universal Gateway - Execute Tests", () => {
       expect(ceaAtaInfo).to.not.be.null; // CEA ATA persists (pull model, not auto-drain)
 
       // Verify FUNDS event was emitted for SPL tokens
-      const txDetails = await provider.connection.getTransaction(tx, {
-        commitment: "confirmed",
-        maxSupportedTransactionVersion: 0,
-      });
-
-      if (txDetails && txDetails.meta && txDetails.meta.logMessages) {
-        const eventCoder = new anchor.BorshEventCoder(gatewayProgram.idl);
-        const events = txDetails.meta.logMessages
-          .filter((log) => log.includes("Program data:"))
-          .map((log) => {
-            const data = log.split("Program data: ")[1];
-            try {
-              return eventCoder.decode(data);
-            } catch {
-              return null;
-            }
-          })
-          .filter((e) => e !== null);
-
+      {
+        const events = await extractEventCpi(provider.connection, gatewayProgram, tx);
         const fundsEvents = events.filter(
-          (e) => e.name === "UniversalTx" && e.data.txType.funds !== undefined
+          (e) => e.name === "universalTx" && e.data.txType.funds !== undefined
         );
 
         if (fundsEvents.length > 0) {
@@ -4635,6 +4602,911 @@ describe("Universal Gateway - Execute Tests", () => {
           .rpc(),
         "SignatureExpired"
       );
+    });
+  });
+
+  // ================================================================
+  //  Post-CPI invariants (F-2026-18980)
+  //  Prevents malicious execute targets from installing persistent
+  //  authority mutations on the CEA or its ATA via CPI signer.
+  // ================================================================
+  describe("post-CPI invariants (F-2026-18980)", () => {
+    // Helper: build a `finalize_universal_tx` execute call that targets
+    // `hostile_cea_op` on the test-counter program. Returns a thenable to await.
+    // For SPL flow (mint provided), cea_ata is included as writable.
+    const runHostileExecute = async (params: {
+      pushAccount: number[];
+      op: number;
+      target: PublicKey;
+      amount: anchor.BN; // SPL delegate amount for op=2; ignored otherwise
+      stagedAmount: anchor.BN; // amount staged into CEA via finalize
+      mint: PublicKey | null; // null → SOL path (no cea_ata)
+      // G1/G2/G3 overrides:
+      ceaAtaOverride?: PublicKey; // for G1 — the fresh canonical ATA to be created
+      opMint?: PublicKey;         // for G1 — the mint whose canonical CEA ATA is being created
+      destAtaOverride?: PublicKey; // for G2/G3 — where op=6 transfers the drained balance
+    }) => {
+      const {
+        pushAccount,
+        op,
+        target,
+        amount,
+        stagedAmount,
+        mint,
+        ceaAtaOverride,
+        opMint,
+        destAtaOverride,
+      } = params;
+
+      const isSpl = mint !== null;
+      const ceaAuthority = getCeaAuthorityPda(pushAccount);
+      const ceaAta = ceaAtaOverride
+        ?? (isSpl ? await getCeaAta(pushAccount, mint!) : ceaAuthority); // placeholder for SOL
+      const auxAccount = target; // for op=2, aux acts as the delegate pubkey
+
+      const hostileIx = await counterProgram.methods
+        .hostileCeaOp(op, target, amount)
+        .accountsPartial({
+          cea: ceaAuthority,
+          ceaAta,
+          aux: auxAccount,
+          mint: opMint ?? SystemProgram.programId, // placeholder for ops other than 1 (read-only)
+          associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID, // placeholder for ops other than 1 (read-only)
+          destAta: destAtaOverride ?? ceaAta, // op=6 needs real ATA; others: same as cea_ata (already writable)
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .instruction();
+
+      const accounts = instructionAccountsToGatewayMetas(hostileIx);
+      const remainingAccounts = instructionAccountsToRemaining(hostileIx);
+
+      const subTxId = generateTxId();
+      const universalTxId = generateUniversalTxId();
+
+      const tokenForTss = isSpl ? mint! : PublicKey.default;
+      const { gasFee } = isSpl
+        ? await calculateSplExecuteFees(provider.connection, ceaAta)
+        : await calculateSolExecuteFees(provider.connection);
+
+      const tssAccount = await gatewayProgram.account.tssPda.fetch(tssPda);
+      const sig = await signTssMessage({
+        instruction: TssInstruction.Execute,
+        amount: BigInt(stagedAmount.toString()),
+        chainId: tssAccount.chainId,
+        additional: buildExecuteAdditionalData(
+          new Uint8Array(universalTxId),
+          new Uint8Array(subTxId),
+          counterProgram.programId,
+          new Uint8Array(pushAccount),
+          accounts,
+          hostileIx.data,
+          gasFee,
+          tokenForTss
+        ),
+      });
+
+      const writableFlags = accountsToWritableFlagsOnly(accounts);
+
+      return gatewayProgram.methods
+        .finalizeUniversalTx(
+          2,
+          Array.from(subTxId),
+          Array.from(universalTxId),
+          stagedAmount,
+          Array.from(pushAccount),
+          writableFlags,
+          Buffer.from(hostileIx.data),
+          new anchor.BN(Number(gasFee)),
+          new anchor.BN(4102444800),
+          Array.from(sig.signature),
+          sig.recoveryId,
+          Array.from(sig.messageHash)
+        )
+        .accountsPartial({
+          caller: admin.publicKey,
+          config: configPda,
+          vaultAta: isSpl ? vaultUsdtAccount : null,
+          vaultSol: vaultPda,
+          ceaAuthority,
+          ceaAta: isSpl ? ceaAta : null,
+          mint: isSpl ? mint : null,
+          tssPda,
+          executedSubTx: getExecutedTxPda(subTxId),
+          rateLimitConfig: null,
+          tokenRateLimit: null,
+          destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
+          recipient: null,
+          tokenProgram: isSpl ? TOKEN_PROGRAM_ID : null,
+          systemProgram: SystemProgram.programId,
+          rent: isSpl ? anchor.web3.SYSVAR_RENT_PUBKEY : null,
+          associatedTokenProgram: isSpl ? spl.ASSOCIATED_TOKEN_PROGRAM_ID : null,
+          recipientAta: null,
+        })
+        .remainingAccounts(remainingAccounts)
+        .signers([admin])
+        .rpc();
+    };
+
+    // Fetch delegate + amount on CEA ATA, tolerating a missing account.
+    const readCeaDelegate = async (
+      ceaAta: PublicKey
+    ): Promise<{ delegate: PublicKey | null; amount: bigint }> => {
+      const info = await provider.connection.getAccountInfo(ceaAta);
+      if (!info) return { delegate: null, amount: BigInt(0) };
+      const parsed = spl.AccountLayout.decode(info.data);
+      const delegateOpt = parsed.delegateOption === 1 ? new PublicKey(parsed.delegate) : null;
+      return { delegate: delegateOpt, amount: BigInt(parsed.delegatedAmount.toString()) };
+    };
+
+    it("T1: rejects unbounded delegate installation (allowance > staged)", async () => {
+      const pushAccount = generateSender();
+      const attacker = Keypair.generate().publicKey;
+      const staged = asTokenAmount(1);
+      const unbounded = new anchor.BN("18446744073709551615"); // u64::MAX
+
+      await expectRejection(
+        runHostileExecute({
+          pushAccount,
+          op: 2,
+          target: attacker,
+          amount: unbounded,
+          stagedAmount: staged,
+          mint: mockUSDT.mint.publicKey,
+        }),
+        "InvalidAccount"
+      );
+    });
+
+    it("T2: allows bounded self-delegation (allowance == staged)", async () => {
+      const pushAccount = generateSender();
+      const delegate = Keypair.generate().publicKey;
+      const staged = asTokenAmount(50);
+
+      await runHostileExecute({
+        pushAccount,
+        op: 2,
+        target: delegate,
+        amount: staged,
+        stagedAmount: staged,
+        mint: mockUSDT.mint.publicKey,
+      });
+
+      const ceaAta = await getCeaAta(pushAccount, mockUSDT.mint.publicKey);
+      const state = await readCeaDelegate(ceaAta);
+      expect(state.delegate?.toBase58()).to.equal(delegate.toBase58());
+      expect(state.amount).to.equal(BigInt(staged.toString()));
+    });
+
+    it("T3: preserves prior delegate across a later unrelated execute (delta = 0)", async () => {
+      const pushAccount = generateSender();
+      const delegate = Keypair.generate().publicKey;
+      const stagedFirst = asTokenAmount(100);
+
+      // Establish a legitimate delegate
+      await runHostileExecute({
+        pushAccount,
+        op: 2,
+        target: delegate,
+        amount: stagedFirst,
+        stagedAmount: stagedFirst,
+        mint: mockUSDT.mint.publicKey,
+      });
+
+      // Later execute against a target that DOES NOT touch delegate state.
+      // op=5 (Revoke) would clear it; use op=2 with same delegate + same amount
+      // (net delta = 0 → check passes without a staged amount requirement).
+      await runHostileExecute({
+        pushAccount,
+        op: 2,
+        target: delegate,
+        amount: stagedFirst, // unchanged allowance
+        stagedAmount: asTokenAmount(1), // small stage; delegate delta should be 0
+        mint: mockUSDT.mint.publicKey,
+      });
+
+      const ceaAta = await getCeaAta(pushAccount, mockUSDT.mint.publicKey);
+      const state = await readCeaDelegate(ceaAta);
+      expect(state.delegate?.toBase58()).to.equal(delegate.toBase58());
+      expect(state.amount).to.equal(BigInt(stagedFirst.toString()));
+    });
+
+    it("T4: rejects delegate identity swap when new allowance exceeds staged", async () => {
+      const pushAccount = generateSender();
+      const original = Keypair.generate().publicKey;
+      const attacker = Keypair.generate().publicKey;
+      const stagedFirst = asTokenAmount(100);
+      const stagedSecond = asTokenAmount(1);
+
+      await runHostileExecute({
+        pushAccount,
+        op: 2,
+        target: original,
+        amount: stagedFirst,
+        stagedAmount: stagedFirst,
+        mint: mockUSDT.mint.publicKey,
+      });
+
+      // Attacker tries to swap the delegate identity, keeping the 100 allowance.
+      // Delegate changed AND allowance (100) > staged (1) → InvalidAccount.
+      await expectRejection(
+        runHostileExecute({
+          pushAccount,
+          op: 2,
+          target: attacker,
+          amount: stagedFirst, // 100
+          stagedAmount: stagedSecond, // 1
+          mint: mockUSDT.mint.publicKey,
+        }),
+        "InvalidAccount"
+      );
+    });
+
+    it("T5: allows delegate allowance decrease", async () => {
+      const pushAccount = generateSender();
+      const delegate = Keypair.generate().publicKey;
+      const stagedFirst = asTokenAmount(100);
+      const decreased = asTokenAmount(30);
+
+      await runHostileExecute({
+        pushAccount,
+        op: 2,
+        target: delegate,
+        amount: stagedFirst,
+        stagedAmount: stagedFirst,
+        mint: mockUSDT.mint.publicKey,
+      });
+
+      await runHostileExecute({
+        pushAccount,
+        op: 2,
+        target: delegate,
+        amount: decreased, // same delegate, lower allowance
+        stagedAmount: asTokenAmount(1),
+        mint: mockUSDT.mint.publicKey,
+      });
+
+      const ceaAta = await getCeaAta(pushAccount, mockUSDT.mint.publicKey);
+      const state = await readCeaDelegate(ceaAta);
+      expect(state.delegate?.toBase58()).to.equal(delegate.toBase58());
+      expect(state.amount).to.equal(BigInt(decreased.toString()));
+    });
+
+    it("T6: allows spl_token::Revoke (clears delegate)", async () => {
+      const pushAccount = generateSender();
+      const delegate = Keypair.generate().publicKey;
+      const staged = asTokenAmount(75);
+
+      await runHostileExecute({
+        pushAccount,
+        op: 2,
+        target: delegate,
+        amount: staged,
+        stagedAmount: staged,
+        mint: mockUSDT.mint.publicKey,
+      });
+
+      await runHostileExecute({
+        pushAccount,
+        op: 5, // revoke
+        target: PublicKey.default,
+        amount: new anchor.BN(0),
+        stagedAmount: asTokenAmount(1),
+        mint: mockUSDT.mint.publicKey,
+      });
+
+      const ceaAta = await getCeaAta(pushAccount, mockUSDT.mint.publicKey);
+      const state = await readCeaDelegate(ceaAta);
+      expect(state.delegate).to.equal(null);
+      expect(state.amount).to.equal(BigInt(0));
+    });
+
+    it("T7: rejects SetAuthority(AccountOwner) — CEA ATA seizure", async () => {
+      const pushAccount = generateSender();
+      const attacker = Keypair.generate().publicKey;
+
+      await expectRejection(
+        runHostileExecute({
+          pushAccount,
+          op: 3, // SetAuthority AccountOwner
+          target: attacker,
+          amount: new anchor.BN(0),
+          stagedAmount: asTokenAmount(1),
+          mint: mockUSDT.mint.publicKey,
+        }),
+        "InvalidOwner"
+      );
+    });
+
+    it("T8: rejects SetAuthority(CloseAccount) — close-authority griefing", async () => {
+      const pushAccount = generateSender();
+      const attacker = Keypair.generate().publicKey;
+
+      await expectRejection(
+        runHostileExecute({
+          pushAccount,
+          op: 4, // SetAuthority CloseAccount
+          target: attacker,
+          amount: new anchor.BN(0),
+          stagedAmount: asTokenAmount(1),
+          mint: mockUSDT.mint.publicKey,
+        }),
+        "InvalidAccount"
+      );
+    });
+
+    it("T9: rejects system_instruction::assign on CEA", async () => {
+      const pushAccount = generateSender();
+      const attackerProgram = Keypair.generate().publicKey;
+
+      await expectRejection(
+        runHostileExecute({
+          pushAccount,
+          op: 0, // assign
+          target: attackerProgram,
+          amount: new anchor.BN(0),
+          stagedAmount: asLamports(0.001),
+          mint: null, // SOL path — cea_ata not involved
+        }),
+        "InvalidAccount"
+      );
+    });
+
+    it("T13: rejects same-identity allowance increase beyond staged budget", async () => {
+      // Isolates the `else if after.delegated_amount > before.delegated_amount`
+      // branch. Same delegate identity, allowance topped up beyond what was
+      // staged this tx. Distinct from T1 (fresh install) and T12 (identity swap).
+      const pushAccount = generateSender();
+      const delegate = Keypair.generate().publicKey;
+      const first = asTokenAmount(1);
+      const bump = asTokenAmount(2);
+
+      // Establish (delegate, 1)
+      await runHostileExecute({
+        pushAccount,
+        op: 2,
+        target: delegate,
+        amount: first,
+        stagedAmount: first,
+        mint: mockUSDT.mint.publicKey,
+      });
+
+      // Same delegate, top up to 3, but stage only 1 → increase of 2 > budget 1
+      await expectRejection(
+        runHostileExecute({
+          pushAccount,
+          op: 2,
+          target: delegate,
+          amount: first.add(bump),
+          stagedAmount: first,
+          mint: mockUSDT.mint.publicKey,
+        }),
+        "InvalidAccount"
+      );
+    });
+
+    it("T12: rejects delegate identity swap when prior delegate had active allowance", async () => {
+      // Attack: user has legit (Alice, N). Attacker's target overwrites to
+      // (attacker, N) at the same staged budget. Old rule allowed this
+      // (N <= budget). Tightened rule rejects: an active prior delegate cannot
+      // be swapped to a new party in one execute.
+      const pushAccount = generateSender();
+      const alice = Keypair.generate().publicKey;
+      const attacker = Keypair.generate().publicKey;
+      const n = asTokenAmount(1);
+
+      await runHostileExecute({
+        pushAccount,
+        op: 2,
+        target: alice,
+        amount: n,
+        stagedAmount: n,
+        mint: mockUSDT.mint.publicKey,
+      });
+
+      await expectRejection(
+        runHostileExecute({
+          pushAccount,
+          op: 2,
+          target: attacker,
+          amount: n,
+          stagedAmount: n,
+          mint: mockUSDT.mint.publicKey,
+        }),
+        "InvalidAccount"
+      );
+    });
+
+    it("T11: bystander CEA-owned ATA in remaining_accounts is protected (delegate)", async () => {
+      // Set up a SOL finalize (ctx.accounts.cea_ata = None) but pass a CEA-owned
+      // USDT ATA as a bystander in remaining_accounts. Hostile target tries to
+      // install a delegate on the bystander. Should revert — invariants extend
+      // to all CEA-owned SPL accounts, not just the typed current-mint one.
+      const pushAccount = generateSender();
+      const ceaAuthority = getCeaAuthorityPda(pushAccount);
+      const bystanderAta = await getCeaAta(pushAccount, mockUSDT.mint.publicKey);
+      const attacker = Keypair.generate().publicKey;
+
+      // Pre-create + fund the bystander ATA so it exists at CPI time.
+      // Simple SPL execute to counter's receive_spl route creates it and moves USDT.
+      // Fastest way: use the existing SPL execute test's setup pattern.
+      const seedIx = await counterProgram.methods
+        .receiveSpl(asTokenAmount(1))
+        .accountsPartial({
+          counter: counterPda,
+          ceaAta: bystanderAta,
+          recipientAta: recipientUsdtAccount,
+          ceaAuthority,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .instruction();
+
+      const seedAccounts = instructionAccountsToGatewayMetas(seedIx);
+      const seedRemaining = instructionAccountsToRemaining(seedIx);
+      const seedSubTxId = generateTxId();
+      const seedUniversalTxId = generateUniversalTxId();
+      const { gasFee: seedGasFee } = await calculateSplExecuteFees(
+        provider.connection,
+        bystanderAta
+      );
+      const tssAccount = await gatewayProgram.account.tssPda.fetch(tssPda);
+      const seedSig = await signTssMessage({
+        instruction: TssInstruction.Execute,
+        amount: BigInt(asTokenAmount(1).toString()),
+        chainId: tssAccount.chainId,
+        additional: buildExecuteAdditionalData(
+          new Uint8Array(seedUniversalTxId),
+          new Uint8Array(seedSubTxId),
+          counterProgram.programId,
+          new Uint8Array(pushAccount),
+          seedAccounts,
+          seedIx.data,
+          seedGasFee,
+          mockUSDT.mint.publicKey
+        ),
+      });
+      await gatewayProgram.methods
+        .finalizeUniversalTx(
+          2,
+          Array.from(seedSubTxId),
+          Array.from(seedUniversalTxId),
+          asTokenAmount(1),
+          Array.from(pushAccount),
+          accountsToWritableFlagsOnly(seedAccounts),
+          Buffer.from(seedIx.data),
+          new anchor.BN(Number(seedGasFee)),
+          new anchor.BN(4102444800),
+          Array.from(seedSig.signature),
+          seedSig.recoveryId,
+          Array.from(seedSig.messageHash)
+        )
+        .accountsPartial({
+          caller: admin.publicKey,
+          config: configPda,
+          vaultAta: vaultUsdtAccount,
+          vaultSol: vaultPda,
+          ceaAuthority,
+          ceaAta: bystanderAta,
+          mint: mockUSDT.mint.publicKey,
+          tssPda,
+          executedSubTx: getExecutedTxPda(seedSubTxId),
+          rateLimitConfig: null,
+          tokenRateLimit: null,
+          destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
+          recipient: null,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+          associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
+          recipientAta: null,
+        })
+        .remainingAccounts(seedRemaining)
+        .signers([admin])
+        .rpc();
+
+      // Now the attack: SOL finalize with the bystander USDT ATA in remaining_accounts.
+      // Target = hostile_cea_op op=2 (Approve) on the bystander.
+      const hostileIx = await counterProgram.methods
+        .hostileCeaOp(2, attacker, new anchor.BN(1))
+        .accountsPartial({
+          cea: ceaAuthority,
+          ceaAta: bystanderAta, // <-- bystander, passed to hostile op
+          aux: attacker,
+          mint: SystemProgram.programId,
+          associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
+          destAta: bystanderAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .instruction();
+
+      const accounts = instructionAccountsToGatewayMetas(hostileIx);
+      const remainingAccounts = instructionAccountsToRemaining(hostileIx);
+      const subTxId = generateTxId();
+      const universalTxId = generateUniversalTxId();
+      const staged = asLamports(0.001); // SOL flow — no current-mint ATA
+      const { gasFee } = await calculateSolExecuteFees(provider.connection);
+
+      const sig = await signTssMessage({
+        instruction: TssInstruction.Execute,
+        amount: BigInt(staged.toString()),
+        chainId: tssAccount.chainId,
+        additional: buildExecuteAdditionalData(
+          new Uint8Array(universalTxId),
+          new Uint8Array(subTxId),
+          counterProgram.programId,
+          new Uint8Array(pushAccount),
+          accounts,
+          hostileIx.data,
+          gasFee,
+          PublicKey.default
+        ),
+      });
+
+      await expectRejection(
+        gatewayProgram.methods
+          .finalizeUniversalTx(
+            2,
+            Array.from(subTxId),
+            Array.from(universalTxId),
+            staged,
+            Array.from(pushAccount),
+            accountsToWritableFlagsOnly(accounts),
+            Buffer.from(hostileIx.data),
+            new anchor.BN(Number(gasFee)),
+            new anchor.BN(4102444800),
+            Array.from(sig.signature),
+            sig.recoveryId,
+            Array.from(sig.messageHash)
+          )
+          .accountsPartial({
+            caller: admin.publicKey,
+            config: configPda,
+            vaultAta: null,
+            vaultSol: vaultPda,
+            ceaAuthority,
+            ceaAta: null, // SOL path — no typed current-mint ATA
+            mint: null,
+            tssPda,
+            executedSubTx: getExecutedTxPda(subTxId),
+            rateLimitConfig: null,
+            tokenRateLimit: null,
+            destinationProgram: counterProgram.programId,
+            storedIxData: null,
+            storeRefundRecipient: null,
+            recipient: null,
+            tokenProgram: null,
+            systemProgram: SystemProgram.programId,
+            rent: null,
+            associatedTokenProgram: null,
+            recipientAta: null,
+          })
+          .remainingAccounts(remainingAccounts)
+          .signers([admin])
+          .rpc(),
+        "InvalidAccount"
+      );
+    });
+
+    it("T14: rejects spl_token::Revoke on bystander CEA-owned ATA", async () => {
+      // Bystanders must remain strictly unchanged (budget = 0). Revoke on a
+      // bystander clears a delegate the user set intentionally in a prior
+      // execute; the CPI target has no legitimate reason to touch delegations
+      // on accounts unrelated to the staged mint.
+      const pushAccount = generateSender();
+      const delegate = Keypair.generate().publicKey;
+      const stagedFirst = asTokenAmount(1);
+
+      // Step 1: seed the USDT ATA with a legitimate delegate via a normal
+      // self-Approve (this passes T2's rule since delegate == staged).
+      await runHostileExecute({
+        pushAccount,
+        op: 2,
+        target: delegate,
+        amount: stagedFirst,
+        stagedAmount: stagedFirst,
+        mint: mockUSDT.mint.publicKey,
+      });
+
+      const bystanderAta = await getCeaAta(pushAccount, mockUSDT.mint.publicKey);
+      const seeded = await readCeaDelegate(bystanderAta);
+      expect(seeded.delegate?.toBase58()).to.equal(delegate.toBase58());
+      expect(seeded.amount).to.equal(BigInt(stagedFirst.toString()));
+
+      // Step 2: SOL finalize (no current-mint ATA) with the USDT ATA passed
+      // as a bystander in remaining_accounts. Hostile op = Revoke targeting
+      // the bystander. Must revert — bystanders are budget-0.
+      const ceaAuthority = getCeaAuthorityPda(pushAccount);
+      const attacker = Keypair.generate().publicKey;
+
+      const hostileIx = await counterProgram.methods
+        .hostileCeaOp(5, attacker, new anchor.BN(0)) // op=5 revoke
+        .accountsPartial({
+          cea: ceaAuthority,
+          ceaAta: bystanderAta,
+          aux: attacker,
+          mint: SystemProgram.programId,
+          associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
+          destAta: bystanderAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .instruction();
+
+      const accounts = instructionAccountsToGatewayMetas(hostileIx);
+      const remainingAccounts = instructionAccountsToRemaining(hostileIx);
+      const subTxId = generateTxId();
+      const universalTxId = generateUniversalTxId();
+      const staged = asLamports(0.001);
+      const { gasFee } = await calculateSolExecuteFees(provider.connection);
+
+      const tssAccount = await gatewayProgram.account.tssPda.fetch(tssPda);
+      const sig = await signTssMessage({
+        instruction: TssInstruction.Execute,
+        amount: BigInt(staged.toString()),
+        chainId: tssAccount.chainId,
+        additional: buildExecuteAdditionalData(
+          new Uint8Array(universalTxId),
+          new Uint8Array(subTxId),
+          counterProgram.programId,
+          new Uint8Array(pushAccount),
+          accounts,
+          hostileIx.data,
+          gasFee,
+          PublicKey.default
+        ),
+      });
+
+      await expectRejection(
+        gatewayProgram.methods
+          .finalizeUniversalTx(
+            2,
+            Array.from(subTxId),
+            Array.from(universalTxId),
+            staged,
+            Array.from(pushAccount),
+            accountsToWritableFlagsOnly(accounts),
+            Buffer.from(hostileIx.data),
+            new anchor.BN(Number(gasFee)),
+            new anchor.BN(4102444800),
+            Array.from(sig.signature),
+            sig.recoveryId,
+            Array.from(sig.messageHash)
+          )
+          .accountsPartial({
+            caller: admin.publicKey,
+            config: configPda,
+            vaultAta: null,
+            vaultSol: vaultPda,
+            ceaAuthority,
+            ceaAta: null,
+            mint: null,
+            tssPda,
+            executedSubTx: getExecutedTxPda(subTxId),
+            rateLimitConfig: null,
+            tokenRateLimit: null,
+            destinationProgram: counterProgram.programId,
+            storedIxData: null,
+            storeRefundRecipient: null,
+            recipient: null,
+            tokenProgram: null,
+            systemProgram: SystemProgram.programId,
+            rent: null,
+            associatedTokenProgram: null,
+            recipientAta: null,
+          })
+          .remainingAccounts(remainingAccounts)
+          .signers([admin])
+          .rpc(),
+        "InvalidAccount"
+      );
+
+      // Delegate on the bystander must be intact after the rejected tx.
+      const after = await readCeaDelegate(bystanderAta);
+      expect(after.delegate?.toBase58()).to.equal(delegate.toBase58());
+      expect(after.amount).to.equal(BigInt(stagedFirst.toString()));
+    });
+
+    // ==================================================================
+    //  G1: canonical CEA ATA created + delegated INSIDE the CPI
+    //       (auditor retest — pre-CPI snapshot doesn't see accounts
+    //       that don't yet exist, so post-CPI second scan is required)
+    // ==================================================================
+    it("T15 (G1): rejects a CEA-owned canonical ATA created and delegated inside the CPI", async () => {
+      const pushAccount = generateSender();
+      const cea = getCeaAuthorityPda(pushAccount);
+      const delegatee = Keypair.generate().publicKey;
+
+      // Fresh mint whose canonical CEA ATA does not exist yet.
+      const freshMint = await spl.createMint(
+        provider.connection,
+        admin,
+        admin.publicKey,
+        null,
+        6
+      );
+      const freshAta = spl.getAssociatedTokenAddressSync(freshMint, cea, true);
+      const preInfo = await provider.connection.getAccountInfo(freshAta);
+      expect(preInfo, "precondition: canonical ATA must not exist pre-CPI").to.be.null;
+
+      await expectRejection(
+        runHostileExecute({
+          pushAccount,
+          op: 1, // create ATA + delegate in one call
+          target: delegatee,
+          amount: new anchor.BN("18446744073709551615"), // u64::MAX
+          stagedAmount: asLamports(0.005), // native lamports so ATA rent can be paid via CEA
+          mint: null, // native flow — no typed cea_ata slot
+          ceaAtaOverride: freshAta,
+          opMint: freshMint,
+        }),
+        "InvalidAccount"
+      );
+
+      // Attack must not leave the canonical ATA with a planted delegate.
+      const postInfo = await provider.connection.getAccountInfo(freshAta);
+      if (postInfo && postInfo.data.length === spl.AccountLayout.span) {
+        const parsed = spl.AccountLayout.decode(postInfo.data);
+        expect(parsed.delegateOption).to.equal(0, "no delegate should persist");
+        expect(BigInt(parsed.delegatedAmount.toString())).to.equal(0n);
+      }
+    });
+
+    // ==================================================================
+    //  G2: allowance left standing over a balance drained as owner
+    //       (auditor retest — Option B coverage rule requires
+    //       delegated_amount <= amount at end of CPI)
+    // ==================================================================
+    it("T16 (G2): rejects approve + owner-drain leaving allowance > balance", async () => {
+      const pushAccount = generateSender();
+      const staged = asTokenAmount(10);
+
+      const attackerKp = Keypair.generate();
+      const attackerAta = await spl.createAssociatedTokenAccount(
+        provider.connection,
+        admin,
+        mockUSDT.mint.publicKey,
+        attackerKp.publicKey
+      );
+
+      await expectRejection(
+        runHostileExecute({
+          pushAccount,
+          op: 6,
+          target: attackerKp.publicKey,
+          amount: staged,
+          stagedAmount: staged,
+          mint: mockUSDT.mint.publicKey,
+          destAtaOverride: attackerAta,
+        }),
+        "InvalidAccount"
+      );
+    });
+
+    // ==================================================================
+    //  G3: repeated approve+drain to accumulate allowance across calls
+    //       (auditor retest — under Option B the very first call fails)
+    // ==================================================================
+    it("T17 (G3): rejects the first call in an approve+drain accumulation loop", async () => {
+      const pushAccount = generateSender();
+      const attackerKp = Keypair.generate();
+      const attackerAta = await spl.createAssociatedTokenAccount(
+        provider.connection,
+        admin,
+        mockUSDT.mint.publicKey,
+        attackerKp.publicKey
+      );
+      const perCall = asTokenAmount(10);
+
+      await expectRejection(
+        runHostileExecute({
+          pushAccount,
+          op: 6,
+          target: attackerKp.publicKey,
+          amount: perCall,
+          stagedAmount: perCall,
+          mint: mockUSDT.mint.publicKey,
+          destAtaOverride: attackerAta,
+        }),
+        "InvalidAccount"
+      );
+
+      const ceaAta = await getCeaAta(pushAccount, mockUSDT.mint.publicKey);
+      const s = await readCeaDelegate(ceaAta);
+      expect(s.delegate).to.equal(null, "no delegate should persist after rejected call");
+    });
+
+    it("T10: native-only path (no cea_ata) unaffected by ATA invariants", async () => {
+      const pushAccount = generateSender();
+      const staged = asLamports(0.001);
+
+      // Benign target: counter increment. No ATA, no delegate mutation, no
+      // reassignment. Confirms native SOL flow still works with the invariants
+      // in place (the `if let Some(cea_ata)` block is simply skipped).
+      const counterIx = await counterProgram.methods
+        .increment(new anchor.BN(1))
+        .accountsPartial({
+          counter: counterPda,
+          authority: counterAuthority.publicKey,
+        })
+        .instruction();
+
+      const accounts = instructionAccountsToGatewayMetas(counterIx);
+      const remainingAccounts = instructionAccountsToRemaining(counterIx);
+
+      const subTxId = generateTxId();
+      const universalTxId = generateUniversalTxId();
+      const { gasFee } = await calculateSolExecuteFees(provider.connection);
+
+      const tssAccount = await gatewayProgram.account.tssPda.fetch(tssPda);
+      const sig = await signTssMessage({
+        instruction: TssInstruction.Execute,
+        amount: BigInt(staged.toString()),
+        chainId: tssAccount.chainId,
+        additional: buildExecuteAdditionalData(
+          new Uint8Array(universalTxId),
+          new Uint8Array(subTxId),
+          counterProgram.programId,
+          new Uint8Array(pushAccount),
+          accounts,
+          counterIx.data,
+          gasFee,
+          PublicKey.default
+        ),
+      });
+
+      await gatewayProgram.methods
+        .finalizeUniversalTx(
+          2,
+          Array.from(subTxId),
+          Array.from(universalTxId),
+          staged,
+          Array.from(pushAccount),
+          accountsToWritableFlagsOnly(accounts),
+          Buffer.from(counterIx.data),
+          new anchor.BN(Number(gasFee)),
+          new anchor.BN(4102444800),
+          Array.from(sig.signature),
+          sig.recoveryId,
+          Array.from(sig.messageHash)
+        )
+        .accountsPartial({
+          caller: admin.publicKey,
+          config: configPda,
+          vaultAta: null,
+          vaultSol: vaultPda,
+          ceaAuthority: getCeaAuthorityPda(pushAccount),
+          ceaAta: null,
+          mint: null,
+          tssPda,
+          executedSubTx: getExecutedTxPda(subTxId),
+          rateLimitConfig: null,
+          tokenRateLimit: null,
+          destinationProgram: counterProgram.programId,
+          storedIxData: null,
+          storeRefundRecipient: null,
+          recipient: null,
+          tokenProgram: null,
+          systemProgram: SystemProgram.programId,
+          rent: null,
+          associatedTokenProgram: null,
+          recipientAta: null,
+        })
+        .remainingAccounts(remainingAccounts)
+        .signers([admin])
+        .rpc();
+
+      // Assert the CEA account survives the CPI as System-owned + empty.
+      const ceaInfo = await provider.connection.getAccountInfo(
+        getCeaAuthorityPda(pushAccount)
+      );
+      expect(ceaInfo).to.not.be.null;
+      expect(ceaInfo!.owner.toBase58()).to.equal(SystemProgram.programId.toBase58());
+      expect(ceaInfo!.data.length).to.equal(0);
     });
   });
 

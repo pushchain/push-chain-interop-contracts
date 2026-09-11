@@ -18,6 +18,7 @@ import {
     makeTxIdGenerator, generateSender,
     getExecutedTxPda as _getExecutedTxPda, getCeaAuthorityPda as _getCeaAuthorityPda,
     getTokenRateLimitPda as _getTokenRateLimitPda,
+    extractEventCpi,
 } from "./helpers/test-utils";
 import { makeFinalizeUniversalTxBuilder, FinalizeUniversalTxArgs } from "./helpers/builders";
 
@@ -621,6 +622,110 @@ describe("Universal Gateway - Withdraw Tests", () => {
             expect(callerBalanceChange).to.equal(metaDelta);
         });
 
+        it("auto-creates recipient ATA when missing and reimburses caller for rent", async () => {
+            // Mirrors the CEA ATA flow end-to-end: recipient ATA is created, funds arrive,
+            // and — critically — the caller (relayer) is reimbursed the ATA rent via gas_used.
+            // Without the accounting fix, the caller silently eats ~2.04M lamports per fresh recipient.
+            const withdrawTokens = 50;
+            const withdrawRaw = BigInt(withdrawTokens) * TOKEN_MULTIPLIER;
+
+            // gas_fee needs to cover: sig fee (5k) + sub_tx_rent (~1M) + cea_ata_rent (~2.04M)
+            // + recipient_ata_rent (~2.04M) = ~5.1M. Signed by TSS above the floor.
+            const HIGH_GAS_FEE = BigInt(6_000_000);
+
+            const freshRecipient = Keypair.generate();
+            const freshRecipientAta = getAssociatedTokenAddressSync(
+                mockUSDT.mint.publicKey,
+                freshRecipient.publicKey
+            );
+
+            const preAtaInfo = await provider.connection.getAccountInfo(freshRecipientAta);
+            expect(preAtaInfo, "recipient ATA must not exist pre-tx").to.be.null;
+
+            const subTxId = generateTxId();
+            const universalTxId = generateUniversalTxId();
+            const pushAccount = generatePushAccount();
+            const ceaAuthority = getCeaAuthorityPda(pushAccount);
+            const ceaAta = getAssociatedTokenAddressSync(mockUSDT.mint.publicKey, ceaAuthority, true);
+
+            const tssAdditional = buildWithdrawAdditionalData(
+                new Uint8Array(universalTxId),
+                new Uint8Array(subTxId),
+                new Uint8Array(pushAccount),
+                mockUSDT.mint.publicKey,
+                freshRecipient.publicKey,
+                HIGH_GAS_FEE
+            );
+
+            const signature = await signTssMessageWithChainId({
+                instruction: TssInstruction.Withdraw,
+                amount: withdrawRaw,
+                additional: tssAdditional,
+            });
+
+            const relayerBefore = await provider.connection.getBalance(relayer.publicKey);
+
+            const sig = await finalizeUniversalTx({
+                instructionId: 1,
+                subTxId,
+                universalTxId,
+                amount: new anchor.BN(Number(withdrawRaw)),
+                pushAccount: pushAccount,
+                gasFee: new anchor.BN(Number(HIGH_GAS_FEE)),
+                sig: signature,
+                caller: relayer.publicKey,
+                recipient: freshRecipient.publicKey,
+                vaultAta: vaultUsdtAccount,
+                ceaAta: ceaAta,
+                mint: mockUSDT.mint.publicKey,
+                tokenProgram: TOKEN_PROGRAM_ID,
+                rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+                associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+                recipientAta: freshRecipientAta,
+            })
+                .signers([relayer])
+                .rpc();
+
+            const postBalance = await mockUSDT.getBalance(freshRecipientAta);
+            expect(postBalance).to.equal(withdrawTokens);
+
+            // Accounting: relayer's net SOL change must match transaction meta (i.e. the
+            // reimbursement from vault plus fee/rent debits already netted). If the
+            // recipient ATA rent were not folded into gas_used, the relayer would be down
+            // ~2.04M lamports vs meta reports. The equality below proves the leak is closed.
+            await provider.connection.confirmTransaction(sig, "confirmed");
+            let tx = null as Awaited<ReturnType<typeof provider.connection.getTransaction>>;
+            for (let i = 0; i < 5 && !tx; i++) {
+                tx = await provider.connection.getTransaction(sig, {
+                    commitment: "confirmed",
+                    maxSupportedTransactionVersion: 0,
+                });
+                if (!tx) await new Promise((r) => setTimeout(r, 500));
+            }
+            if (!tx?.meta) throw new Error("Missing transaction metadata");
+
+            const accountKeys = tx.transaction.message
+                .getAccountKeys({ accountKeysFromLookups: tx.meta.loadedAddresses })
+                .keySegments()
+                .flat();
+            const relayerIdx = accountKeys.findIndex((k) => k.equals(relayer.publicKey));
+            if (relayerIdx === -1) throw new Error("Relayer not in tx keys");
+            const metaDelta = Number(tx.meta.postBalances[relayerIdx]) - Number(tx.meta.preBalances[relayerIdx]);
+            const relayerAfter = await provider.connection.getBalance(relayer.publicKey);
+            expect(relayerAfter - relayerBefore).to.equal(metaDelta);
+
+            // gas_used from the emitted event must include the recipient ATA rent.
+            // recipient_ata_created must be true in the event for off-chain reconciliation.
+            const events = await extractEventCpi(provider.connection, program as any, sig);
+            const finalized = events.find((e) => e.name === "universalTxFinalized");
+            expect(finalized, "UniversalTxFinalized not emitted").to.exist;
+            expect((finalized!.data as any).recipientAtaCreated, "recipient_ata_created should be true").to.equal(true);
+
+            const rent = await provider.connection.getMinimumBalanceForRentExemption(165); // SPL token account size
+            const gasUsed = Number((finalized!.data as any).gasUsed);
+            expect(gasUsed).to.be.at.least(rent, "gas_used must include recipient ATA rent");
+        });
+
         it("rejects SPL withdrawals with a tampered signature", async () => {
             const withdrawTokens = 200;
             const withdrawRaw = BigInt(withdrawTokens) * TOKEN_MULTIPLIER;
@@ -737,16 +842,19 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const finalRecipient = await provider.connection.getBalance(recipient.publicKey);
             const callerBalanceAfter = await provider.connection.getBalance(relayer.publicKey);
             expect(finalRecipient).to.equal(initialRecipient + revertAmount);
-            // Caller should receive gas_fee (minus rent for executed_sub_tx account creation)
+            // Measured-cost reimbursement: caller pays ExecutedSubTx rent + tx fee, gets back
+            // (SIGNATURE_FEE + ExecutedSubTx rent). Native path creates no ATA, so net ≈ 0.
             const callerBalanceChange = callerBalanceAfter - callerBalanceBefore;
-            const actualRentForExecutedTx = 890880; // Approximate rent for 8-byte ExecutedSubTx account
-            const expectedCallerGain = Number(DEFAULT_GAS_FEE) - actualRentForExecutedTx; // gas_fee minus rent for executed_sub_tx
-            expect(callerBalanceChange).to.be.closeTo(expectedCallerGain, 100000); // Allow larger variance
+            expect(callerBalanceChange).to.be.closeTo(0, 50_000);
         });
 
-        it("rejects revert when fee_vault cannot reimburse gas fee", async () => {
-            const revertAmount = 1; // keep transfer leg minimal; only fee-pool check should fail
-            const tooLargeGasFee = BigInt(2 * anchor.web3.LAMPORTS_PER_SOL); // > seeded fee_vault in this suite
+        it("rejects revert when signed gas_fee is below the measured gas_used (InsufficientGasBudget)", async () => {
+            // Under the measured-reimbursement model, gas_fee is a signed ceiling and the
+            // on-chain program refunds the measured cost. Signing a gas_fee smaller than
+            // the base measured cost (SIGNATURE_FEE + ExecutedSubTx rent ≈ 895k lamports)
+            // trips the cap check.
+            const revertAmount = 1;
+            const tooLowGasFee = BigInt(100_000);
 
             const subTxId = generateTxId();
             const universalTxId = generateUniversalTxId();
@@ -754,21 +862,19 @@ describe("Universal Gateway - Withdraw Tests", () => {
 
             const revertInstruction = {
                 revertRecipient: recipient.publicKey,
-                revertMsg: Buffer.from("insufficient fee pool"),
+                revertMsg: Buffer.from("gas budget too low"),
             };
 
             const signature = await signTssMessageWithChainId({
                 instruction: TssInstruction.Revert,
                 amount: BigInt(revertAmount),
-                additional: [
-                    ...buildRevertAdditionalData(
-                        new Uint8Array(subTxId),
-                        new Uint8Array(universalTxId),
-                        recipient.publicKey,
-                        revertInstruction.revertMsg,
-                        tooLargeGasFee
-                    ),
-                ],
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    recipient.publicKey,
+                    revertInstruction.revertMsg,
+                    tooLowGasFee
+                ),
             });
 
             await expectRejection(
@@ -778,7 +884,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                         universalTxId,
                         new anchor.BN(revertAmount),
                         revertInstruction,
-                        new anchor.BN(Number(tooLargeGasFee)),
+                        new anchor.BN(Number(tooLowGasFee)),
                         new anchor.BN(4102444800),
                         signature.signature,
                         signature.recoveryId,
@@ -800,7 +906,7 @@ describe("Universal Gateway - Withdraw Tests", () => {
                     })
                     .signers([relayer])
                     .rpc(),
-                "InsufficientFeePool"
+                "InsufficientGasBudget"
             );
         });
 
@@ -861,6 +967,8 @@ describe("Universal Gateway - Withdraw Tests", () => {
                     recipientTokenAccount: recipientRevertAccount,
                     tokenMint: mockUSDT.mint.publicKey,
                     tokenProgram: TOKEN_PROGRAM_ID,
+                    associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+                    rent: anchor.web3.SYSVAR_RENT_PUBKEY,
                 })
                 .signers([relayer])
                 .rpc();
@@ -868,11 +976,165 @@ describe("Universal Gateway - Withdraw Tests", () => {
             const finalRecipientBalance = await mockUSDT.getBalance(recipientRevertAccount);
             const callerBalanceAfter = await provider.connection.getBalance(relayer.publicKey);
             expect(finalRecipientBalance).to.equal(initialRecipientBalance + revertTokens);
-            // Caller should receive gas_fee (minus rent for executed_sub_tx account creation)
+            // Measured-cost reimbursement: recipient ATA existed pre-call, so no ATA-rent term.
+            // Caller nets ≈ 0 (pays ExecutedSubTx rent + tx fee, refunded SIG_FEE + ExecutedSubTx rent).
             const callerBalanceChange = callerBalanceAfter - callerBalanceBefore;
-            const actualRentForExecutedTx = 890880; // Approximate rent for 8-byte ExecutedSubTx account
-            const expectedCallerGain = Number(DEFAULT_GAS_FEE) - actualRentForExecutedTx; // gas_fee minus rent for executed_sub_tx
-            expect(callerBalanceChange).to.be.closeTo(expectedCallerGain, 100000); // Allow larger variance
+            expect(callerBalanceChange).to.be.closeTo(0, 50_000);
+        });
+
+        it("auto-creates recipient ATA on SPL revert to a fresh wallet and reimburses ATA rent", async () => {
+            // Legacy SPL revert to a wallet whose (recipient, mint) canonical ATA does not exist.
+            // Program creates it via inline manual CPI, folds rent into measured gas_used, and
+            // pays the caller from fee_vault. gas_fee is the signed ceiling.
+            const revertTokens = 500;
+            const revertRaw = BigInt(revertTokens) * TOKEN_MULTIPLIER;
+
+            const freshRecipient = Keypair.generate();
+            const recipientAta = getAssociatedTokenAddressSync(
+                mockUSDT.mint.publicKey,
+                freshRecipient.publicKey
+            );
+            const preAtaInfo = await provider.connection.getAccountInfo(recipientAta);
+            expect(preAtaInfo, "precondition: canonical ATA must not exist yet").to.be.null;
+
+            const ataRent = await provider.connection.getMinimumBalanceForRentExemption(165);
+            const executedSubTxRent = await provider.connection.getMinimumBalanceForRentExemption(8);
+            const measuredGasUsed = 5_000 + executedSubTxRent + ataRent;
+            const signedGasFee = BigInt(measuredGasUsed + 500_000); // generous cap
+
+            const subTxId = generateTxId();
+            const universalTxId = generateUniversalTxId();
+            const executedTxPda = getExecutedTxPda(subTxId);
+            const revertInstruction = {
+                revertRecipient: freshRecipient.publicKey,
+                revertMsg: Buffer.from("revert SPL fresh recipient"),
+            };
+
+            const signature = await signTssMessageWithChainId({
+                instruction: TssInstruction.Revert,
+                amount: revertRaw,
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    freshRecipient.publicKey,
+                    revertInstruction.revertMsg,
+                    signedGasFee,
+                    mockUSDT.mint.publicKey
+                ),
+            });
+
+            const callerBefore = await provider.connection.getBalance(relayer.publicKey);
+            const feeVaultBefore = await provider.connection.getBalance(feeVaultPda);
+
+            await program.methods
+                .revertUniversalTx(
+                    subTxId,
+                    universalTxId,
+                    new anchor.BN(Number(revertRaw)),
+                    revertInstruction,
+                    new anchor.BN(signedGasFee.toString()),
+                    new anchor.BN(4102444800),
+                    signature.signature,
+                    signature.recoveryId,
+                    signature.messageHash,
+                )
+                .accountsPartial({
+                    config: configPda,
+                    vault: vaultPda,
+                    feeVault: feeVaultPda,
+                    tssPda,
+                    recipient: freshRecipient.publicKey,
+                    executedSubTx: executedTxPda,
+                    caller: relayer.publicKey,
+                    systemProgram: SystemProgram.programId,
+                    tokenVault: vaultUsdtAccount,
+                    recipientTokenAccount: recipientAta,
+                    tokenMint: mockUSDT.mint.publicKey,
+                    tokenProgram: TOKEN_PROGRAM_ID,
+                    associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+                    rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+                })
+                .signers([relayer])
+                .rpc();
+
+            const postAtaInfo = await provider.connection.getAccountInfo(recipientAta);
+            expect(postAtaInfo, "recipient ATA must exist after revert").to.not.be.null;
+            expect(await mockUSDT.getBalance(recipientAta)).to.equal(revertTokens);
+
+            const callerAfter = await provider.connection.getBalance(relayer.publicKey);
+            const feeVaultAfter = await provider.connection.getBalance(feeVaultPda);
+            expect(feeVaultBefore - feeVaultAfter).to.equal(measuredGasUsed);
+            expect(callerAfter - callerBefore).to.be.closeTo(0, 50_000);
+        });
+
+        it("rejects SPL revert to a fresh wallet when gas_fee cannot cover ATA rent (InsufficientGasBudget)", async () => {
+            const revertTokens = 500;
+            const revertRaw = BigInt(revertTokens) * TOKEN_MULTIPLIER;
+
+            const freshRecipient = Keypair.generate();
+            const recipientAta = getAssociatedTokenAddressSync(
+                mockUSDT.mint.publicKey,
+                freshRecipient.publicKey
+            );
+
+            const executedSubTxRent = await provider.connection.getMinimumBalanceForRentExemption(8);
+            // Cover base only (SIG_FEE + ExecutedSubTx rent); measured cost with ATA rent > gas_fee.
+            const undersizedGasFee = BigInt(5_000 + executedSubTxRent + 1);
+
+            const subTxId = generateTxId();
+            const universalTxId = generateUniversalTxId();
+            const executedTxPda = getExecutedTxPda(subTxId);
+            const revertInstruction = {
+                revertRecipient: freshRecipient.publicKey,
+                revertMsg: Buffer.from("undersized gas budget"),
+            };
+
+            const signature = await signTssMessageWithChainId({
+                instruction: TssInstruction.Revert,
+                amount: revertRaw,
+                additional: buildRevertAdditionalData(
+                    new Uint8Array(subTxId),
+                    new Uint8Array(universalTxId),
+                    freshRecipient.publicKey,
+                    revertInstruction.revertMsg,
+                    undersizedGasFee,
+                    mockUSDT.mint.publicKey
+                ),
+            });
+
+            await expectRejection(
+                program.methods
+                    .revertUniversalTx(
+                        subTxId,
+                        universalTxId,
+                        new anchor.BN(Number(revertRaw)),
+                        revertInstruction,
+                        new anchor.BN(undersizedGasFee.toString()),
+                        new anchor.BN(4102444800),
+                        signature.signature,
+                        signature.recoveryId,
+                        signature.messageHash,
+                    )
+                    .accountsPartial({
+                        config: configPda,
+                        vault: vaultPda,
+                        feeVault: feeVaultPda,
+                        tssPda,
+                        recipient: freshRecipient.publicKey,
+                        executedSubTx: executedTxPda,
+                        caller: relayer.publicKey,
+                        systemProgram: SystemProgram.programId,
+                        tokenVault: vaultUsdtAccount,
+                        recipientTokenAccount: recipientAta,
+                        tokenMint: mockUSDT.mint.publicKey,
+                        tokenProgram: TOKEN_PROGRAM_ID,
+                        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+                        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+                    })
+                    .signers([relayer])
+                    .rpc(),
+                "InsufficientGasBudget"
+            );
         });
     });
 

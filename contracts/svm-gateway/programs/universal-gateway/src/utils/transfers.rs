@@ -1,5 +1,5 @@
 use crate::errors::GatewayError;
-use crate::state::{FeeVault, InboundFeeReimbursed, VAULT_SEED};
+use crate::state::{FeeVault, VAULT_SEED};
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{program::invoke_signed, system_instruction};
 use anchor_spl::token::spl_token;
@@ -57,10 +57,10 @@ pub fn pda_spl_transfer<'info>(
 }
 
 /// Reimburse relayer gas from the fee vault while preserving rent exemption.
+/// Caller is responsible for emitting `InboundFeeReimbursed` (event_cpi requires handler ctx).
 pub fn reimburse_relayer_from_fee_vault<'info>(
     fee_vault: &Account<'info, FeeVault>,
     caller: &AccountInfo<'info>,
-    sub_tx_id: [u8; 32],
     gas_fee: u64,
 ) -> Result<()> {
     if gas_fee == 0 {
@@ -77,12 +77,6 @@ pub fn reimburse_relayer_from_fee_vault<'info>(
 
     **fee_vault_info.try_borrow_mut_lamports()? -= gas_fee;
     **caller.try_borrow_mut_lamports()? += gas_fee;
-
-    emit!(InboundFeeReimbursed {
-        sub_tx_id,
-        relayer: *caller.key,
-        amount_lamports: gas_fee,
-    });
 
     Ok(())
 }

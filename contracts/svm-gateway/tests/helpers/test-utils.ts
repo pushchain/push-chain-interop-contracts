@@ -195,3 +195,63 @@ export const instructionAccountsToRemaining = (
 
 export const accountsToWritableFlagsOnly = (accounts: GatewayAccountMeta[]) =>
   accountsToWritableFlags(accounts);
+
+// =============================================================================
+// emit_cpi event extraction
+// =============================================================================
+
+/**
+ * Extract Anchor `emit_cpi!` events from a confirmed transaction.
+ *
+ * `emit_cpi` wraps events as self-CPIs to the program's `event_authority` PDA;
+ * the encoded event bytes live in the inner instruction's data (not in program
+ * logs). Layout: [EVENT_IX_TAG_LE: 8 bytes] || [event_discriminator: 8 bytes]
+ * || [borsh(event)].
+ *
+ * The `Program data:` string that `Program::coder().events.decode()` accepts is
+ * the base64 of the last two fields, so we strip the 8-byte tag and pass the
+ * remainder in base64.
+ */
+export const extractEventCpi = async (
+  connection: anchor.web3.Connection,
+  program: anchor.Program<any>,
+  signature: string,
+  maxRetries: number = 10
+): Promise<{ name: string; data: any }[]> => {
+  let tx: Awaited<ReturnType<typeof connection.getTransaction>> = null;
+  for (let i = 0; i < maxRetries; i++) {
+    tx = await connection.getTransaction(signature, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+    });
+    if (tx?.meta) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  if (!tx?.meta) return [];
+
+  const accountKeys = tx.transaction.message
+    .getAccountKeys({ accountKeysFromLookups: tx.meta.loadedAddresses })
+    .keySegments()
+    .flat();
+  const programIdx = accountKeys.findIndex((k) =>
+    k.equals(program.programId)
+  );
+  if (programIdx === -1) return [];
+
+  const eventCoder = new anchor.BorshEventCoder(program.idl);
+  const events: { name: string; data: any }[] = [];
+  for (const inner of tx.meta.innerInstructions ?? []) {
+    for (const ix of inner.instructions) {
+      if (ix.programIdIndex !== programIdx) continue;
+      // `data` is base58 from web3.js; decode, strip 8-byte EVENT_IX_TAG_LE, re-encode base64.
+      const raw = anchor.utils.bytes.bs58.decode(ix.data);
+      if (raw.length < 8) continue;
+      const eventBytes = raw.slice(8);
+      const decoded = eventCoder.decode(
+        anchor.utils.bytes.base64.encode(eventBytes)
+      );
+      if (decoded) events.push(decoded);
+    }
+  }
+  return events;
+};
